@@ -56,14 +56,13 @@ func (r *Reconciler) Run(ctx context.Context) {
 
 // Reconcile runs a single reconciliation pass.
 // It lists all managed containers, compares with the DB, and updates status.
+// It also detects orphan containers — containers labelled as ruriko-managed
+// that have no corresponding record in the database.
 func (r *Reconciler) Reconcile(ctx context.Context) error {
 	// Get all agents from the DB
-	agents, err := r.store.ListAgents()
+	agents, err := r.store.ListAgents(ctx)
 	if err != nil {
 		return fmt.Errorf("list agents: %w", err)
-	}
-	if len(agents) == 0 {
-		return nil
 	}
 
 	// Get all managed containers from the runtime
@@ -78,6 +77,12 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 		handleMap[h.AgentID] = h
 	}
 
+	// Build a set of known agent IDs for orphan detection below.
+	knownAgentIDs := make(map[string]struct{}, len(agents))
+	for _, a := range agents {
+		knownAgentIDs[a.ID] = struct{}{}
+	}
+
 	for _, agent := range agents {
 		// Skip agents that are known to be not running
 		if agent.Status == "stopped" || agent.Status == "deleted" {
@@ -89,7 +94,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 			// Agent should be running but no container found
 			if agent.Status == "running" {
 				log.Printf("[reconciler] agent %s: container missing, marking error", agent.ID)
-				r.store.UpdateAgentStatus(agent.ID, "error")
+				r.store.UpdateAgentStatus(ctx, agent.ID, "error")
 				r.alert(agent.ID, "container missing; expected running")
 			}
 			continue
@@ -104,7 +109,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 		newStatus := containerStateToAgentStatus(status.State)
 		if newStatus != agent.Status {
 			log.Printf("[reconciler] agent %s: status %s → %s", agent.ID, agent.Status, newStatus)
-			r.store.UpdateAgentStatus(agent.ID, newStatus)
+			r.store.UpdateAgentStatus(ctx, agent.ID, newStatus)
 
 			// Alert on unexpected transitions
 			if newStatus == "error" || (agent.Status == "running" && newStatus != "running") {
@@ -115,7 +120,15 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 
 		// Always update last_seen for running agents
 		if status.State == StateRunning {
-			r.store.UpdateAgentLastSeen(agent.ID)
+			r.store.UpdateAgentLastSeen(ctx, agent.ID)
+		}
+	}
+
+	// Detect orphan containers: ruriko-managed containers with no DB record.
+	for agentID := range handleMap {
+		if _, inDB := knownAgentIDs[agentID]; !inDB {
+			log.Printf("[reconciler] orphan container detected: agentID=%q has no matching DB record", agentID)
+			r.alert(agentID, "orphan container: no matching agent record in database")
 		}
 	}
 

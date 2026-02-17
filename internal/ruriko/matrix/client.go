@@ -4,6 +4,7 @@ package matrix
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -49,6 +50,13 @@ func New(config *Config) (*Client, error) {
 func (c *Client) Start(ctx context.Context, handler MessageHandler) error {
 	c.msgHandler = handler
 
+	// NOTE: E2EE (end-to-end encryption) is not currently implemented.
+	// All messages are sent and received in plaintext. Secret values
+	// transmitted via Matrix commands are visible in room history.
+	// See issue #13 in CODE_REVIEW.md — implementing E2EE requires olm
+	// session management via the mautrix crypto store.
+	slog.Warn("Matrix E2EE is not enabled; messages are transmitted in plaintext")
+
 	// Set up event handler
 	syncer := c.client.Syncer.(*mautrix.DefaultSyncer)
 	syncer.OnEventType(event.EventMessage, c.handleMessage)
@@ -63,7 +71,7 @@ func (c *Client) Start(ctx context.Context, handler MessageHandler) error {
 	// Start syncing in background
 	go func() {
 		if err := c.client.Sync(); err != nil {
-			fmt.Printf("Matrix sync error: %v\n", err)
+			slog.Error("Matrix sync stopped", "err", err)
 		}
 	}()
 

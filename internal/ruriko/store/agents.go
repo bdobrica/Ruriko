@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"time"
@@ -24,11 +25,11 @@ type Agent struct {
 }
 
 // CreateAgent inserts a new agent
-func (s *Store) CreateAgent(agent *Agent) error {
+func (s *Store) CreateAgent(ctx context.Context, agent *Agent) error {
 	agent.CreatedAt = time.Now()
 	agent.UpdatedAt = time.Now()
 
-	_, err := s.db.Exec(`
+	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO agents (id, mxid, display_name, template, status, container_id, control_url, image, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, agent.ID, agent.MXID, agent.DisplayName, agent.Template, agent.Status,
@@ -42,9 +43,9 @@ func (s *Store) CreateAgent(agent *Agent) error {
 }
 
 // GetAgent retrieves an agent by ID
-func (s *Store) GetAgent(id string) (*Agent, error) {
+func (s *Store) GetAgent(ctx context.Context, id string) (*Agent, error) {
 	agent := &Agent{}
-	err := s.db.QueryRow(`
+	err := s.db.QueryRowContext(ctx, `
 		SELECT id, mxid, display_name, template, status, last_seen,
 		       runtime_version, gosuto_version, container_id, control_url, image,
 		       created_at, updated_at
@@ -68,8 +69,8 @@ func (s *Store) GetAgent(id string) (*Agent, error) {
 }
 
 // ListAgents returns all agents
-func (s *Store) ListAgents() ([]*Agent, error) {
-	rows, err := s.db.Query(`
+func (s *Store) ListAgents(ctx context.Context) ([]*Agent, error) {
+	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, mxid, display_name, template, status, last_seen,
 		       runtime_version, gosuto_version, container_id, control_url, image,
 		       created_at, updated_at
@@ -104,8 +105,8 @@ func (s *Store) ListAgents() ([]*Agent, error) {
 }
 
 // UpdateAgentStatus updates an agent's status
-func (s *Store) UpdateAgentStatus(id, status string) error {
-	result, err := s.db.Exec(`
+func (s *Store) UpdateAgentStatus(ctx context.Context, id, status string) error {
+	result, err := s.db.ExecContext(ctx, `
 		UPDATE agents
 		SET status = ?, updated_at = ?
 		WHERE id = ?
@@ -128,8 +129,8 @@ func (s *Store) UpdateAgentStatus(id, status string) error {
 }
 
 // UpdateAgentLastSeen updates agent's last seen timestamp
-func (s *Store) UpdateAgentLastSeen(id string) error {
-	_, err := s.db.Exec(`
+func (s *Store) UpdateAgentLastSeen(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `
 		UPDATE agents
 		SET last_seen = ?, updated_at = ?
 		WHERE id = ?
@@ -139,8 +140,8 @@ func (s *Store) UpdateAgentLastSeen(id string) error {
 }
 
 // UpdateAgentHandle stores the Docker container ID and ACP control URL.
-func (s *Store) UpdateAgentHandle(id, containerID, controlURL, image string) error {
-	_, err := s.db.Exec(`
+func (s *Store) UpdateAgentHandle(ctx context.Context, id, containerID, controlURL, image string) error {
+	_, err := s.db.ExecContext(ctx, `
 		UPDATE agents
 		SET container_id = ?, control_url = ?, image = ?, updated_at = ?
 		WHERE id = ?
@@ -152,8 +153,8 @@ func (s *Store) UpdateAgentHandle(id, containerID, controlURL, image string) err
 }
 
 // DeleteAgent removes an agent
-func (s *Store) DeleteAgent(id string) error {
-	result, err := s.db.Exec("DELETE FROM agents WHERE id = ?", id)
+func (s *Store) DeleteAgent(ctx context.Context, id string) error {
+	result, err := s.db.ExecContext(ctx, "DELETE FROM agents WHERE id = ?", id)
 	if err != nil {
 		return fmt.Errorf("failed to delete agent: %w", err)
 	}

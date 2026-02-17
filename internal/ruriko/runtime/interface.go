@@ -12,6 +12,9 @@ type Runtime interface {
 	// Stop gracefully stops the agent container.
 	Stop(ctx context.Context, handle AgentHandle) error
 
+	// Start starts a previously stopped agent container without recreating it.
+	Start(ctx context.Context, handle AgentHandle) error
+
 	// Restart stops and then starts the agent container.
 	Restart(ctx context.Context, handle AgentHandle) error
 

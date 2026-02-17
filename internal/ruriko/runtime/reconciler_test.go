@@ -28,6 +28,11 @@ func (m *mockRuntime) Stop(_ context.Context, h runtime.AgentHandle) error {
 	return nil
 }
 
+func (m *mockRuntime) Start(_ context.Context, h runtime.AgentHandle) error {
+	m.statuses[h.AgentID] = runtime.StateRunning
+	return nil
+}
+
 func (m *mockRuntime) Restart(_ context.Context, h runtime.AgentHandle) error {
 	m.statuses[h.AgentID] = runtime.StateRunning
 	return nil
@@ -104,7 +109,7 @@ func TestReconciler_RunningAgentUpdatesLastSeen(t *testing.T) {
 	}
 	agent.ContainerID.String = "mock-agent-1"
 	agent.ContainerID.Valid = true
-	if err := s.CreateAgent(agent); err != nil {
+	if err := s.CreateAgent(context.Background(), agent); err != nil {
 		t.Fatalf("CreateAgent: %v", err)
 	}
 
@@ -118,7 +123,7 @@ func TestReconciler_RunningAgentUpdatesLastSeen(t *testing.T) {
 	}
 
 	// LastSeen should be updated
-	got, err := s.GetAgent("agent-1")
+	got, err := s.GetAgent(context.Background(), "agent-1")
 	if err != nil {
 		t.Fatalf("GetAgent: %v", err)
 	}
@@ -140,7 +145,7 @@ func TestReconciler_DetectsMissingContainer(t *testing.T) {
 	}
 	agent.ContainerID.String = "mock-lost-agent"
 	agent.ContainerID.Valid = true
-	if err := s.CreateAgent(agent); err != nil {
+	if err := s.CreateAgent(context.Background(), agent); err != nil {
 		t.Fatalf("CreateAgent: %v", err)
 	}
 
@@ -163,7 +168,7 @@ func TestReconciler_DetectsMissingContainer(t *testing.T) {
 	}
 
 	// Status should be updated to error
-	got, err := s.GetAgent("lost-agent")
+	got, err := s.GetAgent(context.Background(), "lost-agent")
 	if err != nil {
 		t.Fatalf("GetAgent: %v", err)
 	}
@@ -184,7 +189,7 @@ func TestReconciler_ExitedContainerMarkedStopped(t *testing.T) {
 	}
 	agent.ContainerID.String = "mock-exiting-agent"
 	agent.ContainerID.Valid = true
-	if err := s.CreateAgent(agent); err != nil {
+	if err := s.CreateAgent(context.Background(), agent); err != nil {
 		t.Fatalf("CreateAgent: %v", err)
 	}
 
@@ -201,7 +206,7 @@ func TestReconciler_ExitedContainerMarkedStopped(t *testing.T) {
 		t.Fatalf("Reconcile: %v", err)
 	}
 
-	got, err := s.GetAgent("exiting-agent")
+	got, err := s.GetAgent(context.Background(), "exiting-agent")
 	if err != nil {
 		t.Fatalf("GetAgent: %v", err)
 	}
@@ -224,7 +229,7 @@ func TestReconciler_SkipsStoppedAgents(t *testing.T) {
 		Template:    "cron",
 		Status:      "stopped",
 	}
-	if err := s.CreateAgent(agent); err != nil {
+	if err := s.CreateAgent(context.Background(), agent); err != nil {
 		t.Fatalf("CreateAgent: %v", err)
 	}
 
@@ -245,7 +250,7 @@ func TestReconciler_SkipsStoppedAgents(t *testing.T) {
 		t.Errorf("expected no alerts for stopped agent, got %d", alertCount)
 	}
 
-	got, _ := s.GetAgent("idle-agent")
+	got, _ := s.GetAgent(context.Background(), "idle-agent")
 	if got.Status != "stopped" {
 		t.Errorf("stopped agent status was changed unexpectedly to %q", got.Status)
 	}
@@ -262,7 +267,7 @@ func TestReconciler_SteadyState(t *testing.T) {
 		}
 		a.ContainerID.String = "mock-" + id
 		a.ContainerID.Valid = true
-		s.CreateAgent(a)
+		s.CreateAgent(context.Background(), a)
 		rt.handles = append(rt.handles, runtime.AgentHandle{AgentID: id, ContainerID: "mock-" + id})
 		rt.statuses[id] = runtime.StateRunning
 	}

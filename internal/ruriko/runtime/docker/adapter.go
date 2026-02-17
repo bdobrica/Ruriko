@@ -171,7 +171,15 @@ func (a *Adapter) Spawn(ctx context.Context, spec runtime.AgentSpec) (runtime.Ag
 func (a *Adapter) Stop(ctx context.Context, handle runtime.AgentHandle) error {
 	timeout := int(stopTimeout.Seconds())
 	if err := a.client.ContainerStop(ctx, handle.ContainerID, container.StopOptions{Timeout: &timeout}); err != nil {
-		return fmt.Errorf("stop container %s: %w", handle.ContainerID[:12], err)
+		return fmt.Errorf("stop container %s: %w", handle.ContainerID, err)
+	}
+	return nil
+}
+
+// Start starts a previously stopped agent container without recreating it.
+func (a *Adapter) Start(ctx context.Context, handle runtime.AgentHandle) error {
+	if err := a.client.ContainerStart(ctx, handle.ContainerID, container.StartOptions{}); err != nil {
+		return fmt.Errorf("start container %s: %w", handle.ContainerID, err)
 	}
 	return nil
 }
@@ -180,7 +188,7 @@ func (a *Adapter) Stop(ctx context.Context, handle runtime.AgentHandle) error {
 func (a *Adapter) Restart(ctx context.Context, handle runtime.AgentHandle) error {
 	timeout := int(stopTimeout.Seconds())
 	if err := a.client.ContainerRestart(ctx, handle.ContainerID, container.StopOptions{Timeout: &timeout}); err != nil {
-		return fmt.Errorf("restart container %s: %w", handle.ContainerID[:12], err)
+		return fmt.Errorf("restart container %s: %w", handle.ContainerID, err)
 	}
 	return nil
 }

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -24,7 +25,7 @@ type AuditEntry struct {
 type AuditPayload map[string]interface{}
 
 // WriteAudit logs an audit entry
-func (s *Store) WriteAudit(traceID, actorMXID, action, target, result string, payload AuditPayload, errorMsg string) error {
+func (s *Store) WriteAudit(ctx context.Context, traceID, actorMXID, action, target, result string, payload AuditPayload, errorMsg string) error {
 	var payloadJSON sql.NullString
 	if payload != nil {
 		jsonBytes, err := json.Marshal(payload)
@@ -44,7 +45,7 @@ func (s *Store) WriteAudit(traceID, actorMXID, action, target, result string, pa
 		errorNull = sql.NullString{String: errorMsg, Valid: true}
 	}
 
-	_, err := s.db.Exec(`
+	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO audit_log (ts, trace_id, actor_mxid, action, target, payload_json, result, error_message)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`, time.Now(), traceID, actorMXID, action, targetNull, payloadJSON, result, errorNull)
@@ -57,12 +58,12 @@ func (s *Store) WriteAudit(traceID, actorMXID, action, target, result string, pa
 }
 
 // GetAuditLog retrieves recent audit entries
-func (s *Store) GetAuditLog(limit int) ([]*AuditEntry, error) {
+func (s *Store) GetAuditLog(ctx context.Context, limit int) ([]*AuditEntry, error) {
 	if limit <= 0 {
 		limit = 100
 	}
 
-	rows, err := s.db.Query(`
+	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, ts, trace_id, actor_mxid, action, target, payload_json, result, error_message
 		FROM audit_log
 		ORDER BY ts DESC
@@ -95,8 +96,8 @@ func (s *Store) GetAuditLog(limit int) ([]*AuditEntry, error) {
 }
 
 // GetAuditByTrace retrieves all audit entries for a trace ID
-func (s *Store) GetAuditByTrace(traceID string) ([]*AuditEntry, error) {
-	rows, err := s.db.Query(`
+func (s *Store) GetAuditByTrace(ctx context.Context, traceID string) ([]*AuditEntry, error) {
+	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, ts, trace_id, actor_mxid, action, target, payload_json, result, error_message
 		FROM audit_log
 		WHERE trace_id = ?

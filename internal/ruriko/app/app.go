@@ -3,8 +3,9 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -28,6 +29,9 @@ type Config struct {
 	EnableDocker      bool
 	DockerNetwork     string
 	ReconcileInterval time.Duration
+	// AdminSenders is an optional allowlist of Matrix user IDs (e.g. "@alice:example.com")
+	// permitted to execute commands. When empty, any room member can send commands.
+	AdminSenders []string
 }
 
 // App is the main Ruriko application
@@ -44,14 +48,14 @@ type App struct {
 // New creates a new Ruriko application
 func New(config *Config) (*App, error) {
 	// Initialize database
-	fmt.Printf("Opening database: %s\n", config.DatabasePath)
+	slog.Info("opening database", "path", config.DatabasePath)
 	store, err := store.New(config.DatabasePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize database: %w", err)
 	}
 
 	// Initialize Matrix client
-	fmt.Printf("Connecting to Matrix homeserver: %s\n", config.Matrix.Homeserver)
+	slog.Info("connecting to Matrix", "homeserver", config.Matrix.Homeserver)
 	matrixClient, err := matrix.New(&config.Matrix)
 	if err != nil {
 		store.Close()
@@ -78,7 +82,7 @@ func New(config *Config) (*App, error) {
 		}
 		dockerAdapter, err := docker.NewWithNetwork(networkName)
 		if err != nil {
-			log.Printf("Warning: Docker runtime unavailable: %v", err)
+			slog.Warn("Docker runtime unavailable", "err", err)
 		} else {
 			handlers.SetRuntime(dockerAdapter)
 			reconcileInterval := config.ReconcileInterval
@@ -91,12 +95,6 @@ func New(config *Config) (*App, error) {
 		}
 	}
 
-	// Register command handlers
-	router.Register("help", handlers.HandleHelp)
-	router.Register("version", handlers.HandleVersion)
-	router.Register("ping", handlers.HandlePing)
-	router.Register("agents.list", handlers.HandleAgentsList)
-	router.Register("agents.show", handlers.HandleAgentsShow)
 	// Register command handlers
 	router.Register("help", handlers.HandleHelp)
 	router.Register("version", handlers.HandleVersion)
@@ -136,7 +134,7 @@ func (a *App) Run() error {
 	defer cancel()
 
 	// Start Matrix client
-	fmt.Println("Starting Matrix sync...")
+	slog.Info("starting Matrix sync")
 	if err := a.matrix.Start(ctx, a.handleMessage); err != nil {
 		return fmt.Errorf("failed to start Matrix client: %w", err)
 	}
@@ -151,23 +149,23 @@ func (a *App) Run() error {
 		a.matrix.SendNotice(roomID, "✅ Ruriko control plane started. Type /ruriko help for commands.")
 	}
 
-	fmt.Println("Ruriko is running. Press Ctrl+C to stop.")
+	slog.Info("Ruriko is running; press Ctrl+C to stop")
 
 	// Wait for interrupt signal
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	<-sigCh
 
-	fmt.Println("\nShutting down...")
+	slog.Info("shutting down")
 	return nil
 }
 
 // Stop stops the Ruriko application
 func (a *App) Stop() {
-	fmt.Println("Stopping Matrix client...")
+	slog.Info("stopping Matrix client")
 	a.matrix.Stop()
 
-	fmt.Println("Closing database...")
+	slog.Info("closing database")
 	a.store.Close()
 }
 
@@ -178,13 +176,29 @@ func (a *App) handleMessage(ctx context.Context, evt *event.Event) {
 		return
 	}
 
+	// Enforce sender allowlist when configured
+	if len(a.config.AdminSenders) > 0 {
+		sender := evt.Sender.String()
+		allowed := false
+		for _, s := range a.config.AdminSenders {
+			if s == sender {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			// Silently ignore commands from users not on the allowlist
+			return
+		}
+	}
+
 	text := msgContent.Body
 
 	// Try to route the command
 	response, err := a.router.Route(ctx, text, evt)
 	if err != nil {
 		// Not a command or error
-		if err.Error() != "not a command (missing prefix)" {
+		if !errors.Is(err, commands.ErrNotACommand) {
 			a.matrix.ReplyToMessage(evt.RoomID.String(), evt.ID.String(), fmt.Sprintf("❌ Error: %s", err))
 		}
 		return
@@ -193,7 +207,7 @@ func (a *App) handleMessage(ctx context.Context, evt *event.Event) {
 	// Send response
 	if response != "" {
 		if err := a.matrix.SendMessage(evt.RoomID.String(), response); err != nil {
-			fmt.Printf("Failed to send response: %v\n", err)
+			slog.Error("failed to send response", "room", evt.RoomID.String(), "err", err)
 		}
 	}
 }

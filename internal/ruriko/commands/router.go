@@ -3,6 +3,7 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -17,6 +18,11 @@ type Command struct {
 	Flags      map[string]string
 	RawText    string
 }
+
+// ErrNotACommand is returned by Parse when the message does not start with the
+// command prefix. Callers should use errors.Is to distinguish this expected
+// case from real errors.
+var ErrNotACommand = errors.New("not a command (missing prefix)")
 
 // Handler is a function that handles a command
 type Handler func(ctx context.Context, cmd *Command, evt *event.Event) (string, error)
@@ -46,7 +52,7 @@ func (r *Router) Parse(text string) (*Command, error) {
 
 	// Check if message starts with our prefix
 	if !strings.HasPrefix(text, r.prefix) {
-		return nil, fmt.Errorf("not a command (missing prefix)")
+		return nil, ErrNotACommand
 	}
 
 	// Remove prefix

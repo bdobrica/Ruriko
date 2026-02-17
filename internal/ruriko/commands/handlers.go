@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -44,9 +45,12 @@ func (h *Handlers) HandleHelp(ctx context.Context, cmd *Command, evt *event.Even
 **Agent Commands:**
 • /ruriko agents list - List all agents
 • /ruriko agents show <name> - Show agent details
-• /ruriko agents create --template <name> --name <agent_name> - Create agent (TODO)
-• /ruriko agents stop <name> - Stop agent (TODO)
-• /ruriko agents start <name> - Start agent (TODO)
+• /ruriko agents create --template <name> --name <agent_name> - Create agent
+• /ruriko agents stop <name> - Stop agent
+• /ruriko agents start <name> - Start agent
+• /ruriko agents respawn <name> - Force respawn agent
+• /ruriko agents status <name> - Show agent runtime status
+• /ruriko agents delete <name> - Delete agent
 
 **Secrets Commands (admin only):**
 • /ruriko secrets list - List secret names and metadata
@@ -56,13 +60,13 @@ func (h *Handlers) HandleHelp(ctx context.Context, cmd *Command, evt *event.Even
 • /ruriko secrets delete <name> - Delete a secret
 • /ruriko secrets bind <agent> <secret> --scope <scope> - Grant agent access
 • /ruriko secrets unbind <agent> <secret> - Revoke agent access
-• /ruriko agents delete <name> - Delete agent (TODO)
+
+⚠️ **Secret values passed via --value are visible in room history.** Prefer an encrypted DM or out-of-band delivery for sensitive secrets.
 
 **Audit Commands:**
 • /ruriko audit tail [n] - Show recent audit entries
 • /ruriko trace <trace_id> - Show all events for a trace
 
-**Secrets Commands:** (TODO)
 **Gosuto Commands:** (TODO)
 **Approvals Commands:** (TODO)
 `
@@ -79,8 +83,9 @@ func (h *Handlers) HandleVersion(ctx context.Context, cmd *Command, evt *event.E
 func (h *Handlers) HandlePing(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
 
-	// Write audit log
-	err := h.store.WriteAudit(
+	// Write audit log — failure is non-fatal; the primary operation already succeeded.
+	if err := h.store.WriteAudit(
+		ctx,
 		traceID,
 		evt.Sender.String(),
 		"ping",
@@ -88,9 +93,8 @@ func (h *Handlers) HandlePing(ctx context.Context, cmd *Command, evt *event.Even
 		"success",
 		nil,
 		"",
-	)
-	if err != nil {
-		return "", fmt.Errorf("failed to write audit: %w", err)
+	); err != nil {
+		log.Printf("[audit] ping: %v", err)
 	}
 
 	return fmt.Sprintf("🏓 Pong! (trace: %s)", traceID), nil
@@ -101,14 +105,15 @@ func (h *Handlers) HandleAgentsList(ctx context.Context, cmd *Command, evt *even
 	traceID := trace.GenerateID()
 
 	// Query agents
-	agents, err := h.store.ListAgents()
+	agents, err := h.store.ListAgents(ctx)
 	if err != nil {
-		h.store.WriteAudit(traceID, evt.Sender.String(), "agents.list", "", "error", nil, err.Error())
+		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.list", "", "error", nil, err.Error())
 		return "", fmt.Errorf("failed to list agents: %w", err)
 	}
 
-	// Write audit log
-	err = h.store.WriteAudit(
+	// Write audit log — failure is non-fatal; the primary operation already succeeded.
+	if err = h.store.WriteAudit(
+		ctx,
 		traceID,
 		evt.Sender.String(),
 		"agents.list",
@@ -116,9 +121,8 @@ func (h *Handlers) HandleAgentsList(ctx context.Context, cmd *Command, evt *even
 		"success",
 		store.AuditPayload{"count": len(agents)},
 		"",
-	)
-	if err != nil {
-		return "", fmt.Errorf("failed to write audit: %w", err)
+	); err != nil {
+		log.Printf("[audit] agents.list: %v", err)
 	}
 
 	// Format response
@@ -169,14 +173,15 @@ func (h *Handlers) HandleAgentsShow(ctx context.Context, cmd *Command, evt *even
 	}
 
 	// Query agent
-	agent, err := h.store.GetAgent(agentName)
+	agent, err := h.store.GetAgent(ctx, agentName)
 	if err != nil {
-		h.store.WriteAudit(traceID, evt.Sender.String(), "agents.show", agentName, "error", nil, err.Error())
+		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.show", agentName, "error", nil, err.Error())
 		return "", fmt.Errorf("failed to get agent: %w", err)
 	}
 
-	// Write audit log
-	err = h.store.WriteAudit(
+	// Write audit log — failure is non-fatal; the primary operation already succeeded.
+	if err = h.store.WriteAudit(
+		ctx,
 		traceID,
 		evt.Sender.String(),
 		"agents.show",
@@ -184,9 +189,8 @@ func (h *Handlers) HandleAgentsShow(ctx context.Context, cmd *Command, evt *even
 		"success",
 		nil,
 		"",
-	)
-	if err != nil {
-		return "", fmt.Errorf("failed to write audit: %w", err)
+	); err != nil {
+		log.Printf("[audit] agents.show: %v", err)
 	}
 
 	// Format response
@@ -233,13 +237,14 @@ func (h *Handlers) HandleAuditTail(ctx context.Context, cmd *Command, evt *event
 	}
 
 	// Query audit log
-	entries, err := h.store.GetAuditLog(limit)
+	entries, err := h.store.GetAuditLog(ctx, limit)
 	if err != nil {
 		return "", fmt.Errorf("failed to get audit log: %w", err)
 	}
 
-	// Write audit log
-	err = h.store.WriteAudit(
+	// Write audit log — failure is non-fatal; the primary operation already succeeded.
+	if err = h.store.WriteAudit(
+		ctx,
 		traceID,
 		evt.Sender.String(),
 		"audit.tail",
@@ -247,9 +252,8 @@ func (h *Handlers) HandleAuditTail(ctx context.Context, cmd *Command, evt *event
 		"success",
 		store.AuditPayload{"limit": limit},
 		"",
-	)
-	if err != nil {
-		return "", fmt.Errorf("failed to write audit: %w", err)
+	); err != nil {
+		log.Printf("[audit] audit.tail: %v", err)
 	}
 
 	// Format response
@@ -290,21 +294,27 @@ func (h *Handlers) HandleAuditTail(ctx context.Context, cmd *Command, evt *event
 func (h *Handlers) HandleTrace(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
 
-	// Get trace ID from subcommand position (e.g. /ruriko trace t_abc123)
+	// Get trace ID from subcommand position (e.g. /ruriko trace t_abc123).
+	// The router may place the argument in either Subcommand or Args[0] depending
+	// on whether a matching registered key exists, so check both.
 	searchTraceID := cmd.Subcommand
+	if searchTraceID == "" {
+		searchTraceID, _ = cmd.GetArg(0)
+	}
 	if searchTraceID == "" {
 		return "", fmt.Errorf("usage: /ruriko trace <trace_id>")
 	}
 
 	// Query audit log
-	entries, err := h.store.GetAuditByTrace(searchTraceID)
+	entries, err := h.store.GetAuditByTrace(ctx, searchTraceID)
 	if err != nil {
-		h.store.WriteAudit(traceID, evt.Sender.String(), "trace", searchTraceID, "error", nil, err.Error())
+		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "trace", searchTraceID, "error", nil, err.Error())
 		return "", fmt.Errorf("failed to get trace: %w", err)
 	}
 
-	// Write audit log
-	err = h.store.WriteAudit(
+	// Write audit log — failure is non-fatal; the primary operation already succeeded.
+	if err = h.store.WriteAudit(
+		ctx,
 		traceID,
 		evt.Sender.String(),
 		"trace",
@@ -312,9 +322,8 @@ func (h *Handlers) HandleTrace(ctx context.Context, cmd *Command, evt *event.Eve
 		"success",
 		store.AuditPayload{"entries": len(entries)},
 		"",
-	)
-	if err != nil {
-		return "", fmt.Errorf("failed to write audit: %w", err)
+	); err != nil {
+		log.Printf("[audit] trace: %v", err)
 	}
 
 	// Format response

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"embed"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -160,7 +161,7 @@ func (s *Store) runMigrations() error {
 			return fmt.Errorf("failed to commit migration %d: %w", version, err)
 		}
 
-		fmt.Printf("Applied migration %04d: %s\n", version, description)
+		slog.Info("applied migration", "version", fmt.Sprintf("%04d", version), "description", description)
 	}
 
 	return nil

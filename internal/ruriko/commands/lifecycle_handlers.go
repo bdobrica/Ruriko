@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"maunium.net/go/mautrix/event"
@@ -13,6 +14,30 @@ import (
 	"github.com/bdobrica/Ruriko/internal/ruriko/store"
 )
 
+// agentIDPattern defines valid agent ID characters.
+var agentIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+
+// validateAgentID returns an error if id is not a valid agent identifier.
+// Valid IDs must start with a lowercase letter or digit, contain only
+// lowercase letters, digits and hyphens, and be at most 63 characters long.
+func validateAgentID(id string) error {
+	if id == "" {
+		return fmt.Errorf("agent ID must not be empty")
+	}
+	if !agentIDPattern.MatchString(id) {
+		return fmt.Errorf("agent ID %q is invalid: must match ^[a-z0-9][a-z0-9-]{0,62}$", id)
+	}
+	return nil
+}
+
+// truncateID returns up to n bytes of s (safe alternative to s[:n]).
+func truncateID(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
+}
+
 // HandleAgentsCreate provisions a new agent container.
 //
 // Usage: /ruriko agents create --name <id> --template <tmpl> --image <image>
@@ -22,6 +47,10 @@ func (h *Handlers) HandleAgentsCreate(ctx context.Context, cmd *Command, evt *ev
 	agentID := cmd.GetFlag("name", "")
 	if agentID == "" {
 		return "", fmt.Errorf("usage: /ruriko agents create --name <id> --template <template> --image <image>")
+	}
+
+	if err := validateAgentID(agentID); err != nil {
+		return "", err
 	}
 
 	template := cmd.GetFlag("template", "")
@@ -37,7 +66,7 @@ func (h *Handlers) HandleAgentsCreate(ctx context.Context, cmd *Command, evt *ev
 	displayName := cmd.GetFlag("display-name", agentID)
 
 	// Check that agent ID is not already taken
-	if existing, _ := h.store.GetAgent(agentID); existing != nil {
+	if existing, _ := h.store.GetAgent(ctx, agentID); existing != nil {
 		return "", fmt.Errorf("agent %q already exists", agentID)
 	}
 
@@ -51,14 +80,14 @@ func (h *Handlers) HandleAgentsCreate(ctx context.Context, cmd *Command, evt *ev
 	agent.Image.String = image
 	agent.Image.Valid = true
 
-	if err := h.store.CreateAgent(agent); err != nil {
-		h.store.WriteAudit(traceID, evt.Sender.String(), "agents.create", agentID, "error", nil, err.Error())
+	if err := h.store.CreateAgent(ctx, agent); err != nil {
+		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.create", agentID, "error", nil, err.Error())
 		return "", fmt.Errorf("failed to create agent record: %w", err)
 	}
 
 	if h.runtime == nil {
-		h.store.UpdateAgentStatus(agentID, "stopped")
-		h.store.WriteAudit(traceID, evt.Sender.String(), "agents.create", agentID, "success",
+		h.store.UpdateAgentStatus(ctx, agentID, "stopped")
+		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.create", agentID, "success",
 			store.AuditPayload{"note": "no runtime configured, agent created as stopped"}, "")
 		return fmt.Sprintf("✅ Agent **%s** created (no runtime configured, status: stopped)\n\n(trace: %s)", agentID, traceID), nil
 	}
@@ -73,20 +102,20 @@ func (h *Handlers) HandleAgentsCreate(ctx context.Context, cmd *Command, evt *ev
 
 	handle, err := h.runtime.Spawn(ctx, spec)
 	if err != nil {
-		h.store.UpdateAgentStatus(agentID, "error")
-		h.store.WriteAudit(traceID, evt.Sender.String(), "agents.create", agentID, "error", nil, err.Error())
+		h.store.UpdateAgentStatus(ctx, agentID, "error")
+		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.create", agentID, "error", nil, err.Error())
 		return "", fmt.Errorf("failed to spawn container: %w", err)
 	}
 
 	// Persist container details
-	if err := h.store.UpdateAgentHandle(agentID, handle.ContainerID, handle.ControlURL, image); err != nil {
-		h.store.WriteAudit(traceID, evt.Sender.String(), "agents.create", agentID, "error", nil, err.Error())
+	if err := h.store.UpdateAgentHandle(ctx, agentID, handle.ContainerID, handle.ControlURL, image); err != nil {
+		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.create", agentID, "error", nil, err.Error())
 		return "", fmt.Errorf("container spawned but failed to save handle: %w", err)
 	}
 
-	h.store.UpdateAgentStatus(agentID, "running")
-	h.store.WriteAudit(traceID, evt.Sender.String(), "agents.create", agentID, "success",
-		store.AuditPayload{"container_id": handle.ContainerID[:12], "control_url": handle.ControlURL}, "")
+	h.store.UpdateAgentStatus(ctx, agentID, "running")
+	h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.create", agentID, "success",
+		store.AuditPayload{"container_id": truncateID(handle.ContainerID, 12), "control_url": handle.ControlURL}, "")
 
 	return fmt.Sprintf(`✅ Agent **%s** created and started
 
@@ -96,7 +125,7 @@ Container:   %s
 Control URL: %s
 
 (trace: %s)`,
-		agentID, template, image, handle.ContainerID[:12], handle.ControlURL, traceID,
+		agentID, template, image, truncateID(handle.ContainerID, 12), handle.ControlURL, traceID,
 	), nil
 }
 
@@ -106,17 +135,14 @@ Control URL: %s
 func (h *Handlers) HandleAgentsStop(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
 
-	agentID := cmd.Subcommand
-	if agentID == "" {
-		agentID, _ = cmd.GetArg(0)
-	}
+	agentID, _ := cmd.GetArg(0)
 	if agentID == "" {
 		return "", fmt.Errorf("usage: /ruriko agents stop <name>")
 	}
 
-	agent, err := h.store.GetAgent(agentID)
+	agent, err := h.store.GetAgent(ctx, agentID)
 	if err != nil {
-		h.store.WriteAudit(traceID, evt.Sender.String(), "agents.stop", agentID, "error", nil, err.Error())
+		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.stop", agentID, "error", nil, err.Error())
 		return "", fmt.Errorf("agent not found: %s", agentID)
 	}
 
@@ -130,13 +156,13 @@ func (h *Handlers) HandleAgentsStop(ctx context.Context, cmd *Command, evt *even
 			ContainerID: agent.ContainerID.String,
 		}
 		if err := h.runtime.Stop(ctx, handle); err != nil {
-			h.store.WriteAudit(traceID, evt.Sender.String(), "agents.stop", agentID, "error", nil, err.Error())
+			h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.stop", agentID, "error", nil, err.Error())
 			return "", fmt.Errorf("failed to stop container: %w", err)
 		}
 	}
 
-	h.store.UpdateAgentStatus(agentID, "stopped")
-	h.store.WriteAudit(traceID, evt.Sender.String(), "agents.stop", agentID, "success", nil, "")
+	h.store.UpdateAgentStatus(ctx, agentID, "stopped")
+	h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.stop", agentID, "success", nil, "")
 
 	return fmt.Sprintf("⏹️  Agent **%s** stopped\n\n(trace: %s)", agentID, traceID), nil
 }
@@ -147,17 +173,14 @@ func (h *Handlers) HandleAgentsStop(ctx context.Context, cmd *Command, evt *even
 func (h *Handlers) HandleAgentsStart(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
 
-	agentID := cmd.Subcommand
-	if agentID == "" {
-		agentID, _ = cmd.GetArg(0)
-	}
+	agentID, _ := cmd.GetArg(0)
 	if agentID == "" {
 		return "", fmt.Errorf("usage: /ruriko agents start <name>")
 	}
 
-	agent, err := h.store.GetAgent(agentID)
+	agent, err := h.store.GetAgent(ctx, agentID)
 	if err != nil {
-		h.store.WriteAudit(traceID, evt.Sender.String(), "agents.start", agentID, "error", nil, err.Error())
+		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.start", agentID, "error", nil, err.Error())
 		return "", fmt.Errorf("agent not found: %s", agentID)
 	}
 
@@ -173,14 +196,14 @@ func (h *Handlers) HandleAgentsStart(ctx context.Context, cmd *Command, evt *eve
 			AgentID:     agentID,
 			ContainerID: agent.ContainerID.String,
 		}
-		if err := h.runtime.Restart(ctx, handle); err != nil {
-			h.store.WriteAudit(traceID, evt.Sender.String(), "agents.start", agentID, "error", nil, err.Error())
+		if err := h.runtime.Start(ctx, handle); err != nil {
+			h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.start", agentID, "error", nil, err.Error())
 			return "", fmt.Errorf("failed to start container: %w", err)
 		}
 	}
 
-	h.store.UpdateAgentStatus(agentID, "running")
-	h.store.WriteAudit(traceID, evt.Sender.String(), "agents.start", agentID, "success", nil, "")
+	h.store.UpdateAgentStatus(ctx, agentID, "running")
+	h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.start", agentID, "success", nil, "")
 
 	return fmt.Sprintf("▶️  Agent **%s** started\n\n(trace: %s)", agentID, traceID), nil
 }
@@ -191,17 +214,14 @@ func (h *Handlers) HandleAgentsStart(ctx context.Context, cmd *Command, evt *eve
 func (h *Handlers) HandleAgentsRespawn(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
 
-	agentID := cmd.Subcommand
-	if agentID == "" {
-		agentID, _ = cmd.GetArg(0)
-	}
+	agentID, _ := cmd.GetArg(0)
 	if agentID == "" {
 		return "", fmt.Errorf("usage: /ruriko agents respawn <name>")
 	}
 
-	agent, err := h.store.GetAgent(agentID)
+	agent, err := h.store.GetAgent(ctx, agentID)
 	if err != nil {
-		h.store.WriteAudit(traceID, evt.Sender.String(), "agents.respawn", agentID, "error", nil, err.Error())
+		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.respawn", agentID, "error", nil, err.Error())
 		return "", fmt.Errorf("agent not found: %s", agentID)
 	}
 
@@ -211,13 +231,13 @@ func (h *Handlers) HandleAgentsRespawn(ctx context.Context, cmd *Command, evt *e
 			ContainerID: agent.ContainerID.String,
 		}
 		if err := h.runtime.Restart(ctx, handle); err != nil {
-			h.store.WriteAudit(traceID, evt.Sender.String(), "agents.respawn", agentID, "error", nil, err.Error())
+			h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.respawn", agentID, "error", nil, err.Error())
 			return "", fmt.Errorf("failed to respawn container: %w", err)
 		}
 	}
 
-	h.store.UpdateAgentStatus(agentID, "running")
-	h.store.WriteAudit(traceID, evt.Sender.String(), "agents.respawn", agentID, "success", nil, "")
+	h.store.UpdateAgentStatus(ctx, agentID, "running")
+	h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.respawn", agentID, "success", nil, "")
 
 	return fmt.Sprintf("🔄 Agent **%s** respawned\n\n(trace: %s)", agentID, traceID), nil
 }
@@ -228,17 +248,14 @@ func (h *Handlers) HandleAgentsRespawn(ctx context.Context, cmd *Command, evt *e
 func (h *Handlers) HandleAgentsDelete(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
 
-	agentID := cmd.Subcommand
-	if agentID == "" {
-		agentID, _ = cmd.GetArg(0)
-	}
+	agentID, _ := cmd.GetArg(0)
 	if agentID == "" {
 		return "", fmt.Errorf("usage: /ruriko agents delete <name>")
 	}
 
-	agent, err := h.store.GetAgent(agentID)
+	agent, err := h.store.GetAgent(ctx, agentID)
 	if err != nil {
-		h.store.WriteAudit(traceID, evt.Sender.String(), "agents.delete", agentID, "error", nil, err.Error())
+		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.delete", agentID, "error", nil, err.Error())
 		return "", fmt.Errorf("agent not found: %s", agentID)
 	}
 
@@ -248,17 +265,17 @@ func (h *Handlers) HandleAgentsDelete(ctx context.Context, cmd *Command, evt *ev
 			ContainerID: agent.ContainerID.String,
 		}
 		if err := h.runtime.Remove(ctx, handle); err != nil {
-			h.store.WriteAudit(traceID, evt.Sender.String(), "agents.delete", agentID, "error", nil, err.Error())
+			h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.delete", agentID, "error", nil, err.Error())
 			return "", fmt.Errorf("failed to remove container: %w", err)
 		}
 	}
 
-	if err := h.store.DeleteAgent(agentID); err != nil {
-		h.store.WriteAudit(traceID, evt.Sender.String(), "agents.delete", agentID, "error", nil, err.Error())
+	if err := h.store.DeleteAgent(ctx, agentID); err != nil {
+		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.delete", agentID, "error", nil, err.Error())
 		return "", fmt.Errorf("failed to delete agent record: %w", err)
 	}
 
-	h.store.WriteAudit(traceID, evt.Sender.String(), "agents.delete", agentID, "success", nil, "")
+	h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.delete", agentID, "success", nil, "")
 
 	return fmt.Sprintf("🗑️  Agent **%s** deleted\n\n(trace: %s)", agentID, traceID), nil
 }
@@ -269,17 +286,14 @@ func (h *Handlers) HandleAgentsDelete(ctx context.Context, cmd *Command, evt *ev
 func (h *Handlers) HandleAgentsStatus(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
 
-	agentID := cmd.Subcommand
-	if agentID == "" {
-		agentID, _ = cmd.GetArg(0)
-	}
+	agentID, _ := cmd.GetArg(0)
 	if agentID == "" {
 		return "", fmt.Errorf("usage: /ruriko agents status <name>")
 	}
 
-	agent, err := h.store.GetAgent(agentID)
+	agent, err := h.store.GetAgent(ctx, agentID)
 	if err != nil {
-		h.store.WriteAudit(traceID, evt.Sender.String(), "agents.status", agentID, "error", nil, err.Error())
+		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.status", agentID, "error", nil, err.Error())
 		return "", fmt.Errorf("agent not found: %s", agentID)
 	}
 
@@ -293,7 +307,7 @@ func (h *Handlers) HandleAgentsStatus(ctx context.Context, cmd *Command, evt *ev
 		sb.WriteString(fmt.Sprintf("Image:        %s\n", agent.Image.String))
 	}
 	if agent.ContainerID.Valid {
-		sb.WriteString(fmt.Sprintf("Container:    %s\n", agent.ContainerID.String[:12]))
+		sb.WriteString(fmt.Sprintf("Container:    %s\n", truncateID(agent.ContainerID.String, 12)))
 	}
 	if agent.ControlURL.Valid {
 		sb.WriteString(fmt.Sprintf("Control URL:  %s\n", agent.ControlURL.String))
@@ -335,6 +349,6 @@ func (h *Handlers) HandleAgentsStatus(ctx context.Context, cmd *Command, evt *ev
 
 	sb.WriteString(fmt.Sprintf("\n(trace: %s)", traceID))
 
-	h.store.WriteAudit(traceID, evt.Sender.String(), "agents.status", agentID, "success", nil, "")
+	h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.status", agentID, "success", nil, "")
 	return sb.String(), nil
 }

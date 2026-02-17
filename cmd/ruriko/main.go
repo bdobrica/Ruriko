@@ -70,6 +70,7 @@ func loadConfig() *app.Config {
 	userID := getEnv("MATRIX_USER_ID", "")
 	accessToken := getEnv("MATRIX_ACCESS_TOKEN", "")
 	adminRoomsStr := getEnv("MATRIX_ADMIN_ROOMS", "")
+	adminSendersStr := getEnv("MATRIX_ADMIN_SENDERS", "")
 	dbPath := getEnv("DATABASE_PATH", "./ruriko.db")
 
 	var adminRooms []string
@@ -78,6 +79,14 @@ func loadConfig() *app.Config {
 		// Trim whitespace
 		for i := range adminRooms {
 			adminRooms[i] = strings.TrimSpace(adminRooms[i])
+		}
+	}
+
+	var adminSenders []string
+	if adminSendersStr != "" {
+		adminSenders = strings.Split(adminSendersStr, ",")
+		for i := range adminSenders {
+			adminSenders[i] = strings.TrimSpace(adminSenders[i])
 		}
 	}
 
@@ -94,6 +103,7 @@ func loadConfig() *app.Config {
 		EnableDocker:      enableDocker,
 		DockerNetwork:     dockerNetwork,
 		ReconcileInterval: reconcileInterval,
+		AdminSenders:      adminSenders,
 		Matrix: matrix.Config{
 			Homeserver:  homeserver,
 			UserID:      userID,

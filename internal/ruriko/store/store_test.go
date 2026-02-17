@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"context"
 	"os"
 	"testing"
 	"time"
@@ -30,6 +31,7 @@ func newTestStore(t *testing.T) *store.Store {
 
 func TestCreateAndGetAgent(t *testing.T) {
 	s := newTestStore(t)
+	ctx := context.Background()
 
 	agent := &store.Agent{
 		ID:          "weatherbot",
@@ -38,11 +40,11 @@ func TestCreateAndGetAgent(t *testing.T) {
 		Status:      "stopped",
 	}
 
-	if err := s.CreateAgent(agent); err != nil {
+	if err := s.CreateAgent(ctx, agent); err != nil {
 		t.Fatalf("CreateAgent: %v", err)
 	}
 
-	got, err := s.GetAgent("weatherbot")
+	got, err := s.GetAgent(ctx, "weatherbot")
 	if err != nil {
 		t.Fatalf("GetAgent: %v", err)
 	}
@@ -64,7 +66,7 @@ func TestCreateAndGetAgent(t *testing.T) {
 func TestGetAgent_NotFound(t *testing.T) {
 	s := newTestStore(t)
 
-	_, err := s.GetAgent("nonexistent")
+	_, err := s.GetAgent(context.Background(), "nonexistent")
 	if err == nil {
 		t.Fatal("expected error for missing agent, got nil")
 	}
@@ -73,7 +75,7 @@ func TestGetAgent_NotFound(t *testing.T) {
 func TestListAgents_Empty(t *testing.T) {
 	s := newTestStore(t)
 
-	agents, err := s.ListAgents()
+	agents, err := s.ListAgents(context.Background())
 	if err != nil {
 		t.Fatalf("ListAgents: %v", err)
 	}
@@ -84,9 +86,10 @@ func TestListAgents_Empty(t *testing.T) {
 
 func TestListAgents(t *testing.T) {
 	s := newTestStore(t)
+	ctx := context.Background()
 
 	for _, id := range []string{"bot1", "bot2", "bot3"} {
-		if err := s.CreateAgent(&store.Agent{
+		if err := s.CreateAgent(ctx, &store.Agent{
 			ID:          id,
 			DisplayName: id,
 			Template:    "cron",
@@ -96,7 +99,7 @@ func TestListAgents(t *testing.T) {
 		}
 	}
 
-	agents, err := s.ListAgents()
+	agents, err := s.ListAgents(ctx)
 	if err != nil {
 		t.Fatalf("ListAgents: %v", err)
 	}
@@ -107,8 +110,9 @@ func TestListAgents(t *testing.T) {
 
 func TestUpdateAgentStatus(t *testing.T) {
 	s := newTestStore(t)
+	ctx := context.Background()
 
-	if err := s.CreateAgent(&store.Agent{
+	if err := s.CreateAgent(ctx, &store.Agent{
 		ID:          "testbot",
 		DisplayName: "Test Bot",
 		Template:    "cron",
@@ -117,11 +121,11 @@ func TestUpdateAgentStatus(t *testing.T) {
 		t.Fatalf("CreateAgent: %v", err)
 	}
 
-	if err := s.UpdateAgentStatus("testbot", "running"); err != nil {
+	if err := s.UpdateAgentStatus(ctx, "testbot", "running"); err != nil {
 		t.Fatalf("UpdateAgentStatus: %v", err)
 	}
 
-	got, err := s.GetAgent("testbot")
+	got, err := s.GetAgent(ctx, "testbot")
 	if err != nil {
 		t.Fatalf("GetAgent: %v", err)
 	}
@@ -133,7 +137,7 @@ func TestUpdateAgentStatus(t *testing.T) {
 func TestUpdateAgentStatus_NotFound(t *testing.T) {
 	s := newTestStore(t)
 
-	err := s.UpdateAgentStatus("nonexistent", "running")
+	err := s.UpdateAgentStatus(context.Background(), "nonexistent", "running")
 	if err == nil {
 		t.Fatal("expected error for missing agent, got nil")
 	}
@@ -141,8 +145,9 @@ func TestUpdateAgentStatus_NotFound(t *testing.T) {
 
 func TestDeleteAgent(t *testing.T) {
 	s := newTestStore(t)
+	ctx := context.Background()
 
-	if err := s.CreateAgent(&store.Agent{
+	if err := s.CreateAgent(ctx, &store.Agent{
 		ID:          "todelete",
 		DisplayName: "To Delete",
 		Template:    "cron",
@@ -151,11 +156,11 @@ func TestDeleteAgent(t *testing.T) {
 		t.Fatalf("CreateAgent: %v", err)
 	}
 
-	if err := s.DeleteAgent("todelete"); err != nil {
+	if err := s.DeleteAgent(ctx, "todelete"); err != nil {
 		t.Fatalf("DeleteAgent: %v", err)
 	}
 
-	_, err := s.GetAgent("todelete")
+	_, err := s.GetAgent(ctx, "todelete")
 	if err == nil {
 		t.Fatal("expected error after deletion, got nil")
 	}
@@ -165,8 +170,10 @@ func TestDeleteAgent(t *testing.T) {
 
 func TestWriteAndReadAuditLog(t *testing.T) {
 	s := newTestStore(t)
+	ctx := context.Background()
 
 	err := s.WriteAudit(
+		ctx,
 		"t_abc123",
 		"@admin:example.com",
 		"agents.list",
@@ -179,7 +186,7 @@ func TestWriteAndReadAuditLog(t *testing.T) {
 		t.Fatalf("WriteAudit: %v", err)
 	}
 
-	entries, err := s.GetAuditLog(10)
+	entries, err := s.GetAuditLog(ctx, 10)
 	if err != nil {
 		t.Fatalf("GetAuditLog: %v", err)
 	}
@@ -207,23 +214,24 @@ func TestWriteAndReadAuditLog(t *testing.T) {
 
 func TestGetAuditByTrace(t *testing.T) {
 	s := newTestStore(t)
+	ctx := context.Background()
 
 	// Write multiple audit entries for the same trace
 	traceID := "t_multistep"
 	actions := []string{"command.received", "db.query", "response.sent"}
 
 	for _, action := range actions {
-		if err := s.WriteAudit(traceID, "@admin:example.com", action, "", "success", nil, ""); err != nil {
+		if err := s.WriteAudit(ctx, traceID, "@admin:example.com", action, "", "success", nil, ""); err != nil {
 			t.Fatalf("WriteAudit(%s): %v", action, err)
 		}
 	}
 
 	// Write one with a different trace
-	if err := s.WriteAudit("t_other", "@admin:example.com", "other.action", "", "success", nil, ""); err != nil {
+	if err := s.WriteAudit(ctx, "t_other", "@admin:example.com", "other.action", "", "success", nil, ""); err != nil {
 		t.Fatalf("WriteAudit(other): %v", err)
 	}
 
-	entries, err := s.GetAuditByTrace(traceID)
+	entries, err := s.GetAuditByTrace(ctx, traceID)
 	if err != nil {
 		t.Fatalf("GetAuditByTrace: %v", err)
 	}
@@ -240,8 +248,10 @@ func TestGetAuditByTrace(t *testing.T) {
 
 func TestAuditLog_ErrorEntry(t *testing.T) {
 	s := newTestStore(t)
+	ctx := context.Background()
 
 	err := s.WriteAudit(
+		ctx,
 		"t_err123",
 		"@admin:example.com",
 		"agents.delete",
@@ -254,7 +264,7 @@ func TestAuditLog_ErrorEntry(t *testing.T) {
 		t.Fatalf("WriteAudit: %v", err)
 	}
 
-	entries, err := s.GetAuditLog(10)
+	entries, err := s.GetAuditLog(ctx, 10)
 	if err != nil {
 		t.Fatalf("GetAuditLog: %v", err)
 	}
@@ -276,17 +286,18 @@ func TestAuditLog_ErrorEntry(t *testing.T) {
 
 func TestAuditLog_Limit(t *testing.T) {
 	s := newTestStore(t)
+	ctx := context.Background()
 
 	// Write 20 entries
 	for i := 0; i < 20; i++ {
-		if err := s.WriteAudit("t_bulk", "@admin:example.com", "bulk.action", "", "success", nil, ""); err != nil {
+		if err := s.WriteAudit(ctx, "t_bulk", "@admin:example.com", "bulk.action", "", "success", nil, ""); err != nil {
 			t.Fatalf("WriteAudit: %v", err)
 		}
 		// Brief sleep to ensure distinct timestamps
 		time.Sleep(time.Millisecond)
 	}
 
-	entries, err := s.GetAuditLog(5)
+	entries, err := s.GetAuditLog(ctx, 5)
 	if err != nil {
 		t.Fatalf("GetAuditLog: %v", err)
 	}
