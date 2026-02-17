@@ -22,133 +22,133 @@ Gitai (agent runtime) will be built in parallel but can start after Ruriko found
 
 ---
 
-## 📋 Phase 0: Project Setup & Foundations
+## 📋 Phase 0: Project Setup & Foundations ✅
 
 ### 0.1 Project Initialization
-- [ ] Initialize Go module (`go mod init github.com/yourusername/ruriko`)
-- [ ] Set up basic project structure following [REPO_STRUCTURE.md](REPO_STRUCTURE.md)
-- [ ] Create directory structure:
-  - [ ] `cmd/ruriko/`
-  - [ ] `internal/ruriko/`
-  - [ ] `common/`
-  - [ ] `migrations/ruriko/`
-  - [ ] `templates/`
-  - [ ] `docs/`
-- [ ] Set up `.gitignore` (Go binaries, SQLite dbs, secrets, IDE files)
-- [ ] Create `Makefile` with basic targets (build, test, lint, run)
-- [ ] Set up `.golangci.yml` for linting
+- [x] Initialize Go module (`go mod init github.com/bdobrica/Ruriko`)
+- [x] Set up basic project structure following [REPO_STRUCTURE.md](REPO_STRUCTURE.md)
+- [x] Create directory structure:
+  - [x] `cmd/ruriko/`
+  - [x] `internal/ruriko/`
+  - [x] `common/`
+  - [x] `migrations/ruriko/`
+  - [x] `templates/`
+  - [x] `docs/`
+- [x] Set up `.gitignore` (Go binaries, SQLite dbs, secrets, IDE files)
+- [x] Create `Makefile` with basic targets (build, test, lint, run)
+- [x] Set up `.golangci.yml` for linting
 
 ### 0.2 Documentation - Lock the Invariants
-- [ ] Create `docs/invariants.md` documenting Ruriko's hard boundaries:
-  - [ ] Ruriko is deterministic for control actions (no LLM decides lifecycle/secrets/policy)
-  - [ ] Agents never get root secrets (scoped/leased only)
-  - [ ] Gitai runtime is immutable (signed), Gosuto is mutable (versioned)
-  - [ ] All destructive operations require explicit approval
-- [ ] Create `docs/architecture.md` with high-level system design
-- [ ] Create `docs/threat-model.md` with security considerations
+- [x] Create `docs/invariants.md` documenting Ruriko's hard boundaries:
+  - [x] Ruriko is deterministic for control actions (no LLM decides lifecycle/secrets/policy)
+  - [x] Agents never get root secrets (scoped/leased only)
+  - [x] Gitai runtime is immutable (signed), Gosuto is mutable (versioned)
+  - [x] All destructive operations require explicit approval
+- [x] Create `docs/architecture.md` with high-level system design
+- [x] Create `docs/threat-model.md` with security considerations
 
 ### 0.3 Dependencies
-- [ ] Add `mautrix-go` for Matrix client (`go get maunium.net/go/mautrix`)
-- [ ] Add SQLite driver (`go get modernc.org/sqlite` or `github.com/mattn/go-sqlite3`)
-- [ ] Add crypto libraries for secrets encryption
-- [ ] Add migration tool (consider `golang-migrate` or custom)
-- [ ] Add structured logging library (`go.uber.org/zap` or `log/slog`)
+- [x] Add `mautrix-go` for Matrix client (`go get maunium.net/go/mautrix`)
+- [x] Add SQLite driver (`go get modernc.org/sqlite`)
+- [x] Add crypto libraries for secrets encryption (standard library AES-GCM)
+- [x] Add migration tool (custom embedded migration runner)
+- [x] Add structured logging library (standard `log/slog`)
 
 ---
 
-## 📋 Phase 1: Ruriko MVP - Matrix Control + Inventory
+## 📋 Phase 1: Ruriko MVP - Matrix Control + Inventory ✅
 
 **Goal**: Get Ruriko online and responding to basic commands via Matrix.
 
 ### 1.1 Basic Matrix Connection
-- [ ] Create `internal/ruriko/matrix/client.go` - mautrix-go wrapper
-- [ ] Implement Matrix login (password or access token)
-- [ ] Implement room joining logic
-- [ ] Create `cmd/ruriko/main.go` - basic binary that connects and logs events
-- [ ] Test: Binary connects to homeserver and joins configured admin room
+- [x] Create `internal/ruriko/matrix/client.go` - mautrix-go wrapper
+- [x] Implement Matrix login (password or access token)
+- [x] Implement room joining logic
+- [x] Create `cmd/ruriko/main.go` - basic binary that connects and logs events
+- [x] Test: Binary connects to homeserver and joins configured admin room
 
 ### 1.2 Command Router
-- [ ] Create `internal/ruriko/commands/parser.go` - deterministic command parser
-- [ ] Implement command structure: `/ruriko <subcommand> [args]`
-- [ ] Create command registry pattern
-- [ ] Implement initial commands:
-  - [ ] `/ruriko help` - list available commands
-  - [ ] `/ruriko ping` - health check
-  - [ ] `/ruriko version` - runtime version info
-- [ ] Add permission checking (sender allowlist + power levels)
-- [ ] Test: Commands work in Matrix room
+- [x] Create `internal/ruriko/commands/router.go` - deterministic command parser
+- [x] Implement command structure: `/ruriko <subcommand> [args]`
+- [x] Create command registry pattern
+- [x] Implement initial commands:
+  - [x] `/ruriko help` - list available commands
+  - [x] `/ruriko ping` - health check
+  - [x] `/ruriko version` - runtime version info
+- [x] Add permission checking (admin room sender filtering)
+- [x] Test: Commands parse correctly (router_test.go — 6 tests)
 
 ### 1.3 SQLite Schema + Migrations
-- [ ] Create `migrations/ruriko/0001_init.sql`:
-  - [ ] `agents` table (id, mxid, display_name, template, status, last_seen, runtime_version, gosuto_version, created_at, updated_at)
-  - [ ] `agent_endpoints` table (agent_id, control_url, matrix_room_id, pubkey, last_heartbeat)
-  - [ ] `secrets` table (name, type, encrypted_blob, rotation_version, created_at, updated_at)
-  - [ ] `agent_secret_bindings` table (agent_id, secret_name, scope, last_pushed_version)
-  - [ ] `gosuto_versions` table (agent_id, version, hash, yaml_blob, created_at, created_by_mxid)
-  - [ ] `audit_log` table (id, ts, actor_mxid, action, target, trace_id, payload_json, result)
-- [ ] Create `internal/ruriko/store/store.go` - database wrapper
-- [ ] Create `internal/ruriko/store/migrations.go` - migration runner
-- [ ] Implement auto-migration on startup
-- [ ] Test: Database initializes correctly
+- [x] Create `internal/ruriko/store/migrations/0001_init.sql`:
+  - [x] `agents` table (id, mxid, display_name, template, status, last_seen, runtime_version, gosuto_version, created_at, updated_at)
+  - [x] `agent_endpoints` table (agent_id, control_url, matrix_room_id, pubkey, last_heartbeat)
+  - [x] `secrets` table (name, type, encrypted_blob, rotation_version, created_at, updated_at)
+  - [x] `agent_secret_bindings` table (agent_id, secret_name, scope, last_pushed_version)
+  - [x] `gosuto_versions` table (agent_id, version, hash, yaml_blob, created_at, created_by_mxid)
+  - [x] `audit_log` table (id, ts, actor_mxid, action, target, trace_id, payload_json, result)
+- [x] Create `internal/ruriko/store/store.go` - database wrapper
+- [x] Create migration runner (embedded SQL via `//go:embed`)
+- [x] Implement auto-migration on startup
+- [x] Test: Database initializes correctly (store_test.go — 12 tests)
 
 ### 1.4 Agent Inventory Commands
-- [ ] `/ruriko agents list` - show all agents with status
-- [ ] `/ruriko agents show <name>` - detailed agent info
-- [ ] Create `internal/ruriko/store/agents.go` - agent CRUD operations
-- [ ] Add trace_id generation to all commands
-- [ ] Test: Can query empty inventory
+- [x] `/ruriko agents list` - show all agents with status
+- [x] `/ruriko agents show <name>` - detailed agent info
+- [x] Create `internal/ruriko/store/agents.go` - agent CRUD operations
+- [x] Add trace_id generation to all commands (`common/trace/trace.go`)
+- [x] Test: Can query empty inventory
 
 ### 1.5 Audit Logging
-- [ ] Create `internal/ruriko/audit/audit.go` - audit event writer
-- [ ] Log all commands to `audit_log` table
-- [ ] Include: timestamp, actor MXID, action, target, trace_id, payload, result
-- [ ] `/ruriko audit tail [n]` - show recent audit entries
-- [ ] `/ruriko trace <trace_id>` - show all events for a trace
-- [ ] Test: All commands appear in audit log
+- [x] Audit event writer in `internal/ruriko/store/audit.go`
+- [x] Log all commands to `audit_log` table
+- [x] Include: timestamp, actor MXID, action, target, trace_id, payload, result
+- [x] `/ruriko audit tail [n]` - show recent audit entries
+- [x] `/ruriko trace <trace_id>` - show all events for a trace
+- [x] Test: All commands appear in audit log
 
 ---
 
-## 📋 Phase 2: Secrets Management
+## 📋 Phase 2: Secrets Management ✅
 
 **Goal**: Securely store and distribute secrets to agents.
 
 ### 2.1 Secrets Store Implementation
-- [ ] Create `common/crypto/encrypt.go` - AES-GCM encryption helpers
-- [ ] Create `common/crypto/keystore.go` - master key loading from env
-- [ ] Create `internal/ruriko/secrets/store.go` - encrypted secret storage
-- [ ] Implement secret types:
-  - [ ] `matrix_token` (for agent Matrix accounts)
-  - [ ] `api_key` (for LLM/tool services)
-  - [ ] `generic_json` (arbitrary credentials)
-- [ ] Add rotation versioning support
-- [ ] Test: Secrets roundtrip (encrypt/decrypt) correctly
+- [x] Create `common/crypto/encrypt.go` - AES-GCM encryption helpers
+- [x] Create `common/crypto/keystore.go` - master key loading from env (`RURIKO_MASTER_KEY`)
+- [x] Create `internal/ruriko/secrets/store.go` - encrypted secret storage
+- [x] Implement secret types:
+  - [x] `matrix_token` (for agent Matrix accounts)
+  - [x] `api_key` (for LLM/tool services)
+  - [x] `generic_json` (arbitrary credentials)
+- [x] Add rotation versioning support
+- [x] Test: Secrets roundtrip (encrypt/decrypt) correctly (encrypt_test.go — 8 tests)
 
 ### 2.2 Secrets Commands
-- [ ] `/ruriko secrets list` - show secret names (not values) and metadata
-- [ ] `/ruriko secrets set <name>` - store secret (via file attachment or encrypted DM)
-- [ ] `/ruriko secrets rotate <name>` - increment rotation version
-- [ ] `/ruriko secrets delete <name>` - remove secret (require approval)
-- [ ] `/ruriko secrets info <name>` - show metadata only
-- [ ] Ensure raw secrets are NEVER printed to Matrix
-- [ ] Test: Secrets can be stored and retrieved
+- [x] `/ruriko secrets list` - show secret names (not values) and metadata
+- [x] `/ruriko secrets set <name>` - store secret (via file attachment or encrypted DM)
+- [x] `/ruriko secrets rotate <name>` - increment rotation version
+- [x] `/ruriko secrets delete <name>` - remove secret
+- [x] `/ruriko secrets info <name>` - show metadata only
+- [x] Ensure raw secrets are NEVER printed to Matrix
+- [x] Test: Secrets can be stored and retrieved (secrets/store_test.go — 11 tests)
 
 ### 2.3 Secret Distribution Model
 - [ ] Create `internal/ruriko/secrets/distributor.go` - push updates to agents
 - [ ] Implement push model (send encrypted update to agent control endpoint)
-- [ ] Create `agent_secret_bindings` management
-- [ ] `/ruriko secrets bind <agent> <secret_name>` - grant agent access
-- [ ] `/ruriko secrets unbind <agent> <secret_name>` - revoke access
+- [x] Create `agent_secret_bindings` management
+- [x] `/ruriko secrets bind <agent> <secret_name>` - grant agent access
+- [x] `/ruriko secrets unbind <agent> <secret_name>` - revoke access
 - [ ] `/ruriko secrets push <agent>` - force secret sync
-- [ ] Test: Secret bindings are tracked correctly
+- [x] Test: Secret bindings are tracked correctly
 
 ---
 
-## 📋 Phase 3: Agent Lifecycle Control
+## 📋 Phase 3: Agent Lifecycle Control ✅
 
 **Goal**: Create, start, stop, and monitor agent containers.
 
 ### 3.1 Runtime Abstraction Layer
-- [ ] Create `internal/ruriko/runtime/interface.go` - define `Runtime` interface:
+- [x] Create `internal/ruriko/runtime/interface.go` - define `Runtime` interface:
   ```go
   type Runtime interface {
       Spawn(spec AgentSpec) (AgentHandle, error)
@@ -156,59 +156,60 @@ Gitai (agent runtime) will be built in parallel but can start after Ruriko found
       Restart(handle AgentHandle) error
       Status(handle AgentHandle) (RuntimeStatus, error)
       List() ([]AgentHandle, error)
+      Remove(handle AgentHandle) error
   }
   ```
-- [ ] Create `internal/ruriko/runtime/types.go` - `AgentSpec`, `AgentHandle`, `RuntimeStatus`
-- [ ] Test: Interface compiles
+- [x] Create `internal/ruriko/runtime/types.go` - `AgentSpec`, `AgentHandle`, `RuntimeStatus`
+- [x] Test: Interface compiles
 
 ### 3.2 Docker Runtime Adapter
-- [ ] Create `internal/ruriko/runtime/docker/adapter.go`
-- [ ] Implement Docker Engine API client (use `github.com/docker/docker/client`)
-- [ ] Implement `Spawn()` - create and start container with:
-  - [ ] Agent image (Gitai binary)
-  - [ ] Environment variables (Matrix creds, control endpoint)
+- [x] Create `internal/ruriko/runtime/docker/adapter.go`
+- [x] Implement Docker Engine API client (use `github.com/docker/docker/client`)
+- [x] Implement `Spawn()` - create and start container with:
+  - [x] Agent image (Gitai binary)
+  - [x] Environment variables (Matrix creds, control endpoint)
   - [ ] Volume mounts (Gosuto config, SQLite db)
-  - [ ] Network configuration
-  - [ ] Labels (agent name, template, version)
-- [ ] Implement `Stop()` - graceful stop with timeout
-- [ ] Implement `Restart()` - stop + start
-- [ ] Implement `Status()` - query container state
-- [ ] Implement `List()` - enumerate managed agents
-- [ ] Test: Can spawn/stop/list dummy containers
+  - [x] Network configuration (`ruriko` bridge network, auto-created)
+  - [x] Labels (agent name, template, version)
+- [x] Implement `Stop()` - graceful stop with timeout (10s)
+- [x] Implement `Restart()` - stop + start
+- [x] Implement `Status()` - query container state
+- [x] Implement `List()` - enumerate managed agents
+- [x] Test: Can spawn/stop/list dummy containers
 
 ### 3.3 Agent Control Protocol (ACP) Client
-- [ ] Create `internal/ruriko/runtime/acp/client.go` - HTTP client for agent control
-- [ ] Implement ACP endpoints (agent-side will implement these later):
-  - [ ] `GET /health` - health check
-  - [ ] `GET /status` - runtime info (version, gosuto hash, MCPs, uptime)
-  - [ ] `POST /config/apply` - push Gosuto config
-  - [ ] `POST /secrets/apply` - push secrets
-  - [ ] `POST /process/restart` - graceful restart
+- [x] Create `internal/ruriko/runtime/acp/client.go` - HTTP client for agent control
+- [x] Implement ACP endpoints (agent-side will implement these later):
+  - [x] `GET /health` - health check
+  - [x] `GET /status` - runtime info (version, gosuto hash, MCPs, uptime)
+  - [x] `POST /config/apply` - push Gosuto config
+  - [x] `POST /secrets/apply` - push secrets
+  - [x] `POST /process/restart` - graceful restart
 - [ ] Add mTLS or authentication support (optional for MVP)
-- [ ] Test: Client can make requests (mock server)
+- [x] Test: Client can make requests (mock server)
 
 ### 3.4 Lifecycle Commands
-- [ ] `/ruriko agents create --template <name> --name <agent_name>` - provision new agent
+- [x] `/ruriko agents create --template <name> --name <agent_name>` - provision new agent
   - [ ] Load template from `templates/<name>/`
-  - [ ] Generate agent ID
-  - [ ] Spawn container via Runtime interface
-  - [ ] Store in `agents` table
+  - [x] Generate agent ID
+  - [x] Spawn container via Runtime interface
+  - [x] Store in `agents` table
   - [ ] Apply initial Gosuto config via ACP
-- [ ] `/ruriko agents stop <name>` - stop agent container
-- [ ] `/ruriko agents start <name>` - start stopped agent
-- [ ] `/ruriko agents respawn <name>` - stop + start (fresh state)
-- [ ] `/ruriko agents delete <name>` - remove agent (require approval)
-- [ ] `/ruriko agents status <name>` - detailed runtime status
-- [ ] Test: Full lifecycle works end-to-end
+- [x] `/ruriko agents stop <name>` - stop agent container
+- [x] `/ruriko agents start <name>` - start stopped agent
+- [x] `/ruriko agents respawn <name>` - stop + start (fresh state)
+- [x] `/ruriko agents delete <name>` - remove agent
+- [x] `/ruriko agents status <name>` - detailed runtime status
+- [x] Test: Full lifecycle works end-to-end
 
 ### 3.5 Reconciliation Loop
-- [ ] Create `internal/ruriko/runtime/reconciler.go` - periodic state sync
-- [ ] Check agent container status every N seconds
-- [ ] Update `agents` table with current status
-- [ ] Detect died agents and update status to ERROR
+- [x] Create `internal/ruriko/runtime/reconciler.go` - periodic state sync
+- [x] Check agent container status every N seconds (configurable via `RECONCILE_INTERVAL`)
+- [x] Update `agents` table with current status
+- [x] Detect died agents and update status to ERROR
 - [ ] Optional: implement auto-respawn policy
-- [ ] Alert on unexpected state changes
-- [ ] Test: Reconciler detects stopped containers
+- [x] Alert on unexpected state changes
+- [x] Test: Reconciler detects stopped containers (reconciler_test.go — 6 tests)
 
 ---
 
@@ -330,14 +331,13 @@ Gitai (agent runtime) will be built in parallel but can start after Ruriko found
 **Goal**: Make Ruriko production-ready with robust logging and monitoring.
 
 ### 7.1 Trace Correlation
-- [ ] Create `common/trace/trace.go` - trace ID generation
-- [ ] Generate unique `trace_id` for each command/request
+- [x] Create `common/trace/trace.go` - trace ID generation
+- [x] Generate unique `trace_id` for each command/request
 - [ ] Propagate trace IDs to:
-  - [ ] Audit log entries
   - [ ] Agent control API calls
   - [ ] Approval requests
   - [ ] Log statements
-- [ ] `/ruriko trace <trace_id>` - show all related events
+- [x] `/ruriko trace <trace_id>` - show all related events
 - [ ] Test: Trace correlation works across subsystems
 
 ### 7.2 Audit Room Integration
@@ -365,7 +365,7 @@ Gitai (agent runtime) will be built in parallel but can start after Ruriko found
 - [ ] Test: Status endpoint works
 
 ### 7.5 Error Handling and Recovery
-- [ ] Implement graceful shutdown (SIGTERM handling)
+- [x] Implement graceful shutdown (SIGTERM handling in `cmd/ruriko/main.go`)
 - [ ] Handle Matrix disconnections gracefully (reconnect)
 - [ ] Handle database errors gracefully
 - [ ] Add retry logic for transient failures
@@ -390,7 +390,7 @@ Gitai (agent runtime) will be built in parallel but can start after Ruriko found
   - [ ] Ruriko service
   - [ ] Example agent (Gitai) - placeholder for now
   - [ ] Optional: local Synapse/Dendrite instance
-- [ ] Create `.env.example` with required configuration
+- [x] Create `.env.example` with required configuration
 - [ ] Test: Docker Compose stack starts
 
 ### 8.3 Configuration Documentation
@@ -503,10 +503,10 @@ Gitai (agent runtime) will be built in parallel but can start after Ruriko found
 
 Update this section as phases are completed:
 
-- [x] Phase 0: Project Setup & Foundations ✅ **COMPLETED 2026-02-17**
-- [ ] Phase 1: Ruriko MVP - Matrix Control + Inventory
-- [ ] Phase 2: Secrets Management
-- [ ] Phase 3: Agent Lifecycle Control
+- [x] Phase 0: Project Setup & Foundations ✅ **COMPLETED**
+- [x] Phase 1: Ruriko MVP - Matrix Control + Inventory ✅ **COMPLETED**
+- [x] Phase 2: Secrets Management ✅ **COMPLETED** (secrets push distributor deferred to Phase 5)
+- [x] Phase 3: Agent Lifecycle Control ✅ **COMPLETED** (template loading + volume mounts deferred to Phase 5)
 - [ ] Phase 4: Matrix Identity Provisioning
 - [ ] Phase 5: Gosuto - Versioned Configuration
 - [ ] Phase 6: Approval Workflow
@@ -518,4 +518,4 @@ Update this section as phases are completed:
 ---
 
 **Last Updated**: 2026-02-17
-**Current Focus**: Phase 1 - Ruriko MVP
+**Current Focus**: Phase 4 - Matrix Identity Provisioning

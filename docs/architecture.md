@@ -146,189 +146,151 @@ Ruriko is a distributed control plane for managing secure, capability-scoped AI 
 
 ### High-Level System Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Matrix Homeserver                         │
-│                    (Identity & Messaging Bus)                    │
-└───────────┬────────────────────────────────────────┬────────────┘
-            │                                        │
-            │                                        │
-┌───────────▼──────────┐                  ┌─────────▼─────────────┐
-│                      │                  │                       │
-│   Ruriko             │   Agent Control  │   Gitai (Agent 1)     │
-│   (Control Plane)    │◄─────Protocol────┤   (Runtime)           │
-│                      │      (HTTP)      │                       │
-│  ┌────────────────┐  │                  │  ┌─────────────────┐  │
-│  │ Command Router │  │                  │  │ Policy Engine   │  │
-│  │ Runtime Mgr    │  │                  │  │ LLM Interface   │  │
-│  │ Secret Store   │  │                  │  │ MCP Supervisor  │  │
-│  │ Approval Mgr   │  │                  │  │ Envelope Parser │  │
-│  │ Audit Logger   │  │                  │  └─────────┬───────┘  │
-│  └────────────────┘  │                  │            │          │
-│                      │                  │            │          │
-│  ┌────────────────┐  │                  │  ┌─────────▼───────┐  │
-│  │ SQLite         │  │                  │  │ MCP Process 1   │  │
-│  │ (State Store)  │  │                  │  │ (Browser)       │  │
-│  └────────────────┘  │                  │  └─────────────────┘  │
-│                      │                  │  ┌─────────────────┐  │
-└──────────────────────┘                  │  │ MCP Process 2   │  │
-                                          │  │ (Weather API)   │  │
-┌──────────────────────────────┐          │  └─────────────────┘  │
-│  Docker / Kubernetes         │          │                       │
-│  (Runtime Infrastructure)    │          │  ┌─────────────────┐  │
-│                              │          │  │ SQLite (Local)  │  │
-│  ┌────────────────────────┐  │          │  └─────────────────┘  │
-│  │  Gitai Containers      │  │          └───────────────────────┘
-│  │  (Agent 1, 2, 3...)    │  │
-│  └────────────────────────┘  │          ┌───────────────────────┐
-│                              │          │  Gitai (Agent 2)      │
-└──────────────────────────────┘          │  ...                  │
-                                          └───────────────────────┘
+```mermaid
+flowchart TB
+  Matrix["Matrix Homeserver\nIdentity and Messaging Bus"]
+
+  subgraph ControlPlane["Ruriko Control Plane"]
+    CR["Command Router"]
+    RM["Runtime Manager\nDocker, Kubernetes, systemd"]
+    SS["Secret Store"]
+    AM["Approval Manager"]
+    AL["Audit Logger"]
+    DB[("SQLite\nState Store")]
+  end
+
+  subgraph RuntimeInfra["Runtime Infrastructure"]
+    RI["Docker / Kubernetes"]
+  end
+
+  subgraph Agent1["Gitai Agent 1 Runtime"]
+    PE["Policy Engine"]
+    LLM["LLM Interface"]
+    MCP["MCP Supervisor"]
+    EP["Envelope Parser"]
+    ADB[("SQLite\nLocal")]
+    subgraph MCPTools1["MCP Tool Processes"]
+      M1["MCP Process 1\nBrowser"]
+      M2["MCP Process 2\nWeather API"]
+    end
+  end
+
+  subgraph Agent2["Gitai Agent 2 Runtime"]
+    A2["..."]
+  end
+
+  Matrix --- ControlPlane
+  Matrix --- Agent1
+  Matrix --- Agent2
+
+  ControlPlane <--> |"Agent Control Protocol\nHTTP"| Agent1
+
+  ControlPlane --- DB
+  Agent1 --- ADB
+
+  RI --- Agent1
+  RI --- Agent2
+
+  MCP --> M1
+  MCP --> M2
+
+  CR --- RM
+  RM --- SS
+  RM --- AM
+  RM --- AL
 ```
 
 ---
 
 ### Lifecycle: Agent Creation
 
-```
-┌──────────┐                ┌──────────┐                ┌──────────┐
-│  Admin   │                │  Ruriko  │                │  Docker  │
-│  User    │                │          │                │  Engine  │
-└────┬─────┘                └────┬─────┘                └────┬─────┘
-     │                           │                           │
-     │ /ruriko agents create     │                           │
-     │ --template cron           │                           │
-     │ --name weatherbot         │                           │
-     ├──────────────────────────►│                           │
-     │                           │                           │
-     │                           │ 1. Load template          │
-     │                           │ 2. Generate agent_id      │
-     │                           │ 3. Store in DB            │
-     │                           │ 4. Provision Matrix       │
-     │                           │    account                │
-     │                           │                           │
-     │                           │ 5. Create container       │
-     │                           ├──────────────────────────►│
-     │                           │                           │
-     │                           │◄──────────────────────────┤
-     │                           │   container_id            │
-     │                           │                           │
-     │                           │ 6. Apply Gosuto via ACP   │
-     │                           ├───────────────────────────┼───┐
-     │                           │                           │   │ HTTP
-     │                           │                           │   │ POST
-     │                           │◄──────────────────────────┼───┘
-     │                           │   Gosuto applied          │
-     │                           │                           │
-     │                           │ 7. Audit log              │
-     │                           │                           │
-     │◄──────────────────────────┤                           │
-     │ ✅ Agent created          │                           │
-     │ trace_id: abc123          │                           │
-     │                           │                           │
+```mermaid
+sequenceDiagram
+  autonumber
+  actor Admin as Admin User
+  participant R as Ruriko
+  participant D as Docker Engine
+  participant A as Gitai Agent (ACP Server)
+
+  Admin->>R: /ruriko agents create<br/>--template cron<br/>--name weatherbot
+
+  Note over R: 1. Load template<br/>2. Generate agent_id<br/>3. Store in DB<br/>4. Provision Matrix account
+
+  R->>D: 5. Create container
+  D-->>R: container_id
+
+  R->>A: 6. Apply Gosuto (POST /config/apply)
+  A-->>R: Gosuto applied (hash/version)
+
+  Note over R: 7. Audit log
+
+  R-->>Admin: ✅ Agent created<br/>trace_id: abc123
+
 ```
 
 ---
 
 ### Lifecycle: Message Processing (Agent)
 
-```
-┌────────┐       ┌────────┐       ┌────────┐       ┌────────┐       ┌────────┐
-│ Matrix │       │ Gitai  │       │ Policy │       │  LLM   │       │  MCP   │
-│ Server │       │ Agent  │       │ Engine │       │        │       │ Server │
-└───┬────┘       └───┬────┘       └───┬────┘       └───┬────┘       └───┬────┘
-    │                │                │                │                │
-    │ User message   │                │                │                │
-    ├───────────────►│                │                │                │
-    │                │                │                │                │
-    │                │ 1. Parse       │                │                │
-    │                │    envelope    │                │                │
-    │                │                │                │                │
-    │                │ 2. Check trust │                │                │
-    │                │    context     │                │                │
-    │                ├───────────────►│                │                │
-    │                │                │                │                │
-    │                │ 3. Allowed?    │                │                │
-    │                │◄───────────────┤                │                │
-    │                │   YES          │                │                │
-    │                │                │                │                │
-    │                │ 4. Call LLM    │                │                │
-    │                ├────────────────┼───────────────►│                │
-    │                │                │                │                │
-    │                │ 5. Tool        │                │                │
-    │                │    proposal    │                │                │
-    │                │◄───────────────┼────────────────┤                │
-    │                │                │                │                │
-    │                │ 6. Check       │                │                │
-    │                │    capability  │                │                │
-    │                ├───────────────►│                │                │
-    │                │                │                │                │
-    │                │ 7. Allowed?    │                │                │
-    │                │◄───────────────┤                │                │
-    │                │   YES          │                │                │
-    │                │                │                │                │
-    │                │ 8. Execute     │                │                │
-    │                │    tool        │                │                │
-    │                ├────────────────┼────────────────┼───────────────►│
-    │                │                │                │                │
-    │                │ 9. Result      │                │                │
-    │                │◄───────────────┼────────────────┼────────────────┤
-    │                │                │                │                │
-    │                │ 10. Redact     │                │                │
-    │                │     & format   │                │                │
-    │                │                │                │                │
-    │                │ 11. Audit log  │                │                │
-    │                │                │                │                │
-    │ Response       │                │                │                │
-    │◄───────────────┤                │                │                │
-    │                │                │                │                │
+```mermaid
+sequenceDiagram
+  autonumber
+  participant M as Matrix Server
+  participant G as Gitai Agent
+  participant P as Policy Engine
+  participant L as LLM
+  participant T as MCP Server
+
+  M->>G: User message
+
+  Note over G: 1. Parse envelope
+
+  G->>P: 2. Check trust context
+  P-->>G: 3. Allowed? YES
+
+  G->>L: 4. Call LLM
+  L-->>G: 5. Tool proposal
+
+  G->>P: 6. Check capability
+  P-->>G: 7. Allowed? YES
+
+  G->>T: 8. Execute tool
+  T-->>G: 9. Result
+
+  Note over G: 10. Redact & format<br/>11. Audit log
+
+  G-->>M: Response
 ```
 
 ---
 
 ### Lifecycle: Approval Workflow
 
-```
-┌────────┐       ┌────────┐       ┌────────┐       ┌────────┐
-│ Gitai  │       │ Ruriko │       │Approval│       │Approver│
-│ Agent  │       │        │       │ Room   │       │ User   │
-└───┬────┘       └───┬────┘       └───┬────┘       └───┬────┘
-    │                │                │                │
-    │ 1. Needs       │                │                │
-    │    approval    │                │                │
-    │                │                │                │
-    │ 2. Request     │                │                │
-    │    approval    │                │                │
-    ├───────────────►│                │                │
-    │                │                │                │
-    │                │ 3. Generate    │                │
-    │                │    approval obj│                │
-    │                │    Store in DB │                │
-    │                │                │                │
-    │                │ 4. Post to     │                │
-    │                │    room        │                │
-    │                ├───────────────►│                │
-    │                │                │                │
-    │                │                │ 5. Review      │
-    │                │                ├───────────────►│
-    │                │                │                │
-    │                │                │ 6. Decision    │
-    │                │                │    command     │
-    │                │◄───────────────┼────────────────┤
-    │                │    approve ID  │                │
-    │                │                │                │
-    │                │ 7. Validate    │                │
-    │                │    decision    │                │
-    │                │    Update DB   │                │
-    │                │                │                │
-    │ 8. Notify      │                │                │
-    │    agent       │                │                │
-    │◄───────────────┤                │                │
-    │   APPROVED     │                │                │
-    │                │                │                │
-    │ 9. Execute     │                │                │
-    │    operation   │                │                │
-    │                │                │                │
+```mermaid
+sequenceDiagram
+  autonumber
+  participant G as Gitai Agent
+  participant R as Ruriko
+  participant AR as Approval Room
+  actor H as Approver User
+
+  Note over G: 1. Needs approval
+
+  G->>R: 2. Request approval
+
+  Note over R: 3. Generate approval object<br/>Store in DB
+
+  R->>AR: 4. Post request to room
+  AR->>H: 5. Review
+
+  H->>AR: 6. Decision command<br/>(approve ID)
+  AR-->>R: Decision event delivered
+
+  Note over R: 7. Validate decision<br/>Update DB
+
+  R-->>G: 8. Notify agent: APPROVED
+
+  Note over G: 9. Execute operation
 ```
 
 ---

@@ -10,6 +10,7 @@ import (
 
 	"github.com/bdobrica/Ruriko/common/trace"
 	"github.com/bdobrica/Ruriko/common/version"
+	"github.com/bdobrica/Ruriko/internal/ruriko/runtime"
 	"github.com/bdobrica/Ruriko/internal/ruriko/secrets"
 	"github.com/bdobrica/Ruriko/internal/ruriko/store"
 )
@@ -18,11 +19,17 @@ import (
 type Handlers struct {
 	store   *store.Store
 	secrets *secrets.Store
+	runtime runtime.Runtime
 }
 
 // NewHandlers creates a new Handlers instance
 func NewHandlers(s *store.Store, sec *secrets.Store) *Handlers {
 	return &Handlers{store: s, secrets: sec}
+}
+
+// SetRuntime attaches a runtime backend to the handlers after construction.
+func (h *Handlers) SetRuntime(rt runtime.Runtime) {
+	h.runtime = rt
 }
 
 // HandleHelp shows available commands

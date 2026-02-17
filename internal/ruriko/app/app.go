@@ -4,33 +4,41 @@ package app
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"maunium.net/go/mautrix/event"
 
 	"github.com/bdobrica/Ruriko/internal/ruriko/commands"
 	"github.com/bdobrica/Ruriko/internal/ruriko/matrix"
+	"github.com/bdobrica/Ruriko/internal/ruriko/runtime"
+	"github.com/bdobrica/Ruriko/internal/ruriko/runtime/docker"
 	"github.com/bdobrica/Ruriko/internal/ruriko/secrets"
 	"github.com/bdobrica/Ruriko/internal/ruriko/store"
 )
 
 // Config holds application configuration
 type Config struct {
-	DatabasePath string
-	MasterKey    []byte
-	Matrix       matrix.Config
+	DatabasePath      string
+	MasterKey         []byte
+	Matrix            matrix.Config
+	EnableDocker      bool
+	DockerNetwork     string
+	ReconcileInterval time.Duration
 }
 
 // App is the main Ruriko application
 type App struct {
-	config   *Config
-	store    *store.Store
-	secrets  *secrets.Store
-	matrix   *matrix.Client
-	router   *commands.Router
-	handlers *commands.Handlers
+	config     *Config
+	store      *store.Store
+	secrets    *secrets.Store
+	matrix     *matrix.Client
+	router     *commands.Router
+	handlers   *commands.Handlers
+	reconciler *runtime.Reconciler
 }
 
 // New creates a new Ruriko application
@@ -61,12 +69,46 @@ func New(config *Config) (*App, error) {
 	router := commands.NewRouter("/ruriko")
 	handlers := commands.NewHandlers(store, secretsStore)
 
+	// Initialize Docker runtime if enabled
+	var reconciler *runtime.Reconciler
+	if config.EnableDocker {
+		networkName := config.DockerNetwork
+		if networkName == "" {
+			networkName = runtime.DefaultNetwork
+		}
+		dockerAdapter, err := docker.NewWithNetwork(networkName)
+		if err != nil {
+			log.Printf("Warning: Docker runtime unavailable: %v", err)
+		} else {
+			handlers.SetRuntime(dockerAdapter)
+			reconcileInterval := config.ReconcileInterval
+			if reconcileInterval == 0 {
+				reconcileInterval = 30 * time.Second
+			}
+			reconciler = runtime.NewReconciler(dockerAdapter, store, runtime.ReconcilerConfig{
+				Interval: reconcileInterval,
+			})
+		}
+	}
+
 	// Register command handlers
 	router.Register("help", handlers.HandleHelp)
 	router.Register("version", handlers.HandleVersion)
 	router.Register("ping", handlers.HandlePing)
 	router.Register("agents.list", handlers.HandleAgentsList)
 	router.Register("agents.show", handlers.HandleAgentsShow)
+	// Register command handlers
+	router.Register("help", handlers.HandleHelp)
+	router.Register("version", handlers.HandleVersion)
+	router.Register("ping", handlers.HandlePing)
+	router.Register("agents.list", handlers.HandleAgentsList)
+	router.Register("agents.show", handlers.HandleAgentsShow)
+	router.Register("agents.create", handlers.HandleAgentsCreate)
+	router.Register("agents.stop", handlers.HandleAgentsStop)
+	router.Register("agents.start", handlers.HandleAgentsStart)
+	router.Register("agents.respawn", handlers.HandleAgentsRespawn)
+	router.Register("agents.delete", handlers.HandleAgentsDelete)
+	router.Register("agents.status", handlers.HandleAgentsStatus)
 	router.Register("audit.tail", handlers.HandleAuditTail)
 	router.Register("trace", handlers.HandleTrace)
 	router.Register("secrets.list", handlers.HandleSecretsList)
@@ -78,12 +120,13 @@ func New(config *Config) (*App, error) {
 	router.Register("secrets.unbind", handlers.HandleSecretsUnbind)
 
 	return &App{
-		config:   config,
-		store:    store,
-		secrets:  secretsStore,
-		matrix:   matrixClient,
-		router:   router,
-		handlers: handlers,
+		config:     config,
+		store:      store,
+		secrets:    secretsStore,
+		matrix:     matrixClient,
+		router:     router,
+		handlers:   handlers,
+		reconciler: reconciler,
 	}, nil
 }
 
@@ -96,6 +139,11 @@ func (a *App) Run() error {
 	fmt.Println("Starting Matrix sync...")
 	if err := a.matrix.Start(ctx, a.handleMessage); err != nil {
 		return fmt.Errorf("failed to start Matrix client: %w", err)
+	}
+
+	// Start reconciler in background if configured
+	if a.reconciler != nil {
+		go a.reconciler.Run(ctx)
 	}
 
 	// Send startup message to admin rooms

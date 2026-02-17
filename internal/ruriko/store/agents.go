@@ -16,6 +16,9 @@ type Agent struct {
 	LastSeen       sql.NullTime
 	RuntimeVersion sql.NullString
 	GosutoVersion  sql.NullInt64
+	ContainerID    sql.NullString
+	ControlURL     sql.NullString
+	Image          sql.NullString
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 }
@@ -26,9 +29,10 @@ func (s *Store) CreateAgent(agent *Agent) error {
 	agent.UpdatedAt = time.Now()
 
 	_, err := s.db.Exec(`
-		INSERT INTO agents (id, mxid, display_name, template, status, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, agent.ID, agent.MXID, agent.DisplayName, agent.Template, agent.Status, agent.CreatedAt, agent.UpdatedAt)
+		INSERT INTO agents (id, mxid, display_name, template, status, container_id, control_url, image, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, agent.ID, agent.MXID, agent.DisplayName, agent.Template, agent.Status,
+		agent.ContainerID, agent.ControlURL, agent.Image, agent.CreatedAt, agent.UpdatedAt)
 
 	if err != nil {
 		return fmt.Errorf("failed to create agent: %w", err)
@@ -42,13 +46,15 @@ func (s *Store) GetAgent(id string) (*Agent, error) {
 	agent := &Agent{}
 	err := s.db.QueryRow(`
 		SELECT id, mxid, display_name, template, status, last_seen,
-		       runtime_version, gosuto_version, created_at, updated_at
+		       runtime_version, gosuto_version, container_id, control_url, image,
+		       created_at, updated_at
 		FROM agents
 		WHERE id = ?
 	`, id).Scan(
 		&agent.ID, &agent.MXID, &agent.DisplayName, &agent.Template,
 		&agent.Status, &agent.LastSeen, &agent.RuntimeVersion,
-		&agent.GosutoVersion, &agent.CreatedAt, &agent.UpdatedAt,
+		&agent.GosutoVersion, &agent.ContainerID, &agent.ControlURL, &agent.Image,
+		&agent.CreatedAt, &agent.UpdatedAt,
 	)
 
 	if err == sql.ErrNoRows {
@@ -65,7 +71,8 @@ func (s *Store) GetAgent(id string) (*Agent, error) {
 func (s *Store) ListAgents() ([]*Agent, error) {
 	rows, err := s.db.Query(`
 		SELECT id, mxid, display_name, template, status, last_seen,
-		       runtime_version, gosuto_version, created_at, updated_at
+		       runtime_version, gosuto_version, container_id, control_url, image,
+		       created_at, updated_at
 		FROM agents
 		ORDER BY created_at DESC
 	`)
@@ -80,7 +87,8 @@ func (s *Store) ListAgents() ([]*Agent, error) {
 		err := rows.Scan(
 			&agent.ID, &agent.MXID, &agent.DisplayName, &agent.Template,
 			&agent.Status, &agent.LastSeen, &agent.RuntimeVersion,
-			&agent.GosutoVersion, &agent.CreatedAt, &agent.UpdatedAt,
+			&agent.GosutoVersion, &agent.ContainerID, &agent.ControlURL, &agent.Image,
+			&agent.CreatedAt, &agent.UpdatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan agent: %w", err)
@@ -128,6 +136,19 @@ func (s *Store) UpdateAgentLastSeen(id string) error {
 	`, time.Now(), time.Now(), id)
 
 	return err
+}
+
+// UpdateAgentHandle stores the Docker container ID and ACP control URL.
+func (s *Store) UpdateAgentHandle(id, containerID, controlURL, image string) error {
+	_, err := s.db.Exec(`
+		UPDATE agents
+		SET container_id = ?, control_url = ?, image = ?, updated_at = ?
+		WHERE id = ?
+	`, containerID, controlURL, image, time.Now(), id)
+	if err != nil {
+		return fmt.Errorf("failed to update agent handle: %w", err)
+	}
+	return nil
 }
 
 // DeleteAgent removes an agent

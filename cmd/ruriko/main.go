@@ -3,7 +3,9 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bdobrica/Ruriko/common/crypto"
 	"github.com/bdobrica/Ruriko/common/version"
@@ -79,8 +81,19 @@ func loadConfig() *app.Config {
 		}
 	}
 
+	enableDocker := getEnvBool("DOCKER_ENABLE", false)
+	dockerNetwork := getEnv("DOCKER_NETWORK", "")
+	reconcileIntervalStr := getEnv("RECONCILE_INTERVAL", "30s")
+	reconcileInterval, err := time.ParseDuration(reconcileIntervalStr)
+	if err != nil {
+		reconcileInterval = 30 * time.Second
+	}
+
 	return &app.Config{
-		DatabasePath: dbPath,
+		DatabasePath:      dbPath,
+		EnableDocker:      enableDocker,
+		DockerNetwork:     dockerNetwork,
+		ReconcileInterval: reconcileInterval,
 		Matrix: matrix.Config{
 			Homeserver:  homeserver,
 			UserID:      userID,
@@ -90,10 +103,21 @@ func loadConfig() *app.Config {
 	}
 }
 
-// getEnv gets an environment variable with a default value
 func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
+	if v := os.Getenv(key); v != "" {
+		return v
 	}
 	return defaultValue
+}
+
+func getEnvBool(key string, defaultValue bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return defaultValue
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return defaultValue
+	}
+	return b
 }
