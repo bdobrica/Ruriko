@@ -7,6 +7,7 @@
 *.dll
 *.so
 *.dylib
+bin/
 
 # Test binary, built with `go test -c`
 *.test
@@ -23,3 +24,46 @@ go.work.sum
 
 # env file
 .env
+
+# Ruriko-specific
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+/ruriko
+/gitai
+/gosuto-validate
+/envelope-lint
+/keygen
+/cmd/ruriko/ruriko
+/cmd/gitai/gitai
+dist/
+build/
+
+# Secrets and sensitive data
+secrets/
+*.key
+*.pem
+*.crt
+master.key
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Test coverage
+coverage.out
+coverage.html
+
+# Temporary files
+tmp/
+temp/

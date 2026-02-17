@@ -1,0 +1,134 @@
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+
+linters:
+  enable:
+    - errcheck      # Check for unchecked errors
+    - gosimple      # Simplify code
+    - govet         # Vet examines Go source code
+    - ineffassign   # Detect ineffectual assignments
+    - staticcheck   # Advanced Go linter
+    - unused        # Check for unused code
+    - gofmt         # Check code formatting
+    - goimports     # Check import formatting
+    - misspell      # Check for misspelled English words
+    - gocritic      # Opinionated Go linter
+    - gocyclo       # Check cyclomatic complexity
+    - gosec         # Security checker
+    - unconvert     # Remove unnecessary type conversions
+    - unparam       # Check for unused function parameters
+    - prealloc      # Find slice declarations that could potentially be pre-allocated
+    - bodyclose     # Check for unclosed HTTP response bodies
+    - noctx         # Find sending HTTP requests without context
+    - sqlclosecheck # Check for unclosed sql.Rows and sql.Stmt
+    - rowserrcheck  # Check for Rows.Err() errors
+    - exportloopref # Check for exported loop variable references
+    - nilerr        # Find code that returns nil even if it checks that error is not nil
+    - errname       # Check that error names follow conventions
+    - errorlint     # Find code that will cause problems with Go 1.13+ error wrapping
+    - revive        # Fast, configurable, extensible, flexible linter
+
+  disable:
+    - deadcode      # Deprecated
+    - varcheck      # Deprecated
+    - structcheck   # Deprecated
+    - ifshort       # Deprecated
+    - golint        # Deprecated
+    - scopelint     # Deprecated
+    - maligned      # Deprecated
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+    
+  govet:
+    enable-all: true
+    
+  gocyclo:
+    min-complexity: 15
+    
+  gosec:
+    severity: medium
+    confidence: medium
+    excludes:
+      - G104  # Audit errors not checked (covered by errcheck)
+      
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - style
+      - performance
+      - experimental
+      - opinionated
+    disabled-checks:
+      - whyNoLint
+      - commentedOutCode
+      
+  revive:
+    severity: warning
+    enable-all-rules: false
+    rules:
+      - name: blank-imports
+      - name: context-as-argument
+      - name: context-keys-type
+      - name: dot-imports
+      - name: error-return
+      - name: error-strings
+      - name: error-naming
+      - name: exported
+      - name: if-return
+      - name: increment-decrement
+      - name: var-naming
+      - name: var-declaration
+      - name: package-comments
+      - name: range
+      - name: receiver-naming
+      - name: time-naming
+      - name: unexported-return
+      - name: indent-error-flow
+      - name: errorf
+      - name: empty-block
+      - name: superfluous-else
+      - name: unused-parameter
+      - name: unreachable-code
+      - name: redefines-builtin-id
+
+  misspell:
+    locale: US
+    
+  goimports:
+    local-prefixes: github.com/bdobrica/Ruriko
+
+issues:
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  
+  exclude-rules:
+    # Exclude some linters from running on tests files
+    - path: _test\.go
+      linters:
+        - gocyclo
+        - errcheck
+        - gosec
+        - gocritic
+        
+    # Exclude some staticcheck messages
+    - linters:
+        - staticcheck
+      text: "SA1019:" # Ignore deprecation warnings for now
+      
+    # Allow TODO comments
+    - linters:
+        - godox
+      text: "TODO"
+
+output:
+  format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
+  uniq-by-line: true
+  sort-results: true
