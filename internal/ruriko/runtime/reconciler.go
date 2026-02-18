@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/bdobrica/Ruriko/common/trace"
 	"github.com/bdobrica/Ruriko/internal/ruriko/store"
 )
 
@@ -47,8 +48,10 @@ func (r *Reconciler) Run(ctx context.Context) {
 			slog.Info("[reconciler] stopping")
 			return
 		case <-ticker.C:
-			if err := r.Reconcile(ctx); err != nil {
-				slog.Error("[reconciler] reconcile error", "err", err)
+			traceID := trace.GenerateID()
+			reconcileCtx := trace.WithTraceID(ctx, traceID)
+			if err := r.Reconcile(reconcileCtx); err != nil {
+				slog.Error("[reconciler] reconcile error", "err", err, "trace_id", traceID)
 			}
 		}
 	}
@@ -93,7 +96,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 		if !found {
 			// Agent should be running but no container found
 			if agent.Status == "running" {
-				slog.Warn("[reconciler] container missing, marking error", "agent", agent.ID)
+				slog.Warn("[reconciler] container missing, marking error", "agent", agent.ID, "trace_id", trace.FromContext(ctx))
 				r.store.UpdateAgentStatus(ctx, agent.ID, "error")
 				r.alert(agent.ID, "container missing; expected running")
 			}
@@ -102,13 +105,13 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 
 		status, err := r.runtime.Status(ctx, handle)
 		if err != nil {
-			slog.Warn("[reconciler] status error", "agent", agent.ID, "err", err)
+			slog.Warn("[reconciler] status error", "agent", agent.ID, "err", err, "trace_id", trace.FromContext(ctx))
 			continue
 		}
 
 		newStatus := containerStateToAgentStatus(status.State)
 		if newStatus != agent.Status {
-			slog.Info("[reconciler] status change", "agent", agent.ID, "from", agent.Status, "to", newStatus)
+			slog.Info("[reconciler] status change", "agent", agent.ID, "from", agent.Status, "to", newStatus, "trace_id", trace.FromContext(ctx))
 			r.store.UpdateAgentStatus(ctx, agent.ID, newStatus)
 
 			// Alert on unexpected transitions

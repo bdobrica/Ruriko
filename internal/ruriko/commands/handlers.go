@@ -12,6 +12,7 @@ import (
 	"github.com/bdobrica/Ruriko/common/trace"
 	"github.com/bdobrica/Ruriko/common/version"
 	"github.com/bdobrica/Ruriko/internal/ruriko/approvals"
+	"github.com/bdobrica/Ruriko/internal/ruriko/audit"
 	"github.com/bdobrica/Ruriko/internal/ruriko/provisioning"
 	"github.com/bdobrica/Ruriko/internal/ruriko/runtime"
 	"github.com/bdobrica/Ruriko/internal/ruriko/secrets"
@@ -31,6 +32,7 @@ type HandlersConfig struct {
 	Distributor *secrets.Distributor      // optional — enables secrets push
 	Templates   *templates.Registry       // optional — enables Gosuto template commands
 	Approvals   *approvals.Gate           // optional — enables approval gating
+	Notifier    audit.Notifier            // optional — enables audit room notifications
 }
 
 // Handlers holds all command handlers and dependencies.
@@ -42,11 +44,16 @@ type Handlers struct {
 	distributor *secrets.Distributor
 	templates   *templates.Registry
 	approvals   *approvals.Gate
+	notifier    audit.Notifier
 	dispatch    DispatchFunc
 }
 
 // NewHandlers creates a new Handlers instance from the given config.
 func NewHandlers(cfg HandlersConfig) *Handlers {
+	n := cfg.Notifier
+	if n == nil {
+		n = audit.Noop{}
+	}
 	return &Handlers{
 		store:       cfg.Store,
 		secrets:     cfg.Secrets,
@@ -55,6 +62,7 @@ func NewHandlers(cfg HandlersConfig) *Handlers {
 		distributor: cfg.Distributor,
 		templates:   cfg.Templates,
 		approvals:   cfg.Approvals,
+		notifier:    n,
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"maunium.net/go/mautrix/event"
 
 	"github.com/bdobrica/Ruriko/common/trace"
+	"github.com/bdobrica/Ruriko/internal/ruriko/audit"
 	"github.com/bdobrica/Ruriko/internal/ruriko/secrets"
 	"github.com/bdobrica/Ruriko/internal/ruriko/store"
 )
@@ -194,6 +195,10 @@ func (h *Handlers) HandleSecretsRotate(ctx context.Context, cmd *Command, evt *e
 		store.AuditPayload{"rotation_version": version}, ""); err != nil {
 		slog.Warn("audit write failed", "op", "secrets.rotate", "secret", name, "err", err)
 	}
+	h.notifier.Notify(ctx, audit.Event{
+		Kind: audit.KindSecretsRotated, Actor: evt.Sender.String(), Target: name,
+		Message: fmt.Sprintf("rotated to v%d", version), TraceID: traceID,
+	})
 
 	return fmt.Sprintf(
 		"🔄 Secret **%s** rotated to v%d\n\n"+

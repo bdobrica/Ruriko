@@ -10,6 +10,7 @@ import (
 	"maunium.net/go/mautrix/id"
 
 	"github.com/bdobrica/Ruriko/common/trace"
+	"github.com/bdobrica/Ruriko/internal/ruriko/audit"
 	"github.com/bdobrica/Ruriko/internal/ruriko/runtime"
 	"github.com/bdobrica/Ruriko/internal/ruriko/secrets"
 	"github.com/bdobrica/Ruriko/internal/ruriko/store"
@@ -268,6 +269,10 @@ func (h *Handlers) HandleAgentsDisable(ctx context.Context, cmd *Command, evt *e
 		store.AuditPayload{"mxid": agent.MXID.String, "erase": erase}, ""); err != nil {
 		slog.Warn("audit write failed", "op", "agents.disable", "err", err)
 	}
+	h.notifier.Notify(ctx, audit.Event{
+		Kind: audit.KindAgentDisabled, Actor: evt.Sender.String(), Target: agentID,
+		Message: fmt.Sprintf("disabled (erase=%v)", erase), TraceID: traceID,
+	})
 
 	sb.WriteString(fmt.Sprintf("\n(trace: %s)", traceID))
 	return sb.String(), nil

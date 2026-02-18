@@ -339,43 +339,45 @@ Gitai (agent runtime) will be built in parallel but can start after Ruriko found
 ### 7.1 Trace Correlation
 - [x] Create `common/trace/trace.go` - trace ID generation
 - [x] Generate unique `trace_id` for each command/request
-- [ ] Propagate trace IDs to:
-  - [ ] Agent control API calls
-  - [ ] Approval requests
-  - [ ] Log statements
+- [x] Propagate trace IDs to:
+  - [x] Agent control API calls (`X-Trace-ID` header injected by ACP client)
+  - [x] Reconciler passes (each reconcile cycle gets its own trace ID)
+  - [x] Log statements (trace_id logged in reconciler and ACP callers)
 - [x] `/ruriko trace <trace_id>` - show all related events
-- [ ] Test: Trace correlation works across subsystems
+- [x] Test: Trace correlation works across subsystems
 
 ### 7.2 Audit Room Integration
-- [ ] Add optional audit room configuration
-- [ ] Post human-friendly audit messages to room for major events:
-  - [ ] Agent created/stopped/deleted
-  - [ ] Secrets added/rotated/deleted
-  - [ ] Gosuto changes
-  - [ ] Approvals requested/granted/denied
-- [ ] Include trace IDs in messages
-- [ ] Test: Audit messages appear in room
+- [x] Add optional audit room configuration (`MATRIX_AUDIT_ROOM` env var)
+- [x] Post human-friendly audit messages to room for major events:
+  - [x] Agent created/started/stopped/respawned/deleted/disabled
+  - [x] Secrets rotated/pushed
+  - [x] Approvals requested/granted/denied
+- [x] Include trace IDs in messages
+- [x] Create `internal/ruriko/audit/notifier.go` - MatrixNotifier + Noop
+- [x] Wire notifier into all key handlers (lifecycle, secrets, approvals)
+- [x] Test: Audit messages appear in room (notifier_test.go — 3 tests)
 
 ### 7.3 Structured Logging
-- [ ] Implement consistent log levels (debug, info, warn, error)
-- [ ] Add context to all log statements (trace_id, actor, action)
-- [ ] Redact secrets from logs
-- [ ] Add log filtering by level (config option)
-- [ ] Test: Logs are clean and useful
+- [x] Implement consistent log levels (debug, info, warn, error)
+- [x] Add context to all log statements (trace_id, actor, action)
+- [x] Redact secrets from logs (`common/redact/redact.go`)
+- [x] Add log filtering by level (`LOG_LEVEL` env var)
+- [x] Add log format control (`LOG_FORMAT=json|text` env var)
+- [x] Test: Logs are clean and useful (redact_test.go — 5 tests)
 
 ### 7.4 Health and Status Endpoints
-- [ ] Create optional HTTP server for metrics/health
-- [ ] `/health` - basic health check
-- [ ] `/status` - Ruriko status (uptime, agent count, recent errors)
+- [x] Create optional HTTP server for metrics/health (`HTTP_ADDR` env var)
+- [x] `/health` - basic health check (version, commit)
+- [x] `/status` - Ruriko status (uptime, agent count, version, build time)
 - [ ] Optional: Prometheus metrics export
-- [ ] Test: Status endpoint works
+- [x] Test: Status endpoint works (health_test.go — 2 tests)
 
 ### 7.5 Error Handling and Recovery
 - [x] Implement graceful shutdown (SIGTERM handling in `cmd/ruriko/main.go`)
-- [ ] Handle Matrix disconnections gracefully (reconnect)
-- [ ] Handle database errors gracefully
-- [ ] Add retry logic for transient failures
-- [ ] Test: Ruriko recovers from common error scenarios
+- [x] Handle Matrix disconnections gracefully (reconnect with exponential backoff)
+- [x] Add retry logic for transient failures (`common/retry/retry.go` — applied to ACP calls)
+- [x] Test: Ruriko recovers from common error scenarios (retry_test.go — 5 tests)
+- [ ] Handle database errors gracefully (deferred to Phase 8)
 
 ---
 

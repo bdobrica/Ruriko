@@ -10,6 +10,7 @@ import (
 	"maunium.net/go/mautrix/event"
 
 	"github.com/bdobrica/Ruriko/common/trace"
+	"github.com/bdobrica/Ruriko/internal/ruriko/audit"
 	"github.com/bdobrica/Ruriko/internal/ruriko/runtime"
 	"github.com/bdobrica/Ruriko/internal/ruriko/runtime/acp"
 	"github.com/bdobrica/Ruriko/internal/ruriko/store"
@@ -91,6 +92,10 @@ func (h *Handlers) HandleAgentsCreate(ctx context.Context, cmd *Command, evt *ev
 		h.store.UpdateAgentStatus(ctx, agentID, "stopped")
 		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.create", agentID, "success",
 			store.AuditPayload{"note": "no runtime configured, agent created as stopped"}, "")
+		h.notifier.Notify(ctx, audit.Event{
+			Kind: audit.KindAgentCreated, Actor: evt.Sender.String(), Target: agentID,
+			Message: "created (no runtime; status: stopped)", TraceID: traceID,
+		})
 		return fmt.Sprintf("✅ Agent **%s** created (no runtime configured, status: stopped)\n\n(trace: %s)", agentID, traceID), nil
 	}
 
@@ -118,6 +123,10 @@ func (h *Handlers) HandleAgentsCreate(ctx context.Context, cmd *Command, evt *ev
 	h.store.UpdateAgentStatus(ctx, agentID, "running")
 	h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.create", agentID, "success",
 		store.AuditPayload{"container_id": truncateID(handle.ContainerID, 12), "control_url": handle.ControlURL}, "")
+	h.notifier.Notify(ctx, audit.Event{
+		Kind: audit.KindAgentCreated, Actor: evt.Sender.String(), Target: agentID,
+		Message: fmt.Sprintf("created and started (container: %s)", truncateID(handle.ContainerID, 12)), TraceID: traceID,
+	})
 
 	return fmt.Sprintf(`✅ Agent **%s** created and started
 
@@ -168,6 +177,10 @@ func (h *Handlers) HandleAgentsStop(ctx context.Context, cmd *Command, evt *even
 	if err := h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.stop", agentID, "success", nil, ""); err != nil {
 		slog.Warn("audit write failed", "op", "agents.stop", "agent", agentID, "err", err)
 	}
+	h.notifier.Notify(ctx, audit.Event{
+		Kind: audit.KindAgentStopped, Actor: evt.Sender.String(), Target: agentID,
+		Message: "stopped", TraceID: traceID,
+	})
 
 	return fmt.Sprintf("⏹️  Agent **%s** stopped\n\n(trace: %s)", agentID, traceID), nil
 }
@@ -212,6 +225,10 @@ func (h *Handlers) HandleAgentsStart(ctx context.Context, cmd *Command, evt *eve
 	if err := h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.start", agentID, "success", nil, ""); err != nil {
 		slog.Warn("audit write failed", "op", "agents.start", "agent", agentID, "err", err)
 	}
+	h.notifier.Notify(ctx, audit.Event{
+		Kind: audit.KindAgentStarted, Actor: evt.Sender.String(), Target: agentID,
+		Message: "started", TraceID: traceID,
+	})
 
 	return fmt.Sprintf("▶️  Agent **%s** started\n\n(trace: %s)", agentID, traceID), nil
 }
@@ -249,6 +266,10 @@ func (h *Handlers) HandleAgentsRespawn(ctx context.Context, cmd *Command, evt *e
 	if err := h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.respawn", agentID, "success", nil, ""); err != nil {
 		slog.Warn("audit write failed", "op", "agents.respawn", "agent", agentID, "err", err)
 	}
+	h.notifier.Notify(ctx, audit.Event{
+		Kind: audit.KindAgentRespawned, Actor: evt.Sender.String(), Target: agentID,
+		Message: "respawned", TraceID: traceID,
+	})
 
 	return fmt.Sprintf("🔄 Agent **%s** respawned\n\n(trace: %s)", agentID, traceID), nil
 }
@@ -297,6 +318,10 @@ func (h *Handlers) HandleAgentsDelete(ctx context.Context, cmd *Command, evt *ev
 	if err := h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.delete", agentID, "success", nil, ""); err != nil {
 		slog.Warn("audit write failed", "op", "agents.delete", "agent", agentID, "err", err)
 	}
+	h.notifier.Notify(ctx, audit.Event{
+		Kind: audit.KindAgentDeleted, Actor: evt.Sender.String(), Target: agentID,
+		Message: "deleted", TraceID: traceID,
+	})
 
 	return fmt.Sprintf("🗑️  Agent **%s** deleted\n\n(trace: %s)", agentID, traceID), nil
 }

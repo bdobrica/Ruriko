@@ -17,6 +17,10 @@ import (
 )
 
 func main() {
+	// Configure structured logging as early as possible so all subsequent
+	// messages use the correct handler and level.
+	configureLogging()
+
 	fmt.Printf("Ruriko Control Plane\n")
 	fmt.Printf("Version: %s\n", version.Version)
 	fmt.Printf("Commit: %s\n", version.GitCommit)
@@ -124,6 +128,8 @@ func loadConfig() *app.Config {
 		ReconcileInterval: reconcileInterval,
 		AdminSenders:      adminSenders,
 		Provisioning:      provisioningCfg,
+		HTTPAddr:          getEnv("HTTP_ADDR", ""),
+		AuditRoomID:       getEnv("MATRIX_AUDIT_ROOM", ""),
 		TemplatesFS:       loadTemplatesFS(),
 		Matrix: matrix.Config{
 			Homeserver:  homeserver,
@@ -164,4 +170,37 @@ func loadTemplatesFS() fs.FS {
 	}
 	slog.Info("templates directory found", "dir", dir)
 	return os.DirFS(dir)
+}
+
+// configureLogging initialises the global slog logger from environment variables.
+//
+// Supported variables:
+//   - LOG_LEVEL:  debug | info | warn | error  (default: info)
+//   - LOG_FORMAT: text | json                  (default: text)
+func configureLogging() {
+	levelStr := strings.ToLower(getEnv("LOG_LEVEL", "info"))
+	var level slog.Level
+	switch levelStr {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn", "warning":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		level = slog.LevelInfo
+	}
+
+	opts := &slog.HandlerOptions{Level: level}
+
+	var handler slog.Handler
+	format := strings.ToLower(getEnv("LOG_FORMAT", "text"))
+	if format == "json" {
+		handler = slog.NewJSONHandler(os.Stderr, opts)
+	} else {
+		handler = slog.NewTextHandler(os.Stderr, opts)
+	}
+
+	slog.SetDefault(slog.New(handler))
+	slog.Debug("logging configured", "level", level.String(), "format", format)
 }

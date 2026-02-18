@@ -12,6 +12,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/bdobrica/Ruriko/common/trace"
 )
 
 const defaultTimeout = 10 * time.Second
@@ -107,6 +109,7 @@ func (c *Client) get(ctx context.Context, path string, out interface{}) error {
 	if err != nil {
 		return err
 	}
+	setTraceHeader(req, ctx)
 	return c.do(req, out)
 }
 
@@ -127,7 +130,15 @@ func (c *Client) post(ctx context.Context, path string, body interface{}, out in
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	setTraceHeader(req, ctx)
 	return c.do(req, out)
+}
+
+// setTraceHeader injects the trace ID from ctx into the X-Trace-ID request header.
+func setTraceHeader(req *http.Request, ctx context.Context) {
+	if traceID := trace.FromContext(ctx); traceID != "" {
+		req.Header.Set("X-Trace-ID", traceID)
+	}
 }
 
 func (c *Client) do(req *http.Request, out interface{}) error {

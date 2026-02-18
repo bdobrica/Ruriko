@@ -235,3 +235,15 @@ func (s *Store) DeleteAgent(ctx context.Context, id string) error {
 
 	return nil
 }
+
+// AgentCount returns the number of agents that are not in "deleted" status.
+func (s *Store) AgentCount(ctx context.Context) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM agents WHERE status != 'deleted'",
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count agents: %w", err)
+	}
+	return count, nil
+}

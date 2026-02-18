@@ -16,6 +16,7 @@ import (
 	"maunium.net/go/mautrix/event"
 
 	"github.com/bdobrica/Ruriko/internal/ruriko/approvals"
+	"github.com/bdobrica/Ruriko/internal/ruriko/audit"
 	"github.com/bdobrica/Ruriko/internal/ruriko/commands"
 	"github.com/bdobrica/Ruriko/internal/ruriko/matrix"
 	"github.com/bdobrica/Ruriko/internal/ruriko/provisioning"
@@ -44,17 +45,25 @@ type Config struct {
 	// When non-nil, Gosuto template commands are enabled.  Pass os.DirFS(path)
 	// or an embed.FS sub-tree.
 	TemplatesFS fs.FS
+	// HTTPAddr is the TCP address for the optional health/status HTTP server
+	// (e.g. ":8080"). When empty the server is disabled.
+	HTTPAddr string
+	// AuditRoomID is an optional Matrix room ID (e.g. "!abc:example.com") where
+	// Ruriko posts human-friendly summaries of major control-plane events.
+	// When empty, audit room notifications are disabled.
+	AuditRoomID string
 }
 
 // App is the main Ruriko application
 type App struct {
-	config     *Config
-	store      *store.Store
-	secrets    *secrets.Store
-	matrix     *matrix.Client
-	router     *commands.Router
-	handlers   *commands.Handlers
-	reconciler *runtime.Reconciler
+	config       *Config
+	store        *store.Store
+	secrets      *secrets.Store
+	matrix       *matrix.Client
+	router       *commands.Router
+	handlers     *commands.Handlers
+	reconciler   *runtime.Reconciler
+	healthServer *HealthServer
 }
 
 // New creates a new Ruriko application
@@ -146,6 +155,14 @@ func New(config *Config) (*App, error) {
 	handlersCfg.Approvals = approvalsGate
 	slog.Info("approval workflow ready")
 
+	// Initialise audit room notifier.
+	var notifier audit.Notifier = audit.Noop{}
+	if config.AuditRoomID != "" {
+		notifier = audit.NewMatrixNotifier(matrixClient, config.AuditRoomID)
+		slog.Info("audit room notifier ready", "room", config.AuditRoomID)
+	}
+	handlersCfg.Notifier = notifier
+
 	handlers := commands.NewHandlers(handlersCfg)
 
 	// Register command handlers
@@ -186,14 +203,22 @@ func New(config *Config) (*App, error) {
 		return router.Dispatch(ctx, action, cmd, evt)
 	})
 
+	// Optionally build the health/status HTTP server.
+	var healthServer *HealthServer
+	if config.HTTPAddr != "" {
+		healthServer = NewHealthServer(config.HTTPAddr, store)
+		slog.Info("health server configured", "addr", config.HTTPAddr)
+	}
+
 	return &App{
-		config:     config,
-		store:      store,
-		secrets:    secretsStore,
-		matrix:     matrixClient,
-		router:     router,
-		handlers:   handlers,
-		reconciler: reconciler,
+		config:       config,
+		store:        store,
+		secrets:      secretsStore,
+		matrix:       matrixClient,
+		router:       router,
+		handlers:     handlers,
+		reconciler:   reconciler,
+		healthServer: healthServer,
 	}, nil
 }
 
@@ -201,6 +226,13 @@ func New(config *Config) (*App, error) {
 func (a *App) Run() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Start health/status HTTP server if configured.
+	if a.healthServer != nil {
+		if err := a.healthServer.Start(ctx); err != nil {
+			slog.Warn("health server failed to start; continuing without it", "err", err)
+		}
+	}
 
 	// Start Matrix client
 	slog.Info("starting Matrix sync")
@@ -233,6 +265,11 @@ func (a *App) Run() error {
 func (a *App) Stop() {
 	slog.Info("stopping Matrix client")
 	a.matrix.Stop()
+
+	if a.healthServer != nil {
+		slog.Info("stopping health server")
+		a.healthServer.Stop()
+	}
 
 	slog.Info("closing database")
 	a.store.Close()

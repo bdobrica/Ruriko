@@ -10,8 +10,10 @@ import (
 
 	"maunium.net/go/mautrix/event"
 
+	"github.com/bdobrica/Ruriko/common/retry"
 	"github.com/bdobrica/Ruriko/common/spec/gosuto"
 	"github.com/bdobrica/Ruriko/common/trace"
+	"github.com/bdobrica/Ruriko/internal/ruriko/audit"
 	"github.com/bdobrica/Ruriko/internal/ruriko/runtime/acp"
 	"github.com/bdobrica/Ruriko/internal/ruriko/store"
 )
@@ -441,6 +443,10 @@ func (h *Handlers) HandleSecretsPush(ctx context.Context, cmd *Command, evt *eve
 		store.AuditPayload{"pushed": n}, ""); err != nil {
 		slog.Warn("audit write failed", "op", "secrets.push", "err", err)
 	}
+	h.notifier.Notify(ctx, audit.Event{
+		Kind: audit.KindSecretsPushed, Actor: evt.Sender.String(), Target: agentID,
+		Message: fmt.Sprintf("pushed %d secret(s)", n), TraceID: traceID,
+	})
 
 	return fmt.Sprintf("📤 Pushed **%d** secret(s) to **%s**\n\n(trace: %s)", n, agentID, traceID), nil
 }
@@ -452,9 +458,12 @@ func pushGosuto(ctx context.Context, controlURL string, gv *store.GosutoVersion)
 	traceID := trace.FromContext(ctx)
 	slog.Info("pushing Gosuto config to agent", "control_url", controlURL, "version", gv.Version, "trace", traceID)
 	client := acp.New(controlURL)
-	return client.ApplyConfig(ctx, acp.ConfigApplyRequest{
-		YAML: gv.YAMLBlob,
-		Hash: gv.Hash,
+	// ApplyConfig is idempotent — retry up to 3 times on transient failures.
+	return retry.Do(ctx, retry.DefaultConfig, func() error {
+		return client.ApplyConfig(ctx, acp.ConfigApplyRequest{
+			YAML: gv.YAMLBlob,
+			Hash: gv.Hash,
+		})
 	})
 }
 

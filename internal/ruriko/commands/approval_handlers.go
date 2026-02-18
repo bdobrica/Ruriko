@@ -13,6 +13,7 @@ import (
 
 	"github.com/bdobrica/Ruriko/common/trace"
 	"github.com/bdobrica/Ruriko/internal/ruriko/approvals"
+	"github.com/bdobrica/Ruriko/internal/ruriko/audit"
 	"github.com/bdobrica/Ruriko/internal/ruriko/store"
 )
 
@@ -193,6 +194,10 @@ func (h *Handlers) HandleApprovalDecision(ctx context.Context, text string, evt 
 
 		h.store.WriteAudit(ctx, traceID, senderMXID, action, decision.ApprovalID, "success",
 			store.AuditPayload{"original_action": approval.Action, "target": approval.Target}, "")
+		h.notifier.Notify(ctx, audit.Event{
+			Kind: audit.KindApprovalApproved, Actor: senderMXID, Target: decision.ApprovalID,
+			Message: fmt.Sprintf("approved %s on %s", approval.Action, approval.Target), TraceID: traceID,
+		})
 
 		// Re-execute the approved operation via the dispatch callback.
 		result, execErr := h.executeApproved(ctx, approval, evt, traceID)
@@ -212,6 +217,10 @@ func (h *Handlers) HandleApprovalDecision(ctx context.Context, text string, evt 
 
 	h.store.WriteAudit(ctx, traceID, senderMXID, action, decision.ApprovalID, "success",
 		store.AuditPayload{"original_action": approval.Action, "target": approval.Target, "reason": decision.Reason}, "")
+	h.notifier.Notify(ctx, audit.Event{
+		Kind: audit.KindApprovalDenied, Actor: senderMXID, Target: decision.ApprovalID,
+		Message: fmt.Sprintf("denied %s on %s (reason: %s)", approval.Action, approval.Target, decision.Reason), TraceID: traceID,
+	})
 
 	reasonStr := ""
 	if decision.Reason != "" {
@@ -298,6 +307,10 @@ func (h *Handlers) requestApprovalIfNeeded(
 
 	h.store.WriteAudit(ctx, traceID, evt.Sender.String(), action+".approval_requested", target, "pending",
 		store.AuditPayload{"approval_id": ap.ID}, "")
+	h.notifier.Notify(ctx, audit.Event{
+		Kind: audit.KindApprovalRequested, Actor: evt.Sender.String(), Target: target,
+		Message: fmt.Sprintf("approval requested for %s (id: %s)", action, ap.ID), TraceID: traceID,
+	})
 
 	msg = fmt.Sprintf(
 		"⏳ **Approval required** for **%s** on **%s**.\n\n"+
