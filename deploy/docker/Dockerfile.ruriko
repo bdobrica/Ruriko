@@ -1,0 +1,72 @@
+# syntax=docker/dockerfile:1
+
+# ---------------------------------------------------------------------------
+# Stage 1: builder
+# Compiles the Ruriko binary with full version metadata injected at link time.
+# ---------------------------------------------------------------------------
+FROM golang:1.25-alpine AS builder
+
+# Install git so that `git rev-parse` works during the build.
+RUN apk add --no-cache git ca-certificates tzdata
+
+WORKDIR /build
+
+# Cache module downloads before copying source code.
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy entire source tree.
+COPY . .
+
+# Inject version info via ldflags, matching the Makefile convention.
+ARG GIT_COMMIT=unknown
+ARG GIT_TAG=v0.0.0
+ARG BUILD_TIME=unknown
+
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build \
+      -trimpath \
+      -ldflags "-s -w \
+        -X github.com/bdobrica/Ruriko/common/version.GitCommit=${GIT_COMMIT} \
+        -X github.com/bdobrica/Ruriko/common/version.Version=${GIT_TAG} \
+        -X github.com/bdobrica/Ruriko/common/version.BuildTime=${BUILD_TIME}" \
+      -o /build/ruriko \
+      ./cmd/ruriko
+
+# ---------------------------------------------------------------------------
+# Stage 2: runtime image
+# Minimal Alpine image — only the binary, entrypoint, and CA certificates.
+# ---------------------------------------------------------------------------
+FROM alpine:3.21
+
+# Runtime dependencies: CA certs (for TLS to Matrix), tzdata (for time zones),
+# and a non-root user to run the process.
+RUN apk add --no-cache ca-certificates tzdata && \
+    addgroup -S ruriko && \
+    adduser  -S -G ruriko -h /data ruriko
+
+# Data directory — SQLite database and any runtime state land here.
+# Mount an external volume at /data to persist state across container restarts.
+VOLUME /data
+
+# Optional templates directory.  Mount agent Gosuto templates here or
+# set TEMPLATES_DIR to a different path.
+VOLUME /templates
+
+# Copy the compiled binary and the entrypoint helper.
+COPY --from=builder /build/ruriko        /usr/local/bin/ruriko
+COPY deploy/docker/entrypoint.sh         /entrypoint.sh
+
+RUN chmod +x /entrypoint.sh
+
+# Ruriko listens on 8080 for the optional health/status HTTP endpoint.
+# Set HTTP_ADDR=:8080 (or any address) in env to enable it.
+EXPOSE 8080
+
+# Run as non-root.
+USER ruriko
+
+WORKDIR /data
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["ruriko"]
