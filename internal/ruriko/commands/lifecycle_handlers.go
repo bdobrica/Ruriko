@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
 
@@ -162,7 +163,9 @@ func (h *Handlers) HandleAgentsStop(ctx context.Context, cmd *Command, evt *even
 	}
 
 	h.store.UpdateAgentStatus(ctx, agentID, "stopped")
-	h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.stop", agentID, "success", nil, "")
+	if err := h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.stop", agentID, "success", nil, ""); err != nil {
+		slog.Warn("audit write failed", "op", "agents.stop", "agent", agentID, "err", err)
+	}
 
 	return fmt.Sprintf("⏹️  Agent **%s** stopped\n\n(trace: %s)", agentID, traceID), nil
 }
@@ -203,7 +206,9 @@ func (h *Handlers) HandleAgentsStart(ctx context.Context, cmd *Command, evt *eve
 	}
 
 	h.store.UpdateAgentStatus(ctx, agentID, "running")
-	h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.start", agentID, "success", nil, "")
+	if err := h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.start", agentID, "success", nil, ""); err != nil {
+		slog.Warn("audit write failed", "op", "agents.start", "agent", agentID, "err", err)
+	}
 
 	return fmt.Sprintf("▶️  Agent **%s** started\n\n(trace: %s)", agentID, traceID), nil
 }
@@ -237,7 +242,9 @@ func (h *Handlers) HandleAgentsRespawn(ctx context.Context, cmd *Command, evt *e
 	}
 
 	h.store.UpdateAgentStatus(ctx, agentID, "running")
-	h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.respawn", agentID, "success", nil, "")
+	if err := h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.respawn", agentID, "success", nil, ""); err != nil {
+		slog.Warn("audit write failed", "op", "agents.respawn", "agent", agentID, "err", err)
+	}
 
 	return fmt.Sprintf("🔄 Agent **%s** respawned\n\n(trace: %s)", agentID, traceID), nil
 }
@@ -275,7 +282,9 @@ func (h *Handlers) HandleAgentsDelete(ctx context.Context, cmd *Command, evt *ev
 		return "", fmt.Errorf("failed to delete agent record: %w", err)
 	}
 
-	h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.delete", agentID, "success", nil, "")
+	if err := h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.delete", agentID, "success", nil, ""); err != nil {
+		slog.Warn("audit write failed", "op", "agents.delete", "agent", agentID, "err", err)
+	}
 
 	return fmt.Sprintf("🗑️  Agent **%s** deleted\n\n(trace: %s)", agentID, traceID), nil
 }
@@ -321,7 +330,7 @@ func (h *Handlers) HandleAgentsStatus(ctx context.Context, cmd *Command, evt *ev
 		}
 		rtStatus, err := h.runtime.Status(ctx, handle)
 		if err == nil {
-			sb.WriteString(fmt.Sprintf("Container:    %s", string(rtStatus.State)))
+			sb.WriteString(fmt.Sprintf("State:        %s", string(rtStatus.State)))
 			if rtStatus.ExitCode != 0 {
 				sb.WriteString(fmt.Sprintf(" (exit %d)", rtStatus.ExitCode))
 			}
@@ -349,6 +358,8 @@ func (h *Handlers) HandleAgentsStatus(ctx context.Context, cmd *Command, evt *ev
 
 	sb.WriteString(fmt.Sprintf("\n(trace: %s)", traceID))
 
-	h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.status", agentID, "success", nil, "")
+	if err := h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.status", agentID, "success", nil, ""); err != nil {
+		slog.Warn("audit write failed", "op", "agents.status", "agent", agentID, "err", err)
+	}
 	return sb.String(), nil
 }

@@ -4,7 +4,7 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/bdobrica/Ruriko/internal/ruriko/store"
@@ -39,16 +39,16 @@ func (r *Reconciler) Run(ctx context.Context) {
 	ticker := time.NewTicker(r.cfg.Interval)
 	defer ticker.Stop()
 
-	log.Printf("[reconciler] starting, interval=%s", r.cfg.Interval)
+	slog.Info("[reconciler] starting", "interval", r.cfg.Interval)
 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("[reconciler] stopping")
+			slog.Info("[reconciler] stopping")
 			return
 		case <-ticker.C:
 			if err := r.Reconcile(ctx); err != nil {
-				log.Printf("[reconciler] error: %v", err)
+				slog.Error("[reconciler] reconcile error", "err", err)
 			}
 		}
 	}
@@ -93,7 +93,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 		if !found {
 			// Agent should be running but no container found
 			if agent.Status == "running" {
-				log.Printf("[reconciler] agent %s: container missing, marking error", agent.ID)
+				slog.Warn("[reconciler] container missing, marking error", "agent", agent.ID)
 				r.store.UpdateAgentStatus(ctx, agent.ID, "error")
 				r.alert(agent.ID, "container missing; expected running")
 			}
@@ -102,13 +102,13 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 
 		status, err := r.runtime.Status(ctx, handle)
 		if err != nil {
-			log.Printf("[reconciler] agent %s: status error: %v", agent.ID, err)
+			slog.Warn("[reconciler] status error", "agent", agent.ID, "err", err)
 			continue
 		}
 
 		newStatus := containerStateToAgentStatus(status.State)
 		if newStatus != agent.Status {
-			log.Printf("[reconciler] agent %s: status %s → %s", agent.ID, agent.Status, newStatus)
+			slog.Info("[reconciler] status change", "agent", agent.ID, "from", agent.Status, "to", newStatus)
 			r.store.UpdateAgentStatus(ctx, agent.ID, newStatus)
 
 			// Alert on unexpected transitions
@@ -127,7 +127,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 	// Detect orphan containers: ruriko-managed containers with no DB record.
 	for agentID := range handleMap {
 		if _, inDB := knownAgentIDs[agentID]; !inDB {
-			log.Printf("[reconciler] orphan container detected: agentID=%q has no matching DB record", agentID)
+			slog.Warn("[reconciler] orphan container detected", "agent", agentID)
 			r.alert(agentID, "orphan container: no matching agent record in database")
 		}
 	}
@@ -139,7 +139,7 @@ func (r *Reconciler) alert(agentID, message string) {
 	if r.cfg.AlertFunc != nil {
 		r.cfg.AlertFunc(agentID, message)
 	} else {
-		log.Printf("[reconciler] ALERT agent=%s: %s", agentID, message)
+		slog.Warn("[reconciler] ALERT", "agent", agentID, "message", message)
 	}
 }
 

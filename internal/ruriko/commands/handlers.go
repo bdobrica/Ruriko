@@ -3,7 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -45,7 +45,7 @@ func (h *Handlers) HandleHelp(ctx context.Context, cmd *Command, evt *event.Even
 **Agent Commands:**
 • /ruriko agents list - List all agents
 • /ruriko agents show <name> - Show agent details
-• /ruriko agents create --template <name> --name <agent_name> - Create agent
+• /ruriko agents create --name <id> --template <tmpl> --image <image> - Create agent
 • /ruriko agents stop <name> - Stop agent
 • /ruriko agents start <name> - Start agent
 • /ruriko agents respawn <name> - Force respawn agent
@@ -94,7 +94,7 @@ func (h *Handlers) HandlePing(ctx context.Context, cmd *Command, evt *event.Even
 		nil,
 		"",
 	); err != nil {
-		log.Printf("[audit] ping: %v", err)
+		slog.Warn("audit write failed", "op", "ping", "err", err)
 	}
 
 	return fmt.Sprintf("🏓 Pong! (trace: %s)", traceID), nil
@@ -122,7 +122,7 @@ func (h *Handlers) HandleAgentsList(ctx context.Context, cmd *Command, evt *even
 		store.AuditPayload{"count": len(agents)},
 		"",
 	); err != nil {
-		log.Printf("[audit] agents.list: %v", err)
+		slog.Warn("audit write failed", "op", "agents.list", "err", err)
 	}
 
 	// Format response
@@ -190,7 +190,7 @@ func (h *Handlers) HandleAgentsShow(ctx context.Context, cmd *Command, evt *even
 		nil,
 		"",
 	); err != nil {
-		log.Printf("[audit] agents.show: %v", err)
+		slog.Warn("audit write failed", "op", "agents.show", "err", err)
 	}
 
 	// Format response
@@ -253,7 +253,7 @@ func (h *Handlers) HandleAuditTail(ctx context.Context, cmd *Command, evt *event
 		store.AuditPayload{"limit": limit},
 		"",
 	); err != nil {
-		log.Printf("[audit] audit.tail: %v", err)
+		slog.Warn("audit write failed", "op", "audit.tail", "err", err)
 	}
 
 	// Format response
@@ -323,7 +323,7 @@ func (h *Handlers) HandleTrace(ctx context.Context, cmd *Command, evt *event.Eve
 		store.AuditPayload{"entries": len(entries)},
 		"",
 	); err != nil {
-		log.Printf("[audit] trace: %v", err)
+		slog.Warn("audit write failed", "op", "trace", "err", err)
 	}
 
 	// Format response

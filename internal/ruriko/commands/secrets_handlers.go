@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"maunium.net/go/mautrix/event"
@@ -25,8 +26,10 @@ func (h *Handlers) HandleSecretsList(ctx context.Context, cmd *Command, evt *eve
 		return "", fmt.Errorf("failed to list secrets: %w", err)
 	}
 
-	h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "secrets.list", "", "success",
-		store.AuditPayload{"count": len(secs)}, "")
+	if err := h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "secrets.list", "", "success",
+		store.AuditPayload{"count": len(secs)}, ""); err != nil {
+		slog.Warn("audit write failed", "op", "secrets.list", "err", err)
+	}
 
 	if len(secs) == 0 {
 		return fmt.Sprintf("No secrets stored.\n\n(trace: %s)", traceID), nil
@@ -62,7 +65,9 @@ func (h *Handlers) HandleSecretsInfo(ctx context.Context, cmd *Command, evt *eve
 		return "", fmt.Errorf("secret not found: %w", err)
 	}
 
-	h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "secrets.info", name, "success", nil, "")
+	if err := h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "secrets.info", name, "success", nil, ""); err != nil {
+		slog.Warn("audit write failed", "op", "secrets.info", "secret", name, "err", err)
+	}
 
 	return fmt.Sprintf(`**Secret: %s**
 
@@ -123,8 +128,10 @@ func (h *Handlers) HandleSecretsSet(ctx context.Context, cmd *Command, evt *even
 		return "", fmt.Errorf("failed to store secret: %w", err)
 	}
 
-	h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "secrets.set", name, "success",
-		store.AuditPayload{"type": secretType}, "")
+	if err := h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "secrets.set", name, "success",
+		store.AuditPayload{"type": secretType}, ""); err != nil {
+		slog.Warn("audit write failed", "op", "secrets.set", "secret", name, "err", err)
+	}
 
 	return fmt.Sprintf(
 		"✅ Secret **%s** stored (type: %s)\n\n"+
@@ -168,8 +175,10 @@ func (h *Handlers) HandleSecretsRotate(ctx context.Context, cmd *Command, evt *e
 		version = meta.RotationVersion
 	}
 
-	h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "secrets.rotate", name, "success",
-		store.AuditPayload{"rotation_version": version}, "")
+	if err := h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "secrets.rotate", name, "success",
+		store.AuditPayload{"rotation_version": version}, ""); err != nil {
+		slog.Warn("audit write failed", "op", "secrets.rotate", "secret", name, "err", err)
+	}
 
 	return fmt.Sprintf(
 		"🔄 Secret **%s** rotated to v%d\n\n"+
@@ -196,7 +205,9 @@ func (h *Handlers) HandleSecretsDelete(ctx context.Context, cmd *Command, evt *e
 		return "", fmt.Errorf("failed to delete secret: %w", err)
 	}
 
-	h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "secrets.delete", name, "success", nil, "")
+	if err := h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "secrets.delete", name, "success", nil, ""); err != nil {
+		slog.Warn("audit write failed", "op", "secrets.delete", "secret", name, "err", err)
+	}
 
 	return fmt.Sprintf("🗑️  Secret **%s** deleted\n\n(trace: %s)", name, traceID), nil
 }
@@ -225,8 +236,10 @@ func (h *Handlers) HandleSecretsBind(ctx context.Context, cmd *Command, evt *eve
 		return "", fmt.Errorf("failed to bind secret: %w", err)
 	}
 
-	h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "secrets.bind", agentID+"/"+secretName, "success",
-		store.AuditPayload{"scope": scope}, "")
+	if err := h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "secrets.bind", agentID+"/"+secretName, "success",
+		store.AuditPayload{"scope": scope}, ""); err != nil {
+		slog.Warn("audit write failed", "op", "secrets.bind", "agent", agentID, "secret", secretName, "err", err)
+	}
 
 	return fmt.Sprintf("✅ Agent **%s** granted access to **%s** (scope: %s)\n\n(trace: %s)",
 		agentID, secretName, scope, traceID), nil
@@ -253,7 +266,9 @@ func (h *Handlers) HandleSecretsUnbind(ctx context.Context, cmd *Command, evt *e
 		return "", fmt.Errorf("failed to unbind secret: %w", err)
 	}
 
-	h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "secrets.unbind", agentID+"/"+secretName, "success", nil, "")
+	if err := h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "secrets.unbind", agentID+"/"+secretName, "success", nil, ""); err != nil {
+		slog.Warn("audit write failed", "op", "secrets.unbind", "agent", agentID, "secret", secretName, "err", err)
+	}
 
 	return fmt.Sprintf("🔒 Agent **%s** access to **%s** revoked\n\n(trace: %s)",
 		agentID, secretName, traceID), nil

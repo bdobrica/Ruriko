@@ -3,9 +3,9 @@ package matrix
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"maunium.net/go/mautrix"
@@ -78,6 +78,7 @@ func (c *Client) Start(ctx context.Context, handler MessageHandler) error {
 		)
 		backoff := backoffMin
 		for {
+			backoff = backoffMin // reset before each attempt
 			if err := c.client.Sync(); err != nil {
 				// Check whether Stop() was called; if so, exit cleanly.
 				select {
@@ -216,8 +217,10 @@ func (c *Client) handleMessage(ctx context.Context, evt *event.Event) {
 func (c *Client) joinRoom(roomID id.RoomID) error {
 	_, err := c.client.JoinRoomByID(context.Background(), roomID)
 	if err != nil {
-		// Check if already joined
-		if strings.Contains(err.Error(), "already in room") {
+		// M_FORBIDDEN is returned by homeservers when the bot is already a member
+		// of the room. Use mautrix's typed error check instead of string matching.
+		if errors.Is(err, mautrix.MForbidden) {
+			slog.Warn("joinRoom: already a member or access denied, continuing", "room", roomID)
 			return nil
 		}
 		return err
