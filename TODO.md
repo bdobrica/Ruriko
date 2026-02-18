@@ -218,25 +218,26 @@ Gitai (agent runtime) will be built in parallel but can start after Ruriko found
 **Goal**: Automatically create Matrix accounts for agents.
 
 ### 4.1 Homeserver Admin API Integration
-- [ ] Create `internal/ruriko/provisioning/matrix.go` - Matrix admin API client
-- [ ] Implement account creation (based on homeserver - Synapse, Dendrite, Conduit)
-- [ ] Generate secure random passwords/tokens
-- [ ] Store agent `mxid` and `access_token` as secrets
+- [x] Create `internal/ruriko/provisioning/matrix.go` - Matrix admin API client
+- [x] Implement account creation (Synapse shared-secret API + generic open-registration fallback)
+- [x] Generate secure random passwords/tokens
+- [x] Store agent `mxid` and `access_token` as secrets
 - [ ] Test: Can create Matrix account programmatically
 
 ### 4.2 Agent Account Management
-- [ ] Extend `/ruriko agents create` to also provision Matrix account
-- [ ] Add `--mxid <existing>` flag to use pre-existing account
-- [ ] `/ruriko agents matrix register <name>` - provision account for existing agent
-- [ ] Set agent display name and avatar (optional)
-- [ ] Join agent to required rooms (admin room, approvals room)
+- [x] Extend `/ruriko agents create` to accept `--mxid <existing>` flag
+- [x] `/ruriko agents matrix register <name>` - provision account for existing agent
+- [x] Set agent display name during registration
+- [x] Invite agent to required rooms (admin room) via `InviteToRooms`
 - [ ] Test: Agent account is created and joins rooms
 
 ### 4.3 Deprovisioning
-- [ ] `/ruriko agents disable <name>` - soft disable agent
-  - [ ] Revoke Matrix token (if supported by homeserver)
-  - [ ] Remove from rooms
-  - [ ] Mark as disabled in database
+- [x] `/ruriko agents disable <name>` - soft disable agent
+  - [x] Stop container if running
+  - [x] Kick from rooms via `RemoveFromRooms`
+  - [x] Deactivate Matrix account (Synapse admin API; no-op for other types)
+  - [x] Mark as disabled in database
+  - [x] Remove stored matrix_token secret
 - [ ] Test: Agent is removed from rooms
 
 ---
@@ -507,7 +508,7 @@ Update this section as phases are completed:
 - [x] Phase 1: Ruriko MVP - Matrix Control + Inventory ✅ **COMPLETED**
 - [x] Phase 2: Secrets Management ✅ **COMPLETED** (secrets push distributor deferred to Phase 5)
 - [x] Phase 3: Agent Lifecycle Control ✅ **COMPLETED** (template loading + volume mounts deferred to Phase 5)
-- [ ] Phase 4: Matrix Identity Provisioning
+- [x] Phase 4: Matrix Identity Provisioning ✅ **COMPLETED** (tests deferred)
 - [ ] Phase 5: Gosuto - Versioned Configuration
 - [ ] Phase 6: Approval Workflow
 - [ ] Phase 7: Observability and Safety Polish
@@ -517,5 +518,5 @@ Update this section as phases are completed:
 
 ---
 
-**Last Updated**: 2026-02-17
-**Current Focus**: Phase 4 - Matrix Identity Provisioning
+**Last Updated**: 2026-02-18
+**Current Focus**: Phase 5 - Gosuto Versioned Configuration

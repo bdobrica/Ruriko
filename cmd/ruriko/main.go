@@ -11,6 +11,7 @@ import (
 	"github.com/bdobrica/Ruriko/common/version"
 	"github.com/bdobrica/Ruriko/internal/ruriko/app"
 	"github.com/bdobrica/Ruriko/internal/ruriko/matrix"
+	"github.com/bdobrica/Ruriko/internal/ruriko/provisioning"
 )
 
 func main() {
@@ -98,12 +99,29 @@ func loadConfig() *app.Config {
 		reconcileInterval = 30 * time.Second
 	}
 
+	// Optional Matrix provisioning configuration.
+	// Only enabled when MATRIX_PROVISIONING_ENABLE=true.
+	var provisioningCfg *provisioning.Config
+	if getEnvBool("MATRIX_PROVISIONING_ENABLE", false) {
+		hsType := provisioning.HomeserverType(getEnv("MATRIX_HOMESERVER_TYPE", string(provisioning.HomeserverSynapse)))
+		provisioningCfg = &provisioning.Config{
+			Homeserver:       homeserver,
+			AdminUserID:      userID,
+			AdminAccessToken: accessToken,
+			HomeserverType:   hsType,
+			SharedSecret:     getEnv("MATRIX_SHARED_SECRET", ""),
+			UsernameSuffix:   getEnv("MATRIX_AGENT_USERNAME_SUFFIX", ""),
+			AdminRooms:       adminRooms,
+		}
+	}
+
 	return &app.Config{
 		DatabasePath:      dbPath,
 		EnableDocker:      enableDocker,
 		DockerNetwork:     dockerNetwork,
 		ReconcileInterval: reconcileInterval,
 		AdminSenders:      adminSenders,
+		Provisioning:      provisioningCfg,
 		Matrix: matrix.Config{
 			Homeserver:  homeserver,
 			UserID:      userID,

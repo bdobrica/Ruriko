@@ -16,6 +16,7 @@ import (
 
 	"github.com/bdobrica/Ruriko/internal/ruriko/commands"
 	"github.com/bdobrica/Ruriko/internal/ruriko/matrix"
+	"github.com/bdobrica/Ruriko/internal/ruriko/provisioning"
 	"github.com/bdobrica/Ruriko/internal/ruriko/runtime"
 	"github.com/bdobrica/Ruriko/internal/ruriko/runtime/docker"
 	"github.com/bdobrica/Ruriko/internal/ruriko/secrets"
@@ -33,6 +34,9 @@ type Config struct {
 	// AdminSenders is an optional allowlist of Matrix user IDs (e.g. "@alice:example.com")
 	// permitted to execute commands. When empty, any room member can send commands.
 	AdminSenders []string
+	// Provisioning holds optional Matrix account provisioning configuration.
+	// When nil, the agents.matrix.register command will require --mxid.
+	Provisioning *provisioning.Config
 }
 
 // App is the main Ruriko application
@@ -100,6 +104,18 @@ func New(config *Config) (*App, error) {
 		}
 	}
 
+	// Initialise Matrix provisioner if configured.
+	if config.Provisioning != nil {
+		p, err := provisioning.New(*config.Provisioning)
+		if err != nil {
+			slog.Warn("Matrix provisioner unavailable; agents.matrix.register will require --mxid",
+				"err", err)
+		} else {
+			handlers.SetProvisioner(p)
+			slog.Info("Matrix provisioner ready", "type", config.Provisioning.HomeserverType)
+		}
+	}
+
 	// Register command handlers
 	router.Register("help", handlers.HandleHelp)
 	router.Register("version", handlers.HandleVersion)
@@ -112,6 +128,8 @@ func New(config *Config) (*App, error) {
 	router.Register("agents.respawn", handlers.HandleAgentsRespawn)
 	router.Register("agents.delete", handlers.HandleAgentsDelete)
 	router.Register("agents.status", handlers.HandleAgentsStatus)
+	router.Register("agents.matrix", handlers.HandleAgentsMatrixRegister)
+	router.Register("agents.disable", handlers.HandleAgentsDisable)
 	router.Register("audit.tail", handlers.HandleAuditTail)
 	router.Register("trace", handlers.HandleTrace)
 	router.Register("secrets.list", handlers.HandleSecretsList)

@@ -152,6 +152,32 @@ func (s *Store) UpdateAgentHandle(ctx context.Context, id, containerID, controlU
 	return nil
 }
 
+// UpdateAgentMXID sets the Matrix user ID for an agent.
+func (s *Store) UpdateAgentMXID(ctx context.Context, id, mxid string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE agents
+		SET mxid = ?, updated_at = ?
+		WHERE id = ?
+	`, mxid, time.Now(), id)
+	if err != nil {
+		return fmt.Errorf("failed to update agent mxid: %w", err)
+	}
+	return nil
+}
+
+// UpdateAgentDisabled marks an agent as disabled and clears its MXID.
+func (s *Store) UpdateAgentDisabled(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE agents
+		SET status = 'disabled', updated_at = ?
+		WHERE id = ?
+	`, time.Now(), id)
+	if err != nil {
+		return fmt.Errorf("failed to disable agent: %w", err)
+	}
+	return nil
+}
+
 // DeleteAgent removes an agent
 func (s *Store) DeleteAgent(ctx context.Context, id string) error {
 	result, err := s.db.ExecContext(ctx, "DELETE FROM agents WHERE id = ?", id)

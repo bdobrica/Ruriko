@@ -11,6 +11,7 @@ import (
 
 	"github.com/bdobrica/Ruriko/common/trace"
 	"github.com/bdobrica/Ruriko/common/version"
+	"github.com/bdobrica/Ruriko/internal/ruriko/provisioning"
 	"github.com/bdobrica/Ruriko/internal/ruriko/runtime"
 	"github.com/bdobrica/Ruriko/internal/ruriko/secrets"
 	"github.com/bdobrica/Ruriko/internal/ruriko/store"
@@ -18,9 +19,10 @@ import (
 
 // Handlers holds all command handlers and dependencies
 type Handlers struct {
-	store   *store.Store
-	secrets *secrets.Store
-	runtime runtime.Runtime
+	store       *store.Store
+	secrets     *secrets.Store
+	runtime     runtime.Runtime
+	provisioner *provisioning.Provisioner
 }
 
 // NewHandlers creates a new Handlers instance
@@ -31,6 +33,11 @@ func NewHandlers(s *store.Store, sec *secrets.Store) *Handlers {
 // SetRuntime attaches a runtime backend to the handlers after construction.
 func (h *Handlers) SetRuntime(rt runtime.Runtime) {
 	h.runtime = rt
+}
+
+// SetProvisioner attaches a Matrix provisioner to the handlers after construction.
+func (h *Handlers) SetProvisioner(p *provisioning.Provisioner) {
+	h.provisioner = p
 }
 
 // HandleHelp shows available commands
@@ -45,12 +52,14 @@ func (h *Handlers) HandleHelp(ctx context.Context, cmd *Command, evt *event.Even
 **Agent Commands:**
 • /ruriko agents list - List all agents
 • /ruriko agents show <name> - Show agent details
-• /ruriko agents create --name <id> --template <tmpl> --image <image> - Create agent
+• /ruriko agents create --name <id> --template <tmpl> --image <image> [--mxid <existing>] - Create agent
 • /ruriko agents stop <name> - Stop agent
 • /ruriko agents start <name> - Start agent
 • /ruriko agents respawn <name> - Force respawn agent
 • /ruriko agents status <name> - Show agent runtime status
 • /ruriko agents delete <name> - Delete agent
+• /ruriko agents matrix register <name> [--mxid <existing>] - Provision Matrix account
+• /ruriko agents disable <name> [--erase] - Soft-disable agent (deactivates Matrix account)
 
 **Secrets Commands (admin only):**
 • /ruriko secrets list - List secret names and metadata
