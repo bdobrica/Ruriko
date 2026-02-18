@@ -186,7 +186,12 @@ func (s *Store) resolve(ctx context.Context, id string, newStatus Status, resolv
 		return fmt.Errorf("failed to check rows affected: %w", err)
 	}
 	if n == 0 {
-		// Either ID not found or already resolved — check which.
+		// Zero rows affected means either the ID does not exist or the
+		// approval was already resolved (the WHERE clause filters on
+		// status = 'pending').  A second query is required to distinguish
+		// the two cases so we can return a meaningful error message to the
+		// operator.  This extra round-trip only happens on the error path,
+		// which is expected to be rare in normal operation.
 		existing, lookupErr := s.Get(ctx, id)
 		if lookupErr != nil {
 			return fmt.Errorf("approval not found: %s", id)

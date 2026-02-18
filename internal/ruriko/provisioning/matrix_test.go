@@ -1,3 +1,9 @@
+// Package provisioning contains white-box tests for unexported helpers
+// (usernameForAgent, mxidForAgent).  The tests intentionally use
+// `package provisioning` rather than `package provisioning_test` so they
+// can directly exercise internal sanitisation logic without exporting it.
+// This deviates from the project's general _test-package convention, which
+// is an accepted trade-off for internal unit tests.
 package provisioning
 
 import (
@@ -33,7 +39,10 @@ func newTestProvisioner(t *testing.T, opts ...func(*Config)) *Provisioner {
 
 func TestUsernameForAgent_Simple(t *testing.T) {
 	p := newTestProvisioner(t)
-	got := p.usernameForAgent("mybot")
+	got, err := p.usernameForAgent("mybot")
+	if err != nil {
+		t.Fatalf("usernameForAgent: %v", err)
+	}
 	if got != "mybot" {
 		t.Errorf("usernameForAgent(\"mybot\"): got %q, want %q", got, "mybot")
 	}
@@ -41,7 +50,10 @@ func TestUsernameForAgent_Simple(t *testing.T) {
 
 func TestUsernameForAgent_LowerCase(t *testing.T) {
 	p := newTestProvisioner(t)
-	got := p.usernameForAgent("MyBot")
+	got, err := p.usernameForAgent("MyBot")
+	if err != nil {
+		t.Fatalf("usernameForAgent: %v", err)
+	}
 	if got != "mybot" {
 		t.Errorf("usernameForAgent(\"MyBot\"): got %q, want %q", got, "mybot")
 	}
@@ -49,7 +61,10 @@ func TestUsernameForAgent_LowerCase(t *testing.T) {
 
 func TestUsernameForAgent_UnderscoreToHyphen(t *testing.T) {
 	p := newTestProvisioner(t)
-	got := p.usernameForAgent("my_bot_agent")
+	got, err := p.usernameForAgent("my_bot_agent")
+	if err != nil {
+		t.Fatalf("usernameForAgent: %v", err)
+	}
 	if got != "my-bot-agent" {
 		t.Errorf("usernameForAgent(\"my_bot_agent\"): got %q, want %q", got, "my-bot-agent")
 	}
@@ -57,7 +72,10 @@ func TestUsernameForAgent_UnderscoreToHyphen(t *testing.T) {
 
 func TestUsernameForAgent_StripsInvalidChars(t *testing.T) {
 	p := newTestProvisioner(t)
-	got := p.usernameForAgent("hello world! @#$%")
+	got, err := p.usernameForAgent("hello world! @#$%")
+	if err != nil {
+		t.Fatalf("usernameForAgent: %v", err)
+	}
 	// After lower-casing:  "hello world! @#$%"
 	// After underscore→hyphen: same (no underscores)
 	// After stripping invalid: "helloworld"  (spaces and special chars removed)
@@ -69,7 +87,10 @@ func TestUsernameForAgent_StripsInvalidChars(t *testing.T) {
 func TestUsernameForAgent_PreservesValidChars(t *testing.T) {
 	p := newTestProvisioner(t)
 	// Dots, hyphens, slashes are valid localpart characters.
-	got := p.usernameForAgent("agent.v2-beta/test")
+	got, err := p.usernameForAgent("agent.v2-beta/test")
+	if err != nil {
+		t.Fatalf("usernameForAgent: %v", err)
+	}
 	if got != "agent.v2-beta/test" {
 		t.Errorf("usernameForAgent(\"agent.v2-beta/test\"): got %q, want %q", got, "agent.v2-beta/test")
 	}
@@ -79,7 +100,10 @@ func TestUsernameForAgent_WithSuffix(t *testing.T) {
 	p := newTestProvisioner(t, func(c *Config) {
 		c.UsernameSuffix = "-agent"
 	})
-	got := p.usernameForAgent("mybot")
+	got, err := p.usernameForAgent("mybot")
+	if err != nil {
+		t.Fatalf("usernameForAgent: %v", err)
+	}
 	if got != "mybot-agent" {
 		t.Errorf("usernameForAgent with suffix: got %q, want %q", got, "mybot-agent")
 	}
@@ -89,9 +113,22 @@ func TestUsernameForAgent_UpperCaseWithSuffix(t *testing.T) {
 	p := newTestProvisioner(t, func(c *Config) {
 		c.UsernameSuffix = "-agent"
 	})
-	got := p.usernameForAgent("MyBot")
+	got, err := p.usernameForAgent("MyBot")
+	if err != nil {
+		t.Fatalf("usernameForAgent: %v", err)
+	}
 	if got != "mybot-agent" {
 		t.Errorf("got %q, want %q", got, "mybot-agent")
+	}
+}
+
+func TestUsernameForAgent_AllInvalidCharsReturnsError(t *testing.T) {
+	p := newTestProvisioner(t)
+	// A name made entirely of characters outside [a-z0-9._\-/] should
+	// produce an empty localpart after sanitisation, which must be an error.
+	_, err := p.usernameForAgent("!!! @@@")
+	if err == nil {
+		t.Fatal("expected error for all-invalid-char agent name, got nil")
 	}
 }
 

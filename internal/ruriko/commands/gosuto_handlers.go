@@ -28,6 +28,7 @@ const GosutoVersionsRetainN = 20
 //	/ruriko gosuto show <agent> --version <n>
 func (h *Handlers) HandleGosutoShow(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
+	ctx = trace.WithTraceID(ctx, traceID)
 
 	agentID, ok := cmd.GetArg(0)
 	if !ok {
@@ -79,6 +80,7 @@ func (h *Handlers) HandleGosutoShow(ctx context.Context, cmd *Command, evt *even
 // Usage: /ruriko gosuto versions <agent>
 func (h *Handlers) HandleGosutoVersions(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
+	ctx = trace.WithTraceID(ctx, traceID)
 
 	agentID, ok := cmd.GetArg(0)
 	if !ok {
@@ -133,6 +135,7 @@ func (h *Handlers) HandleGosutoVersions(ctx context.Context, cmd *Command, evt *
 // Usage: /ruriko gosuto diff <agent> --from <v1> --to <v2>
 func (h *Handlers) HandleGosutoDiff(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
+	ctx = trace.WithTraceID(ctx, traceID)
 
 	agentID, ok := cmd.GetArg(0)
 	if !ok {
@@ -190,6 +193,7 @@ func (h *Handlers) HandleGosutoDiff(ctx context.Context, cmd *Command, evt *even
 // Usage: /ruriko gosuto set <agent> --content <base64-encoded-yaml>
 func (h *Handlers) HandleGosutoSet(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
+	ctx = trace.WithTraceID(ctx, traceID)
 
 	agentID, ok := cmd.GetArg(0)
 	if !ok {
@@ -285,6 +289,7 @@ func (h *Handlers) HandleGosutoSet(ctx context.Context, cmd *Command, evt *event
 // Usage: /ruriko gosuto rollback <agent> --to <version>
 func (h *Handlers) HandleGosutoRollback(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
+	ctx = trace.WithTraceID(ctx, traceID)
 
 	agentID, ok := cmd.GetArg(0)
 	if !ok {
@@ -359,6 +364,7 @@ func (h *Handlers) HandleGosutoRollback(ctx context.Context, cmd *Command, evt *
 // Usage: /ruriko gosuto push <agent>
 func (h *Handlers) HandleGosutoPush(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
+	ctx = trace.WithTraceID(ctx, traceID)
 
 	agentID, ok := cmd.GetArg(0)
 	if !ok {
@@ -381,8 +387,7 @@ func (h *Handlers) HandleGosutoPush(ctx context.Context, cmd *Command, evt *even
 		return "", fmt.Errorf("no Gosuto config stored for agent %q", agentID)
 	}
 
-	tracedCtx := trace.WithTraceID(ctx, traceID)
-	if err := pushGosuto(tracedCtx, agent.ControlURL.String, gv); err != nil {
+	if err := pushGosuto(ctx, agent.ControlURL.String, gv); err != nil {
 		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "gosuto.push", agentID, "error", nil, err.Error())
 		return "", fmt.Errorf("failed to push Gosuto config: %w", err)
 	}
@@ -403,6 +408,7 @@ func (h *Handlers) HandleGosutoPush(ctx context.Context, cmd *Command, evt *even
 // Usage: /ruriko secrets push <agent>
 func (h *Handlers) HandleSecretsPush(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
+	ctx = trace.WithTraceID(ctx, traceID)
 
 	agentID, ok := cmd.GetArg(0)
 	if !ok {
@@ -413,8 +419,7 @@ func (h *Handlers) HandleSecretsPush(ctx context.Context, cmd *Command, evt *eve
 		return "", fmt.Errorf("secrets distributor is not configured")
 	}
 
-	tracedCtx := trace.WithTraceID(ctx, traceID)
-	n, err := h.distributor.PushToAgent(tracedCtx, agentID)
+	n, err := h.distributor.PushToAgent(ctx, agentID)
 	if err != nil {
 		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "secrets.push", agentID, "error", nil, err.Error())
 		return "", fmt.Errorf("secrets push failed: %w", err)
@@ -444,6 +449,14 @@ func pushGosuto(ctx context.Context, controlURL string, gv *store.GosutoVersion)
 // diffLines computes a simple unified-style diff of two YAML strings.
 // Lines present only in a are prefixed with "-", lines only in b with "+",
 // and shared lines are prefixed with " ".
+//
+// NOTE: The underlying LCS algorithm compares lines as raw strings. If two
+// distinct sections of a config contain identical lines (e.g. repeated
+// "enabled: true" entries under different keys), the LCS may match them
+// across sections, producing output that omits moved or reordered blocks.
+// This is expected LCS behaviour. Operators diffing configs with highly
+// repetitive structure should be aware that the output may appear to show
+// no change for lines that were actually moved.
 func diffLines(a, b string) string {
 	aLines := strings.Split(strings.TrimRight(a, "\n"), "\n")
 	bLines := strings.Split(strings.TrimRight(b, "\n"), "\n")

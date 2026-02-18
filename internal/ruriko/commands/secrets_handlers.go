@@ -147,6 +147,7 @@ func (h *Handlers) HandleSecretsSet(ctx context.Context, cmd *Command, evt *even
 // Usage: /ruriko secrets rotate <name> --value <base64>
 func (h *Handlers) HandleSecretsRotate(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
+	ctx = trace.WithTraceID(ctx, traceID)
 
 	name, ok := cmd.GetArg(0)
 	if !ok {
@@ -158,14 +159,16 @@ func (h *Handlers) HandleSecretsRotate(ctx context.Context, cmd *Command, evt *e
 		return "", fmt.Errorf("usage: /ruriko secrets rotate <name> --value <base64>")
 	}
 
-	// Require approval for secret rotation.
-	if msg, needed, err := h.requestApprovalIfNeeded(ctx, "secrets.rotate", name, cmd, evt); needed {
-		return msg, err
-	}
-
+	// Validate base64 before requesting approval so that only valid
+	// operations enter the approval queue.
 	rawValue, err := base64.StdEncoding.DecodeString(b64Value)
 	if err != nil {
 		return "", fmt.Errorf("--value must be valid base64: %w", err)
+	}
+
+	// Require approval for secret rotation (after input validation passes).
+	if msg, needed, err := h.requestApprovalIfNeeded(ctx, "secrets.rotate", name, cmd, evt); needed {
+		return msg, err
 	}
 
 	if err := h.secrets.Rotate(ctx, name, rawValue); err != nil {
@@ -199,6 +202,7 @@ func (h *Handlers) HandleSecretsRotate(ctx context.Context, cmd *Command, evt *e
 // Usage: /ruriko secrets delete <name>
 func (h *Handlers) HandleSecretsDelete(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
+	ctx = trace.WithTraceID(ctx, traceID)
 
 	name, ok := cmd.GetArg(0)
 	if !ok {

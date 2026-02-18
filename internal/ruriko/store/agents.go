@@ -130,18 +130,30 @@ func (s *Store) UpdateAgentStatus(ctx context.Context, id, status string) error 
 
 // UpdateAgentLastSeen updates agent's last seen timestamp
 func (s *Store) UpdateAgentLastSeen(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, `
+	now := time.Now()
+	result, err := s.db.ExecContext(ctx, `
 		UPDATE agents
 		SET last_seen = ?, updated_at = ?
 		WHERE id = ?
-	`, time.Now(), time.Now(), id)
+	`, now, now, id)
+	if err != nil {
+		return fmt.Errorf("failed to update agent last seen: %w", err)
+	}
 
-	return err
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("agent not found: %s", id)
+	}
+
+	return nil
 }
 
 // UpdateAgentHandle stores the Docker container ID and ACP control URL.
 func (s *Store) UpdateAgentHandle(ctx context.Context, id, containerID, controlURL, image string) error {
-	_, err := s.db.ExecContext(ctx, `
+	result, err := s.db.ExecContext(ctx, `
 		UPDATE agents
 		SET container_id = ?, control_url = ?, image = ?, updated_at = ?
 		WHERE id = ?
@@ -149,6 +161,15 @@ func (s *Store) UpdateAgentHandle(ctx context.Context, id, containerID, controlU
 	if err != nil {
 		return fmt.Errorf("failed to update agent handle: %w", err)
 	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("agent not found: %s", id)
+	}
+
 	return nil
 }
 

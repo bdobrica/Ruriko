@@ -123,11 +123,17 @@ var validLocalpart = regexp.MustCompile(`[^a-z0-9._\-/]`)
 // usernameForAgent returns the localpart (no @, no server) for an agent.
 // The agent ID is lower-cased, underscores are replaced with hyphens, and
 // any characters outside the Matrix localpart set [a-z0-9._\-/] are stripped.
-func (p *Provisioner) usernameForAgent(agentID string) string {
+//
+// Returns an error if sanitisation produces an empty localpart (e.g. the
+// agent name contains only characters that are stripped).
+func (p *Provisioner) usernameForAgent(agentID string) (string, error) {
 	localpart := strings.ToLower(agentID)
 	localpart = strings.ReplaceAll(localpart, "_", "-")
 	localpart = validLocalpart.ReplaceAllString(localpart, "")
-	return localpart + p.cfg.UsernameSuffix
+	if localpart == "" {
+		return "", fmt.Errorf("agent name %q produces empty Matrix localpart after sanitization", agentID)
+	}
+	return localpart + p.cfg.UsernameSuffix, nil
 }
 
 // mxidForAgent returns the full Matrix user ID for an agent.
@@ -138,7 +144,11 @@ func (p *Provisioner) mxidForAgent(agentID string) (id.UserID, error) {
 		return "", fmt.Errorf("invalid AdminUserID %q: expected @localpart:server", p.cfg.AdminUserID)
 	}
 	server := parts[1]
-	return id.UserID(fmt.Sprintf("@%s:%s", p.usernameForAgent(agentID), server)), nil
+	username, err := p.usernameForAgent(agentID)
+	if err != nil {
+		return "", err
+	}
+	return id.UserID(fmt.Sprintf("@%s:%s", username, server)), nil
 }
 
 // Register creates a new Matrix account for the given agent.
@@ -158,7 +168,10 @@ func (p *Provisioner) Register(ctx context.Context, agentID, displayName string)
 		return nil, err
 	}
 
-	username := p.usernameForAgent(agentID)
+	username, err := p.usernameForAgent(agentID)
+	if err != nil {
+		return nil, err
+	}
 
 	slog.Info("provisioning Matrix account", "agent", agentID, "mxid", mxid, "trace", traceID)
 

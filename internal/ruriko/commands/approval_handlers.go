@@ -280,7 +280,13 @@ func (h *Handlers) requestApprovalIfNeeded(
 		return "", false, nil
 	}
 
-	traceID := trace.GenerateID()
+	// Reuse the handler's traceID if it was already embedded in the context
+	// (so the approval record shares the same trace as the handler that
+	// triggered it). Fall back to generating a new one if not set.
+	traceID := trace.FromContext(ctx)
+	if traceID == "" {
+		traceID = trace.GenerateID()
+	}
 
 	tracedCtx := trace.WithTraceID(ctx, traceID)
 	ap, err := h.approvals.Request(tracedCtx, action, target, cmd.Args, cmd.Flags, evt.Sender.String())

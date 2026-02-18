@@ -108,7 +108,7 @@ Then bind it:
 	// Store access token as a matrix_token secret.
 	secretName := fmt.Sprintf("agent.%s.matrix_token", agentID)
 	tokenBytes := []byte(provisioned.AccessToken)
-	if err := h.secrets.Set(ctx, secretName, secrets.TypeMatrixToken, tokenBytes); err != nil {
+	if err := h.secrets.Set(tracedCtx, secretName, secrets.TypeMatrixToken, tokenBytes); err != nil {
 		// If we can't store the token, that is serious: log it but tell the user.
 		slog.Error("failed to store agent access token as secret",
 			"agent", agentID, "secret", secretName, "err", err)
@@ -118,7 +118,7 @@ Then bind it:
 	}
 
 	// Auto-bind the secret to the agent.
-	if err := h.secrets.Bind(ctx, agentID, secretName, "matrix_identity"); err != nil {
+	if err := h.secrets.Bind(tracedCtx, agentID, secretName, "matrix_identity"); err != nil {
 		slog.Warn("failed to auto-bind matrix_token secret",
 			"agent", agentID, "secret", secretName, "err", err)
 	}
@@ -165,6 +165,7 @@ Secret:      %s (auto-bound)%s
 //   - --erase  — request Synapse to erase all user data (irreversible)
 func (h *Handlers) HandleAgentsDisable(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
+	ctx = trace.WithTraceID(ctx, traceID)
 
 	agentID, ok := cmd.GetArg(0)
 	if !ok {
@@ -188,7 +189,6 @@ func (h *Handlers) HandleAgentsDisable(ctx context.Context, cmd *Command, evt *e
 		return msg, err
 	}
 
-	tracedCtx := trace.WithTraceID(ctx, traceID)
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("🔒 Disabling agent **%s**...\n\n", agentID))
 
@@ -198,7 +198,7 @@ func (h *Handlers) HandleAgentsDisable(ctx context.Context, cmd *Command, evt *e
 			AgentID:     agentID,
 			ContainerID: agent.ContainerID.String,
 		}
-		if stopErr := h.runtime.Stop(tracedCtx, handle); stopErr != nil {
+		if stopErr := h.runtime.Stop(ctx, handle); stopErr != nil {
 			slog.Warn("disable: failed to stop container", "agent", agentID, "err", stopErr)
 			sb.WriteString(fmt.Sprintf("⚠️  Container stop failed (continuing): %v\n", stopErr))
 		} else {
@@ -211,7 +211,7 @@ func (h *Handlers) HandleAgentsDisable(ctx context.Context, cmd *Command, evt *e
 		mxid := id.UserID(agent.MXID.String)
 
 		// Remove from rooms.
-		kickErrs := h.provisioner.RemoveFromRooms(tracedCtx, mxid)
+		kickErrs := h.provisioner.RemoveFromRooms(ctx, mxid)
 		if len(kickErrs) > 0 {
 			for _, e := range kickErrs {
 				slog.Warn("disable: room kick error", "agent", agentID, "err", e)
@@ -222,7 +222,7 @@ func (h *Handlers) HandleAgentsDisable(ctx context.Context, cmd *Command, evt *e
 		}
 
 		// Deactivate account.
-		if deactivateErr := h.provisioner.Deactivate(tracedCtx, mxid, erase); deactivateErr != nil {
+		if deactivateErr := h.provisioner.Deactivate(ctx, mxid, erase); deactivateErr != nil {
 			slog.Warn("disable: account deactivation failed", "agent", agentID, "mxid", mxid, "err", deactivateErr)
 			sb.WriteString(fmt.Sprintf("⚠️  Account deactivation failed (continuing): %v\n", deactivateErr))
 		} else {
@@ -243,7 +243,18 @@ func (h *Handlers) HandleAgentsDisable(ctx context.Context, cmd *Command, evt *e
 	}
 	sb.WriteString("✅ Agent marked as disabled\n")
 
-	// Step 4: Delete stored matrix_token secret (the access token is now invalid).
+	// Step 4: Unbind all secrets for this agent so stale bindings
+	// don't persist after disabling. This runs before the matrix_token
+	// delete so that, if the process fails partway through, no bindings
+	// remain even if the token record is still present.
+	if unboundN, unbindErr := h.secrets.UnbindAll(ctx, agentID); unbindErr != nil {
+		slog.Warn("disable: failed to unbind secrets", "agent", agentID, "err", unbindErr)
+		sb.WriteString(fmt.Sprintf("⚠️  Failed to unbind remaining secrets: %v\n", unbindErr))
+	} else if unboundN > 0 {
+		sb.WriteString(fmt.Sprintf("✅ Unbound %d secret binding(s)\n", unboundN))
+	}
+
+	// Step 5: Delete stored matrix_token secret (the access token is now invalid).
 	secretName := fmt.Sprintf("agent.%s.matrix_token", agentID)
 	if delErr := h.secrets.Delete(ctx, secretName); delErr != nil {
 		// Secret may not exist — that's fine.
@@ -251,15 +262,6 @@ func (h *Handlers) HandleAgentsDisable(ctx context.Context, cmd *Command, evt *e
 			"agent", agentID, "secret", secretName, "err", delErr)
 	} else {
 		sb.WriteString(fmt.Sprintf("✅ Secret %s removed\n", secretName))
-	}
-
-	// Step 5: Unbind all remaining secrets for this agent so stale bindings
-	// don't persist after disabling.
-	if unboundN, unbindErr := h.secrets.UnbindAll(ctx, agentID); unbindErr != nil {
-		slog.Warn("disable: failed to unbind secrets", "agent", agentID, "err", unbindErr)
-		sb.WriteString(fmt.Sprintf("⚠️  Failed to unbind remaining secrets: %v\n", unbindErr))
-	} else if unboundN > 0 {
-		sb.WriteString(fmt.Sprintf("✅ Unbound %d secret binding(s)\n", unboundN))
 	}
 
 	if err := h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.disable", agentID, "success",

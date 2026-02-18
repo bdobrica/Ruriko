@@ -93,7 +93,7 @@ func (r *Registry) Render(name string, vars TemplateVars) ([]byte, error) {
 	// Option "missingkey=error" causes the template to fail loudly if a
 	// TemplateVars field referenced in the template does not exist, instead
 	// of silently inserting "<no value>".
-	tmpl, err := template.New(path).Option("missingkey=error").Funcs(template.FuncMap{}).Parse(string(raw))
+	tmpl, err := template.New(path).Option("missingkey=error").Parse(string(raw))
 	if err != nil {
 		return nil, fmt.Errorf("template %q: parse: %w", name, err)
 	}

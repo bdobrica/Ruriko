@@ -254,21 +254,24 @@ func (h *Handlers) HandleAgentsRespawn(ctx context.Context, cmd *Command, evt *e
 // Usage: /ruriko agents delete <name>
 func (h *Handlers) HandleAgentsDelete(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
+	ctx = trace.WithTraceID(ctx, traceID)
 
 	agentID, _ := cmd.GetArg(0)
 	if agentID == "" {
 		return "", fmt.Errorf("usage: /ruriko agents delete <name>")
 	}
 
-	// Require approval for agent deletion.
-	if msg, needed, err := h.requestApprovalIfNeeded(ctx, "agents.delete", agentID, cmd, evt); needed {
-		return msg, err
-	}
-
+	// Check the agent exists before requesting approval so that only
+	// actionable deletions enter the approval queue.
 	agent, err := h.store.GetAgent(ctx, agentID)
 	if err != nil {
 		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.delete", agentID, "error", nil, err.Error())
 		return "", fmt.Errorf("agent not found: %s", agentID)
+	}
+
+	// Require approval for agent deletion (after existence check passes).
+	if msg, needed, err := h.requestApprovalIfNeeded(ctx, "agents.delete", agentID, cmd, evt); needed {
+		return msg, err
 	}
 
 	if h.runtime != nil && agent.ContainerID.Valid {
