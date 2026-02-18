@@ -118,6 +118,64 @@ func TestParseCommand_Basic(t *testing.T) {
 	}
 }
 
+// TestParseCommand_InternalFlagStripping verifies that flags prefixed with "_"
+// are silently stripped during parsing and cannot be injected by user input.
+// This prevents bypass of the approval gate via "--_approved true".
+func TestParseCommand_InternalFlagStripping(t *testing.T) {
+	router := commands.NewRouter("/ruriko")
+
+	tests := []struct {
+		input         string
+		strippedFlags []string // flags that must NOT appear in the parsed command
+		keptFlags     map[string]string
+	}{
+		{
+			// Classic bypass attempt
+			input:         "/ruriko agents delete mybot --_approved true",
+			strippedFlags: []string{"_approved"},
+		},
+		{
+			// Full injection with all internal flags
+			input:         "/ruriko agents delete mybot --_approved true --_approval_id abc123 --_trace_id t_xyz",
+			strippedFlags: []string{"_approved", "_approval_id", "_trace_id"},
+		},
+		{
+			// Mixed: internal flags stripped, regular flags kept
+			input:         "/ruriko gosuto set mybot --_approved true --content abc",
+			strippedFlags: []string{"_approved"},
+			keptFlags:     map[string]string{"content": "abc"},
+		},
+		{
+			// Internal boolean flag (no value)
+			input:         "/ruriko agents delete mybot --_approved",
+			strippedFlags: []string{"_approved"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			cmd, err := router.Parse(tt.input)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			for _, flag := range tt.strippedFlags {
+				if _, ok := cmd.Flags[flag]; ok {
+					t.Errorf("internal flag %q must be stripped from user input but was present", flag)
+				}
+			}
+
+			for k, v := range tt.keptFlags {
+				if got, ok := cmd.Flags[k]; !ok {
+					t.Errorf("regular flag %q must be kept but was missing", k)
+				} else if got != v {
+					t.Errorf("flag %q: got %q, want %q", k, got, v)
+				}
+			}
+		})
+	}
+}
+
 func TestRouteCommand_UnknownCommand(t *testing.T) {
 	router := commands.NewRouter("/ruriko")
 	ctx := context.Background()

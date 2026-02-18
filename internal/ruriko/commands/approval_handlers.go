@@ -26,6 +26,7 @@ type DispatchFunc func(ctx context.Context, action string, cmd *Command, evt *ev
 // Usage: /ruriko approvals list [--status pending|approved|denied|expired|cancelled]
 func (h *Handlers) HandleApprovalsList(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
+	ctx = trace.WithTraceID(ctx, traceID)
 
 	if h.approvals == nil {
 		return "", fmt.Errorf("approval workflow is not configured")
@@ -76,6 +77,7 @@ func (h *Handlers) HandleApprovalsList(ctx context.Context, cmd *Command, evt *e
 // Usage: /ruriko approvals show <id>
 func (h *Handlers) HandleApprovalsShow(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
+	ctx = trace.WithTraceID(ctx, traceID)
 
 	if h.approvals == nil {
 		return "", fmt.Errorf("approval workflow is not configured")

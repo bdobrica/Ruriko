@@ -21,7 +21,10 @@ type GosutoVersion struct {
 // CreateGosutoVersion inserts a new Gosuto version for an agent and updates
 // the agent's gosuto_version field to the new version number.
 func (s *Store) CreateGosutoVersion(ctx context.Context, v *GosutoVersion) error {
-	v.CreatedAt = time.Now()
+	// Capture a single timestamp so that the version's created_at and the
+	// agent's updated_at are identical within the same transaction.
+	now := time.Now()
+	v.CreatedAt = now
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -41,7 +44,7 @@ func (s *Store) CreateGosutoVersion(ctx context.Context, v *GosutoVersion) error
 	// Keep the agent row in sync.
 	_, err = tx.ExecContext(ctx, `
 		UPDATE agents SET gosuto_version = ?, updated_at = ? WHERE id = ?
-	`, v.Version, time.Now(), v.AgentID)
+	`, v.Version, now, v.AgentID)
 	if err != nil {
 		return fmt.Errorf("update agent gosuto_version: %w", err)
 	}

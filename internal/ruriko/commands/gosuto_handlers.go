@@ -325,6 +325,18 @@ func (h *Handlers) HandleGosutoRollback(ctx context.Context, cmd *Command, evt *
 		return "", fmt.Errorf("version %d not found: %w", targetVer, err)
 	}
 
+	// No-op detection: if the rollback target's content is identical to the
+	// current latest version, creating a new version would increment the
+	// version counter without changing anything.
+	if latest, err := h.store.GetLatestGosutoVersion(ctx, agentID); err == nil {
+		if latest.Hash == target.Hash {
+			return fmt.Sprintf(
+				"ℹ️  Gosuto config for **%s** is already at the content of v%d (current: v%d, hash: %s…)\n\nNo new version created.\n\n(trace: %s)",
+				agentID, targetVer, latest.Version, latest.Hash[:8], traceID,
+			), nil
+		}
+	}
+
 	// Determine the new version number.
 	nextVer, err := h.store.NextGosutoVersion(ctx, agentID)
 	if err != nil {

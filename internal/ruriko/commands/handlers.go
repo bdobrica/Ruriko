@@ -129,6 +129,7 @@ func (h *Handlers) HandleVersion(ctx context.Context, cmd *Command, evt *event.E
 // HandlePing responds with a health check
 func (h *Handlers) HandlePing(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
+	ctx = trace.WithTraceID(ctx, traceID)
 
 	// Write audit log — failure is non-fatal; the primary operation already succeeded.
 	if err := h.store.WriteAudit(
@@ -150,6 +151,7 @@ func (h *Handlers) HandlePing(ctx context.Context, cmd *Command, evt *event.Even
 // HandleAgentsList lists all agents
 func (h *Handlers) HandleAgentsList(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
+	ctx = trace.WithTraceID(ctx, traceID)
 
 	// Query agents
 	agents, err := h.store.ListAgents(ctx)
@@ -212,6 +214,7 @@ func (h *Handlers) HandleAgentsList(ctx context.Context, cmd *Command, evt *even
 // HandleAgentsShow shows details for a specific agent
 func (h *Handlers) HandleAgentsShow(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
+	ctx = trace.WithTraceID(ctx, traceID)
 
 	// Get agent name from arguments
 	agentName, ok := cmd.GetArg(0)
@@ -273,6 +276,7 @@ func (h *Handlers) HandleAgentsShow(ctx context.Context, cmd *Command, evt *even
 // HandleAuditTail shows recent audit entries
 func (h *Handlers) HandleAuditTail(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
+	ctx = trace.WithTraceID(ctx, traceID)
 
 	// Get limit from arguments
 	limit := 10
@@ -340,6 +344,7 @@ func (h *Handlers) HandleAuditTail(ctx context.Context, cmd *Command, evt *event
 // HandleTrace shows all audit entries for a trace ID
 func (h *Handlers) HandleTrace(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
+	ctx = trace.WithTraceID(ctx, traceID)
 
 	// Get trace ID from subcommand position (e.g. /ruriko trace t_abc123).
 	// The router may place the argument in either Subcommand or Args[0] depending

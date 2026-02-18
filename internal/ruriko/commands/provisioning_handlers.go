@@ -32,6 +32,7 @@ import (
 //     admin rooms (default: true).
 func (h *Handlers) HandleAgentsMatrixRegister(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
+	ctx = trace.WithTraceID(ctx, traceID)
 
 	// Command structure: /ruriko agents matrix register <name>
 	// Router: name="agents", subcommand="matrix", args[0]="register", args[1]=<name>
@@ -91,8 +92,7 @@ Then bind it:
 			agentID, agent.MXID.String, traceID), nil
 	}
 
-	tracedCtx := trace.WithTraceID(ctx, traceID)
-	provisioned, err := h.provisioner.Register(tracedCtx, agentID, agent.DisplayName)
+	provisioned, err := h.provisioner.Register(ctx, agentID, agent.DisplayName)
 	if err != nil {
 		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.matrix.register", agentID, "error", nil, err.Error())
 		return "", fmt.Errorf("Matrix account provisioning failed: %w", err)
@@ -108,7 +108,7 @@ Then bind it:
 	// Store access token as a matrix_token secret.
 	secretName := fmt.Sprintf("agent.%s.matrix_token", agentID)
 	tokenBytes := []byte(provisioned.AccessToken)
-	if err := h.secrets.Set(tracedCtx, secretName, secrets.TypeMatrixToken, tokenBytes); err != nil {
+	if err := h.secrets.Set(ctx, secretName, secrets.TypeMatrixToken, tokenBytes); err != nil {
 		// If we can't store the token, that is serious: log it but tell the user.
 		slog.Error("failed to store agent access token as secret",
 			"agent", agentID, "secret", secretName, "err", err)
@@ -118,13 +118,13 @@ Then bind it:
 	}
 
 	// Auto-bind the secret to the agent.
-	if err := h.secrets.Bind(tracedCtx, agentID, secretName, "matrix_identity"); err != nil {
+	if err := h.secrets.Bind(ctx, agentID, secretName, "matrix_identity"); err != nil {
 		slog.Warn("failed to auto-bind matrix_token secret",
 			"agent", agentID, "secret", secretName, "err", err)
 	}
 
 	// Invite to configured admin rooms (non-fatal).
-	inviteErrs := h.provisioner.InviteToRooms(tracedCtx, provisioned.UserID)
+	inviteErrs := h.provisioner.InviteToRooms(ctx, provisioned.UserID)
 	var inviteNote string
 	if len(inviteErrs) > 0 {
 		msgs := make([]string, len(inviteErrs))

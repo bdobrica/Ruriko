@@ -44,6 +44,7 @@ func truncateID(s string, n int) string {
 // Usage: /ruriko agents create --name <id> --template <tmpl> --image <image>
 func (h *Handlers) HandleAgentsCreate(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
+	ctx = trace.WithTraceID(ctx, traceID)
 
 	agentID := cmd.GetFlag("name", "")
 	if agentID == "" {
@@ -135,6 +136,7 @@ Control URL: %s
 // Usage: /ruriko agents stop <name>
 func (h *Handlers) HandleAgentsStop(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
+	ctx = trace.WithTraceID(ctx, traceID)
 
 	agentID, _ := cmd.GetArg(0)
 	if agentID == "" {
@@ -175,6 +177,7 @@ func (h *Handlers) HandleAgentsStop(ctx context.Context, cmd *Command, evt *even
 // Usage: /ruriko agents start <name>
 func (h *Handlers) HandleAgentsStart(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
+	ctx = trace.WithTraceID(ctx, traceID)
 
 	agentID, _ := cmd.GetArg(0)
 	if agentID == "" {
@@ -218,6 +221,7 @@ func (h *Handlers) HandleAgentsStart(ctx context.Context, cmd *Command, evt *eve
 // Usage: /ruriko agents respawn <name>
 func (h *Handlers) HandleAgentsRespawn(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
+	ctx = trace.WithTraceID(ctx, traceID)
 
 	agentID, _ := cmd.GetArg(0)
 	if agentID == "" {
@@ -302,6 +306,7 @@ func (h *Handlers) HandleAgentsDelete(ctx context.Context, cmd *Command, evt *ev
 // Usage: /ruriko agents status <name>
 func (h *Handlers) HandleAgentsStatus(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
+	ctx = trace.WithTraceID(ctx, traceID)
 
 	agentID, _ := cmd.GetArg(0)
 	if agentID == "" {

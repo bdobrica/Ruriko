@@ -166,6 +166,13 @@ func (h *Handlers) HandleSecretsRotate(ctx context.Context, cmd *Command, evt *e
 		return "", fmt.Errorf("--value must be valid base64: %w", err)
 	}
 
+	// Verify the secret exists before entering the approval gate so that
+	// only valid operations are queued for approval.
+	if _, err := h.secrets.GetMetadata(ctx, name); err != nil {
+		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "secrets.rotate", name, "error", nil, err.Error())
+		return "", fmt.Errorf("secret not found: %s", name)
+	}
+
 	// Require approval for secret rotation (after input validation passes).
 	if msg, needed, err := h.requestApprovalIfNeeded(ctx, "secrets.rotate", name, cmd, evt); needed {
 		return msg, err
@@ -209,6 +216,13 @@ func (h *Handlers) HandleSecretsDelete(ctx context.Context, cmd *Command, evt *e
 		return "", fmt.Errorf("usage: /ruriko secrets delete <name>")
 	}
 
+	// Verify the secret exists before entering the approval gate so that
+	// only valid operations are queued for approval.
+	if _, err := h.secrets.GetMetadata(ctx, name); err != nil {
+		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "secrets.delete", name, "error", nil, err.Error())
+		return "", fmt.Errorf("secret not found: %s", name)
+	}
+
 	// Require approval for secret deletion.
 	if msg, needed, err := h.requestApprovalIfNeeded(ctx, "secrets.delete", name, cmd, evt); needed {
 		return msg, err
@@ -245,6 +259,18 @@ func (h *Handlers) HandleSecretsBind(ctx context.Context, cmd *Command, evt *eve
 
 	scope := cmd.GetFlag("scope", "read")
 
+	// Ensure the agent exists before creating the binding.
+	if _, err := h.store.GetAgent(ctx, agentID); err != nil {
+		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "secrets.bind", agentID+"/"+secretName, "error", nil, err.Error())
+		return "", fmt.Errorf("agent not found: %s", agentID)
+	}
+
+	// Ensure the secret exists before creating the binding.
+	if _, err := h.secrets.GetMetadata(ctx, secretName); err != nil {
+		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "secrets.bind", agentID+"/"+secretName, "error", nil, err.Error())
+		return "", fmt.Errorf("secret not found: %s", secretName)
+	}
+
 	if err := h.secrets.Bind(ctx, agentID, secretName, scope); err != nil {
 		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "secrets.bind", agentID+"/"+secretName, "error", nil, err.Error())
 		return "", fmt.Errorf("failed to bind secret: %w", err)
@@ -273,6 +299,18 @@ func (h *Handlers) HandleSecretsUnbind(ctx context.Context, cmd *Command, evt *e
 	secretName, ok := cmd.GetArg(1)
 	if !ok {
 		return "", fmt.Errorf("usage: /ruriko secrets unbind <agent> <secret>")
+	}
+
+	// Ensure the agent exists before attempting the unbind.
+	if _, err := h.store.GetAgent(ctx, agentID); err != nil {
+		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "secrets.unbind", agentID+"/"+secretName, "error", nil, err.Error())
+		return "", fmt.Errorf("agent not found: %s", agentID)
+	}
+
+	// Ensure the secret exists before attempting the unbind.
+	if _, err := h.secrets.GetMetadata(ctx, secretName); err != nil {
+		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "secrets.unbind", agentID+"/"+secretName, "error", nil, err.Error())
+		return "", fmt.Errorf("secret not found: %s", secretName)
 	}
 
 	if err := h.secrets.Unbind(ctx, agentID, secretName); err != nil {

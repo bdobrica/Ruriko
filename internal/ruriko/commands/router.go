@@ -92,6 +92,17 @@ func (r *Router) Parse(text string) (*Command, error) {
 			if strings.HasPrefix(part, "--") {
 				flagName := strings.TrimPrefix(part, "--")
 
+				// Flags prefixed with _ are reserved for internal use by the
+				// dispatch subsystem (e.g. _approved, _approval_id, _trace_id).
+				// Strip them from user input to prevent injection attacks that
+				// would bypass the approval gate.
+				if strings.HasPrefix(flagName, "_") {
+					if i+1 < len(parts) && !strings.HasPrefix(parts[i+1], "--") {
+						i++ // skip the value too
+					}
+					continue
+				}
+
 				// Check if flag has a value
 				if i+1 < len(parts) && !strings.HasPrefix(parts[i+1], "--") {
 					cmd.Flags[flagName] = parts[i+1]
