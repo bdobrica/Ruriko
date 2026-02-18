@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -21,6 +22,7 @@ import (
 	"github.com/bdobrica/Ruriko/internal/ruriko/runtime/docker"
 	"github.com/bdobrica/Ruriko/internal/ruriko/secrets"
 	"github.com/bdobrica/Ruriko/internal/ruriko/store"
+	"github.com/bdobrica/Ruriko/internal/ruriko/templates"
 )
 
 // Config holds application configuration
@@ -37,6 +39,10 @@ type Config struct {
 	// Provisioning holds optional Matrix account provisioning configuration.
 	// When nil, the agents.matrix.register command will require --mxid.
 	Provisioning *provisioning.Config
+	// TemplatesFS is an optional filesystem rooted at the templates directory.
+	// When non-nil, Gosuto template commands are enabled.  Pass os.DirFS(path)
+	// or an embed.FS sub-tree.
+	TemplatesFS fs.FS
 }
 
 // App is the main Ruriko application
@@ -116,6 +122,17 @@ func New(config *Config) (*App, error) {
 		}
 	}
 
+	// Initialise secrets distributor.
+	distributor := secrets.NewDistributor(secretsStore, store)
+	handlers.SetDistributor(distributor)
+
+	// Initialise template registry if a templates FS is provided.
+	if config.TemplatesFS != nil {
+		reg := templates.NewRegistry(config.TemplatesFS)
+		handlers.SetTemplates(reg)
+		slog.Info("Gosuto template registry ready")
+	}
+
 	// Register command handlers
 	router.Register("help", handlers.HandleHelp)
 	router.Register("version", handlers.HandleVersion)
@@ -139,6 +156,13 @@ func New(config *Config) (*App, error) {
 	router.Register("secrets.delete", handlers.HandleSecretsDelete)
 	router.Register("secrets.bind", handlers.HandleSecretsBind)
 	router.Register("secrets.unbind", handlers.HandleSecretsUnbind)
+	router.Register("secrets.push", handlers.HandleSecretsPush)
+	router.Register("gosuto.show", handlers.HandleGosutoShow)
+	router.Register("gosuto.versions", handlers.HandleGosutoVersions)
+	router.Register("gosuto.diff", handlers.HandleGosutoDiff)
+	router.Register("gosuto.set", handlers.HandleGosutoSet)
+	router.Register("gosuto.rollback", handlers.HandleGosutoRollback)
+	router.Register("gosuto.push", handlers.HandleGosutoPush)
 
 	return &App{
 		config:     config,

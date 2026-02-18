@@ -1,0 +1,84 @@
+apiVersion: gosuto/v1
+metadata:
+  name: "{{.AgentName}}"
+  template: browser-agent
+  description: "Browser automation agent with approval-gated navigation and form interaction."
+
+trust:
+  allowedRooms:
+    - "{{.AdminRoom}}"
+  allowedSenders:
+    - "*"
+  requireE2EE: false
+  adminRoom: "{{.AdminRoom}}"
+
+limits:
+  maxRequestsPerMinute: 5
+  maxTokensPerRequest: 8192
+  maxConcurrentRequests: 1
+  maxMonthlyCostUSD: 20.00
+
+capabilities:
+  - name: allow-screenshot
+    mcp: playwright
+    tool: screenshot
+    allow: true
+
+  - name: allow-navigate-with-approval
+    mcp: playwright
+    tool: navigate
+    allow: true
+    requireApproval: true
+
+  - name: allow-click-with-approval
+    mcp: playwright
+    tool: click
+    allow: true
+    requireApproval: true
+
+  - name: deny-form-fill
+    mcp: playwright
+    tool: fill
+    allow: false
+
+  - name: deny-all-other-playwright
+    mcp: playwright
+    tool: "*"
+    allow: false
+
+  - name: deny-all-others
+    mcp: "*"
+    tool: "*"
+    allow: false
+
+approvals:
+  enabled: true
+  room: "{{.AdminRoom}}"
+  approvers:
+    - "{{.OperatorMXID}}"
+  ttlSeconds: 300
+
+persona:
+  systemPrompt: |
+    You are a controlled browser automation agent. You capture screenshots and
+    navigate web pages ONLY at explicit operator request. Every navigation and
+    click requires approval before execution. Never fill forms or submit data
+    unless specifically instructed and approved. Describe what you observe
+    clearly and wait for instructions.
+  llmProvider: anthropic
+  model: claude-3-5-sonnet-20241022
+  temperature: 0.1
+
+secrets:
+  - name: "{{.AgentName}}.anthropic-api-key"
+    envVar: ANTHROPIC_API_KEY
+    required: true
+
+mcps:
+  - name: playwright
+    command: npx
+    args:
+      - "-y"
+      - "@playwright/mcp"
+      - "--headless"
+    autoRestart: true

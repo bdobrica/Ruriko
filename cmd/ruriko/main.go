@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"io/fs"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -122,6 +124,7 @@ func loadConfig() *app.Config {
 		ReconcileInterval: reconcileInterval,
 		AdminSenders:      adminSenders,
 		Provisioning:      provisioningCfg,
+		TemplatesFS:       loadTemplatesFS(),
 		Matrix: matrix.Config{
 			Homeserver:  homeserver,
 			UserID:      userID,
@@ -148,4 +151,17 @@ func getEnvBool(key string, defaultValue bool) bool {
 		return defaultValue
 	}
 	return b
+}
+
+// loadTemplatesFS returns a fs.FS for the Gosuto templates directory.
+// The directory is determined by the TEMPLATES_DIR env var (default: ./templates).
+// Returns nil if the directory does not exist (templates will be unavailable).
+func loadTemplatesFS() fs.FS {
+	dir := getEnv("TEMPLATES_DIR", "./templates")
+	if _, err := os.Stat(dir); err != nil {
+		slog.Warn("templates directory not found; gosuto templates unavailable", "dir", dir)
+		return nil
+	}
+	slog.Info("templates directory found", "dir", dir)
+	return os.DirFS(dir)
 }

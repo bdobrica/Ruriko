@@ -247,39 +247,44 @@ Gitai (agent runtime) will be built in parallel but can start after Ruriko found
 **Goal**: Apply and version agent policies and personas.
 
 ### 5.1 Gosuto Specification
-- [ ] Create `docs/gosuto-spec.md` - formal specification for Gosuto v1
-- [ ] Create `common/spec/gosuto/types.go` - Go structs for Gosuto schema:
-  - [ ] `GosutoConfig` struct
-  - [ ] `Trust` (allowed rooms, senders, E2EE requirements)
-  - [ ] `Limits` (rate, cost, concurrency)
-  - [ ] `Capability` rules
-  - [ ] `Approval` requirements
-  - [ ] `Persona` (LLM prompt)
-- [ ] Create `common/spec/gosuto/validate.go` - schema validator
-- [ ] Test: Valid Gosuto configs parse correctly
+- [x] Create `docs/gosuto-spec.md` - formal specification for Gosuto v1
+- [x] Create `common/spec/gosuto/types.go` - Go structs for Gosuto schema:
+  - [x] `Config` struct (root type)
+  - [x] `Trust` (allowed rooms, senders, E2EE requirements)
+  - [x] `Limits` (rate, cost, concurrency)
+  - [x] `Capability` rules
+  - [x] `Approval` requirements
+  - [x] `Persona` (LLM prompt)
+- [x] Create `common/spec/gosuto/validate.go` - schema validator
+- [x] Test: Valid Gosuto configs parse correctly (validate_test.go — 11 tests)
 
 ### 5.2 Template System
-- [ ] Create `templates/cron-agent/gosuto.yaml` - example cron agent config
-- [ ] Create `templates/browser-agent/gosuto.yaml` - example browser agent config
-- [ ] Create `internal/ruriko/templates/loader.go` - template registry
-- [ ] Implement template interpolation (agent name, room IDs, etc.)
-- [ ] Test: Templates load and validate
+- [x] Create `templates/cron-agent/gosuto.yaml` - example cron agent config
+- [x] Create `templates/browser-agent/gosuto.yaml` - example browser agent config
+- [x] Create `internal/ruriko/templates/loader.go` - template registry
+- [x] Implement template interpolation (agent name, room IDs, etc.)
+- [x] Test: Templates load and validate (loader_test.go — 4 tests)
 
 ### 5.3 Gosuto Commands
-- [ ] `/ruriko gosuto show <agent>` - display current Gosuto config
-- [ ] `/ruriko gosuto diff <agent> --from <v1> --to <v2>` - show config changes
-- [ ] `/ruriko gosuto set <agent>` - update config (via file attachment)
-- [ ] `/ruriko gosuto rollback <agent> --to <version>` - revert to previous version
-- [ ] `/ruriko gosuto push <agent>` - apply current Gosuto to running agent via ACP
-- [ ] Test: Gosuto versioning works end-to-end
+- [x] `/ruriko gosuto show <agent> [--version <n>]` - display current (or specific) Gosuto config
+- [x] `/ruriko gosuto versions <agent>` - list all stored versions
+- [x] `/ruriko gosuto diff <agent> --from <v1> --to <v2>` - show config changes
+- [x] `/ruriko gosuto set <agent> --content <base64yaml>` - store new version
+- [x] `/ruriko gosuto rollback <agent> --to <version>` - revert to previous version
+- [x] `/ruriko gosuto push <agent>` - apply current Gosuto to running agent via ACP
+- [x] Test: Gosuto versioning works end-to-end (gosuto_test.go — 8 store tests)
 
 ### 5.4 Gosuto Storage and Versioning
-- [ ] Compute SHA-256 hash of Gosuto content
-- [ ] Store versions in `gosuto_versions` table
-- [ ] Keep last N versions (configurable)
-- [ ] Track who changed what and when
-- [ ] Implement version comparison logic
-- [ ] Test: Rollback works correctly
+- [x] Compute SHA-256 hash of Gosuto content
+- [x] Store versions in `gosuto_versions` table
+- [x] Keep last N versions (configurable; default 20 via `GosutoVersionsRetainN`)
+- [x] Track who changed what and when
+- [x] Implement version comparison logic
+- [x] Test: Rollback works correctly
+
+### Phase 2 Deferred (completed in Phase 5)
+- [x] Create `internal/ruriko/secrets/distributor.go` - push updates to agents
+- [x] `/ruriko secrets push <agent>` - force secret sync
 
 ---
 
@@ -509,7 +514,7 @@ Update this section as phases are completed:
 - [x] Phase 2: Secrets Management ✅ **COMPLETED** (secrets push distributor deferred to Phase 5)
 - [x] Phase 3: Agent Lifecycle Control ✅ **COMPLETED** (template loading + volume mounts deferred to Phase 5)
 - [x] Phase 4: Matrix Identity Provisioning ✅ **COMPLETED** (tests deferred)
-- [ ] Phase 5: Gosuto - Versioned Configuration
+- [x] Phase 5: Gosuto - Versioned Configuration ✅ **COMPLETED**
 - [ ] Phase 6: Approval Workflow
 - [ ] Phase 7: Observability and Safety Polish
 - [ ] Phase 8: Deployment and Documentation
@@ -519,4 +524,4 @@ Update this section as phases are completed:
 ---
 
 **Last Updated**: 2026-02-18
-**Current Focus**: Phase 5 - Gosuto Versioned Configuration
+**Current Focus**: Phase 6 - Approval Workflow

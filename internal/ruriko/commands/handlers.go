@@ -15,6 +15,7 @@ import (
 	"github.com/bdobrica/Ruriko/internal/ruriko/runtime"
 	"github.com/bdobrica/Ruriko/internal/ruriko/secrets"
 	"github.com/bdobrica/Ruriko/internal/ruriko/store"
+	"github.com/bdobrica/Ruriko/internal/ruriko/templates"
 )
 
 // Handlers holds all command handlers and dependencies
@@ -23,6 +24,8 @@ type Handlers struct {
 	secrets     *secrets.Store
 	runtime     runtime.Runtime
 	provisioner *provisioning.Provisioner
+	distributor *secrets.Distributor
+	templates   *templates.Registry
 }
 
 // NewHandlers creates a new Handlers instance
@@ -38,6 +41,16 @@ func (h *Handlers) SetRuntime(rt runtime.Runtime) {
 // SetProvisioner attaches a Matrix provisioner to the handlers after construction.
 func (h *Handlers) SetProvisioner(p *provisioning.Provisioner) {
 	h.provisioner = p
+}
+
+// SetDistributor attaches a secrets distributor to the handlers.
+func (h *Handlers) SetDistributor(d *secrets.Distributor) {
+	h.distributor = d
+}
+
+// SetTemplates attaches a Gosuto template registry to the handlers.
+func (h *Handlers) SetTemplates(reg *templates.Registry) {
+	h.templates = reg
 }
 
 // HandleHelp shows available commands
@@ -69,6 +82,7 @@ func (h *Handlers) HandleHelp(ctx context.Context, cmd *Command, evt *event.Even
 • /ruriko secrets delete <name> - Delete a secret
 • /ruriko secrets bind <agent> <secret> --scope <scope> - Grant agent access
 • /ruriko secrets unbind <agent> <secret> - Revoke agent access
+• /ruriko secrets push <agent> - Push all bound secrets to running agent
 
 ⚠️ **Secret values passed via --value are visible in room history.** Prefer an encrypted DM or out-of-band delivery for sensitive secrets.
 
@@ -76,7 +90,14 @@ func (h *Handlers) HandleHelp(ctx context.Context, cmd *Command, evt *event.Even
 • /ruriko audit tail [n] - Show recent audit entries
 • /ruriko trace <trace_id> - Show all events for a trace
 
-**Gosuto Commands:** (TODO)
+**Gosuto Commands:**
+• /ruriko gosuto show <agent> [--version <n>] - Show current (or specific) Gosuto config
+• /ruriko gosuto versions <agent> - List all stored versions
+• /ruriko gosuto diff <agent> --from <v1> --to <v2> - Diff between two versions
+• /ruriko gosuto set <agent> --content <base64yaml> - Store new Gosuto version
+• /ruriko gosuto rollback <agent> --to <version> - Revert to previous version
+• /ruriko gosuto push <agent> - Push current config to running agent
+
 **Approvals Commands:** (TODO)
 `
 	return help, nil

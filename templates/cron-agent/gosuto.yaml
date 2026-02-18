@@ -1,0 +1,69 @@
+apiVersion: gosuto/v1
+metadata:
+  name: "{{.AgentName}}"
+  template: cron-agent
+  description: "Scheduled task agent that runs periodic checks and reports results."
+
+trust:
+  allowedRooms:
+    - "{{.AdminRoom}}"
+  allowedSenders:
+    - "*"
+  requireE2EE: false
+  adminRoom: "{{.AdminRoom}}"
+
+limits:
+  maxRequestsPerMinute: 10
+  maxTokensPerRequest: 4096
+  maxConcurrentRequests: 1
+  maxMonthlyCostUSD: 5.00
+
+capabilities:
+  - name: allow-web-search
+    mcp: brave-search
+    tool: "*"
+    allow: true
+
+  - name: allow-fetch-read
+    mcp: fetch
+    tool: fetch
+    allow: true
+    constraints:
+      method: GET
+
+  - name: deny-all-write-tools
+    mcp: "*"
+    tool: "*"
+    allow: false
+
+persona:
+  systemPrompt: |
+    You are a scheduled task agent. Your job is to perform periodic checks
+    and report results concisely. Be factual and brief. Do not take actions
+    outside your defined tools. When a task is complete, summarise what you
+    found in a clear, structured format.
+  llmProvider: openai
+  model: gpt-4o-mini
+  temperature: 0.2
+
+secrets:
+  - name: "{{.AgentName}}.openai-api-key"
+    envVar: OPENAI_API_KEY
+    required: true
+
+mcps:
+  - name: brave-search
+    command: npx
+    args:
+      - "-y"
+      - "@modelcontextprotocol/server-brave-search"
+    env:
+      BRAVE_API_KEY: "{{`${BRAVE_API_KEY}`}}"
+    autoRestart: true
+
+  - name: fetch
+    command: npx
+    args:
+      - "-y"
+      - "@modelcontextprotocol/server-fetch"
+    autoRestart: true
