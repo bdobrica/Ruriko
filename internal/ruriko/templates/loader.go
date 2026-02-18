@@ -78,6 +78,10 @@ func (r *Registry) List() ([]string, error) {
 // Render loads gosuto.yaml for the named template, interpolates vars, and
 // returns the rendered YAML as a byte slice ready to be stored as a Gosuto
 // version.
+//
+// Templates are trusted operator content loaded from disk. User-submitted
+// template content must NOT be used here — text/template allows arbitrary
+// pipeline chaining that could be exploited.
 func (r *Registry) Render(name string, vars TemplateVars) ([]byte, error) {
 	path := name + "/gosuto.yaml"
 
@@ -86,7 +90,10 @@ func (r *Registry) Render(name string, vars TemplateVars) ([]byte, error) {
 		return nil, fmt.Errorf("template %q: %w", name, err)
 	}
 
-	tmpl, err := template.New(path).Parse(string(raw))
+	// Option "missingkey=error" causes the template to fail loudly if a
+	// TemplateVars field referenced in the template does not exist, instead
+	// of silently inserting "<no value>".
+	tmpl, err := template.New(path).Option("missingkey=error").Funcs(template.FuncMap{}).Parse(string(raw))
 	if err != nil {
 		return nil, fmt.Errorf("template %q: parse: %w", name, err)
 	}

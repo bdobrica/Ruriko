@@ -48,7 +48,10 @@ func newHandlerFixture(t *testing.T) (*commands.Handlers, *appstore.Store, *secr
 		t.Fatalf("secrets.New: %v", err)
 	}
 
-	h := commands.NewHandlers(s, sec)
+	h := commands.NewHandlers(commands.HandlersConfig{
+		Store:   s,
+		Secrets: sec,
+	})
 	return h, s, sec
 }
 

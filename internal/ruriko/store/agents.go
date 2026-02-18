@@ -154,7 +154,7 @@ func (s *Store) UpdateAgentHandle(ctx context.Context, id, containerID, controlU
 
 // UpdateAgentMXID sets the Matrix user ID for an agent.
 func (s *Store) UpdateAgentMXID(ctx context.Context, id, mxid string) error {
-	_, err := s.db.ExecContext(ctx, `
+	result, err := s.db.ExecContext(ctx, `
 		UPDATE agents
 		SET mxid = ?, updated_at = ?
 		WHERE id = ?
@@ -162,12 +162,21 @@ func (s *Store) UpdateAgentMXID(ctx context.Context, id, mxid string) error {
 	if err != nil {
 		return fmt.Errorf("failed to update agent mxid: %w", err)
 	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("agent not found: %s", id)
+	}
+
 	return nil
 }
 
-// UpdateAgentDisabled marks an agent as disabled and clears its MXID.
+// UpdateAgentDisabled marks an agent as disabled.
 func (s *Store) UpdateAgentDisabled(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, `
+	result, err := s.db.ExecContext(ctx, `
 		UPDATE agents
 		SET status = 'disabled', updated_at = ?
 		WHERE id = ?
@@ -175,6 +184,15 @@ func (s *Store) UpdateAgentDisabled(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("failed to disable agent: %w", err)
 	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("agent not found: %s", id)
+	}
+
 	return nil
 }
 

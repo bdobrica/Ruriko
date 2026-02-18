@@ -201,11 +201,15 @@ func (h *Handlers) HandleGosutoSet(ctx context.Context, cmd *Command, evt *event
 		return "", fmt.Errorf("--content is required (base64-encoded YAML)")
 	}
 
-	// Require approval for Gosuto config changes.
-	if msg, needed, err := h.requestApprovalIfNeeded(ctx, "gosuto.set", agentID, cmd, evt); needed {
-		return msg, err
+	// Check the agent exists first — cheap DB lookup avoids wasting
+	// cycles on base64 decode and Gosuto validation for a missing agent.
+	if _, err := h.store.GetAgent(ctx, agentID); err != nil {
+		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "gosuto.set", agentID, "error", nil, err.Error())
+		return "", fmt.Errorf("agent not found: %s", agentID)
 	}
 
+	// Validate inputs before requesting approval so that only valid
+	// operations enter the approval queue.
 	rawYAML, err := base64.StdEncoding.DecodeString(b64)
 	if err != nil {
 		// Try URL-safe base64 as fallback
@@ -221,9 +225,9 @@ func (h *Handlers) HandleGosutoSet(ctx context.Context, cmd *Command, evt *event
 		return "", fmt.Errorf("invalid Gosuto config: %w", err)
 	}
 
-	if _, err := h.store.GetAgent(ctx, agentID); err != nil {
-		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "gosuto.set", agentID, "error", nil, err.Error())
-		return "", fmt.Errorf("agent not found: %s", agentID)
+	// Require approval for Gosuto config changes (after validation passes).
+	if msg, needed, err := h.requestApprovalIfNeeded(ctx, "gosuto.set", agentID, cmd, evt); needed {
+		return msg, err
 	}
 
 	// Compute SHA-256 hash.
@@ -292,11 +296,8 @@ func (h *Handlers) HandleGosutoRollback(ctx context.Context, cmd *Command, evt *
 		return "", fmt.Errorf("--to <version> is required")
 	}
 
-	// Require approval for Gosuto rollback.
-	if msg, needed, err := h.requestApprovalIfNeeded(ctx, "gosuto.rollback", agentID, cmd, evt); needed {
-		return msg, err
-	}
-
+	// Validate inputs before requesting approval so that only valid
+	// operations enter the approval queue.
 	var targetVer int
 	if _, err := fmt.Sscanf(toStr, "%d", &targetVer); err != nil {
 		return "", fmt.Errorf("--to must be an integer, got %q", toStr)
@@ -305,6 +306,11 @@ func (h *Handlers) HandleGosutoRollback(ctx context.Context, cmd *Command, evt *
 	if _, err := h.store.GetAgent(ctx, agentID); err != nil {
 		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "gosuto.rollback", agentID, "error", nil, err.Error())
 		return "", fmt.Errorf("agent not found: %s", agentID)
+	}
+
+	// Require approval for Gosuto rollback (after validation passes).
+	if msg, needed, err := h.requestApprovalIfNeeded(ctx, "gosuto.rollback", agentID, cmd, evt); needed {
+		return msg, err
 	}
 
 	// Load the target version.
@@ -375,7 +381,8 @@ func (h *Handlers) HandleGosutoPush(ctx context.Context, cmd *Command, evt *even
 		return "", fmt.Errorf("no Gosuto config stored for agent %q", agentID)
 	}
 
-	if err := pushGosuto(ctx, agent.ControlURL.String, gv); err != nil {
+	tracedCtx := trace.WithTraceID(ctx, traceID)
+	if err := pushGosuto(tracedCtx, agent.ControlURL.String, gv); err != nil {
 		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "gosuto.push", agentID, "error", nil, err.Error())
 		return "", fmt.Errorf("failed to push Gosuto config: %w", err)
 	}
@@ -406,7 +413,8 @@ func (h *Handlers) HandleSecretsPush(ctx context.Context, cmd *Command, evt *eve
 		return "", fmt.Errorf("secrets distributor is not configured")
 	}
 
-	n, err := h.distributor.PushToAgent(ctx, agentID)
+	tracedCtx := trace.WithTraceID(ctx, traceID)
+	n, err := h.distributor.PushToAgent(tracedCtx, agentID)
 	if err != nil {
 		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "secrets.push", agentID, "error", nil, err.Error())
 		return "", fmt.Errorf("secrets push failed: %w", err)
@@ -424,6 +432,8 @@ func (h *Handlers) HandleSecretsPush(ctx context.Context, cmd *Command, evt *eve
 
 // pushGosuto sends a Gosuto config to an agent via its ACP endpoint.
 func pushGosuto(ctx context.Context, controlURL string, gv *store.GosutoVersion) error {
+	traceID := trace.FromContext(ctx)
+	slog.Info("pushing Gosuto config to agent", "control_url", controlURL, "version", gv.Version, "trace", traceID)
 	client := acp.New(controlURL)
 	return client.ApplyConfig(ctx, acp.ConfigApplyRequest{
 		YAML: gv.YAMLBlob,
@@ -439,6 +449,9 @@ func diffLines(a, b string) string {
 	bLines := strings.Split(strings.TrimRight(b, "\n"), "\n")
 
 	lcs := lcsLines(aLines, bLines)
+	if lcs == nil {
+		return fmt.Sprintf("(configs differ — %d / %d lines; too large for line-by-line diff)", len(aLines), len(bLines))
+	}
 
 	var sb strings.Builder
 	ai, bi, li := 0, 0, 0
@@ -478,10 +491,20 @@ func diffLines(a, b string) string {
 	return strings.TrimRight(sb.String(), "\n")
 }
 
+// maxDiffLines is the maximum number of lines we will attempt to diff via the
+// O(n·m) LCS algorithm.  Configs larger than this get a simple "configs differ"
+// message instead of a line-by-line diff.
+const maxDiffLines = 2000
+
 // lcsLines computes the Longest Common Subsequence of two string slices.
 // Uses the standard DP approach.  Suitable for the config sizes expected here
-// (hundreds of lines at most).
+// (hundreds of lines at most).  Returns nil if either input exceeds
+// maxDiffLines.
 func lcsLines(a, b []string) []string {
+	if len(a) > maxDiffLines || len(b) > maxDiffLines {
+		return nil
+	}
+
 	m, n := len(a), len(b)
 	dp := make([][]int, m+1)
 	for i := range dp {

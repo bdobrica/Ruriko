@@ -179,5 +179,7 @@ type Persona struct {
 	Model string `yaml:"model,omitempty" json:"model,omitempty"`
 
 	// Temperature controls LLM output randomness. Valid range: 0.0–2.0.
-	Temperature float64 `yaml:"temperature,omitempty" json:"temperature,omitempty"`
+	// A nil pointer means "not specified" (provider default); a non-nil pointer
+	// to 0.0 means "explicitly deterministic".
+	Temperature *float64 `yaml:"temperature,omitempty" json:"temperature,omitempty"`
 }

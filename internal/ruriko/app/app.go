@@ -83,7 +83,13 @@ func New(config *Config) (*App, error) {
 
 	// Initialize command router
 	router := commands.NewRouter("/ruriko")
-	handlers := commands.NewHandlers(store, secretsStore)
+
+	// Build the handlers configuration progressively; optional subsystems
+	// are attached only when their prerequisites are met.
+	handlersCfg := commands.HandlersConfig{
+		Store:   store,
+		Secrets: secretsStore,
+	}
 
 	// Initialize Docker runtime if enabled
 	var reconciler *runtime.Reconciler
@@ -100,7 +106,7 @@ func New(config *Config) (*App, error) {
 			if netErr := dockerAdapter.EnsureNetwork(context.Background()); netErr != nil {
 				slog.Warn("could not ensure Docker network; agent spawning may fail", "network", networkName, "err", netErr)
 			}
-			handlers.SetRuntime(dockerAdapter)
+			handlersCfg.Runtime = dockerAdapter
 			reconcileInterval := config.ReconcileInterval
 			if reconcileInterval == 0 {
 				reconcileInterval = 30 * time.Second
@@ -118,27 +124,29 @@ func New(config *Config) (*App, error) {
 			slog.Warn("Matrix provisioner unavailable; agents.matrix.register will require --mxid",
 				"err", err)
 		} else {
-			handlers.SetProvisioner(p)
+			handlersCfg.Provisioner = p
 			slog.Info("Matrix provisioner ready", "type", config.Provisioning.HomeserverType)
 		}
 	}
 
 	// Initialise secrets distributor.
 	distributor := secrets.NewDistributor(secretsStore, store)
-	handlers.SetDistributor(distributor)
+	handlersCfg.Distributor = distributor
 
 	// Initialise template registry if a templates FS is provided.
 	if config.TemplatesFS != nil {
 		reg := templates.NewRegistry(config.TemplatesFS)
-		handlers.SetTemplates(reg)
+		handlersCfg.Templates = reg
 		slog.Info("Gosuto template registry ready")
 	}
 
 	// Initialise approval gate.
 	approvalsStore := approvals.NewStore(store.DB())
 	approvalsGate := approvals.NewGate(approvalsStore, 0 /* default TTL */)
-	handlers.SetApprovals(approvalsGate)
+	handlersCfg.Approvals = approvalsGate
 	slog.Info("approval workflow ready")
+
+	handlers := commands.NewHandlers(handlersCfg)
 
 	// Register command handlers
 	router.Register("help", handlers.HandleHelp)

@@ -28,34 +28,45 @@ func generateID() (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
-// Create persists a new pending approval and returns its ID.
-func (s *Store) Create(ctx context.Context, action, target, paramsJSON, requestorMXID string, ttl time.Duration) (*Approval, error) {
-	id, err := generateID()
-	if err != nil {
-		return nil, err
-	}
+// maxIDRetries is the number of times Create will retry on an ID collision.
+const maxIDRetries = 3
 
+// Create persists a new pending approval and returns its ID.
+// On the unlikely event of an ID collision (6-byte random = 12 hex chars),
+// it retries up to maxIDRetries times before failing.
+func (s *Store) Create(ctx context.Context, action, target, paramsJSON, requestorMXID string, ttl time.Duration) (*Approval, error) {
 	now := time.Now()
 	expiresAt := now.Add(ttl)
 
-	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO approvals (id, action, target, params_json, requestor_mxid, status, created_at, expires_at)
-		VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
-	`, id, action, target, paramsJSON, requestorMXID, now, expiresAt)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create approval: %w", err)
+	var lastErr error
+	for attempt := 0; attempt < maxIDRetries; attempt++ {
+		id, err := generateID()
+		if err != nil {
+			return nil, err
+		}
+
+		_, err = s.db.ExecContext(ctx, `
+			INSERT INTO approvals (id, action, target, params_json, requestor_mxid, status, created_at, expires_at)
+			VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
+		`, id, action, target, paramsJSON, requestorMXID, now, expiresAt)
+		if err != nil {
+			lastErr = err
+			continue // likely ID collision; retry with a new ID
+		}
+
+		return &Approval{
+			ID:            id,
+			Action:        action,
+			Target:        target,
+			ParamsJSON:    paramsJSON,
+			RequestorMXID: requestorMXID,
+			Status:        StatusPending,
+			CreatedAt:     now,
+			ExpiresAt:     expiresAt,
+		}, nil
 	}
 
-	return &Approval{
-		ID:            id,
-		Action:        action,
-		Target:        target,
-		ParamsJSON:    paramsJSON,
-		RequestorMXID: requestorMXID,
-		Status:        StatusPending,
-		CreatedAt:     now,
-		ExpiresAt:     expiresAt,
-	}, nil
+	return nil, fmt.Errorf("failed to create approval after %d attempts: %w", maxIDRetries, lastErr)
 }
 
 // Get retrieves an approval by ID.
@@ -204,11 +215,12 @@ func (s *Store) Cancel(ctx context.Context, id, cancellerMXID, reason string) er
 // ExpireStale marks all pending approvals that have passed their deadline as expired.
 // Returns the number of approvals expired.
 func (s *Store) ExpireStale(ctx context.Context) (int64, error) {
+	now := time.Now()
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE approvals
 		SET status = 'expired', resolved_at = ?
 		WHERE status = 'pending' AND expires_at < ?
-	`, time.Now(), time.Now())
+	`, now, now)
 	if err != nil {
 		return 0, fmt.Errorf("failed to expire stale approvals: %w", err)
 	}

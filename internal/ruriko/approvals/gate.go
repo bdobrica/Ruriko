@@ -4,13 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
+
+	"github.com/bdobrica/Ruriko/common/trace"
 )
 
-// GatedActions is the set of command handler keys that require approval before
-// execution. Handlers check this before proceeding.
-var GatedActions = map[string]bool{
+// gatedActions is the set of command handler keys that require approval before
+// execution. Handlers check this via IsGated() before proceeding.
+var gatedActions = map[string]bool{
 	"agents.delete":   true,
+	"agents.disable":  true,
 	"secrets.delete":  true,
 	"secrets.rotate":  true,
 	"gosuto.set":      true,
@@ -19,7 +23,7 @@ var GatedActions = map[string]bool{
 
 // IsGated returns true when the given action requires an approval.
 func IsGated(action string) bool {
-	return GatedActions[action]
+	return gatedActions[action]
 }
 
 // Gate manages the creation of approval requests for gated operations.
@@ -46,6 +50,8 @@ func (g *Gate) Store() *Store {
 // Approval record with its ID.  The caller should tell the user the ID so they
 // can approve or deny it later.
 func (g *Gate) Request(ctx context.Context, action, target string, args []string, flags map[string]string, requestorMXID string) (*Approval, error) {
+	traceID := trace.FromContext(ctx)
+
 	params := Params{
 		Args:  args,
 		Flags: flags,
@@ -59,6 +65,7 @@ func (g *Gate) Request(ctx context.Context, action, target string, args []string
 		return nil, fmt.Errorf("failed to serialize approval params: %w", err)
 	}
 
+	slog.Info("creating approval request", "action", action, "target", target, "requestor", requestorMXID, "trace", traceID)
 	return g.store.Create(ctx, action, target, string(paramsBytes), requestorMXID, g.ttl)
 }
 

@@ -19,7 +19,21 @@ import (
 	"github.com/bdobrica/Ruriko/internal/ruriko/templates"
 )
 
-// Handlers holds all command handlers and dependencies
+// HandlersConfig holds the (mostly optional) dependencies for Handlers.
+// Only Store and Secrets are required; the remaining fields may be nil when
+// the corresponding subsystem is not enabled (e.g. no Docker runtime, no
+// Matrix provisioner, etc.).
+type HandlersConfig struct {
+	Store       *store.Store
+	Secrets     *secrets.Store
+	Runtime     runtime.Runtime           // optional — enables agent lifecycle commands
+	Provisioner *provisioning.Provisioner // optional — enables Matrix account provisioning
+	Distributor *secrets.Distributor      // optional — enables secrets push
+	Templates   *templates.Registry       // optional — enables Gosuto template commands
+	Approvals   *approvals.Gate           // optional — enables approval gating
+}
+
+// Handlers holds all command handlers and dependencies.
 type Handlers struct {
 	store       *store.Store
 	secrets     *secrets.Store
@@ -31,37 +45,23 @@ type Handlers struct {
 	dispatch    DispatchFunc
 }
 
-// NewHandlers creates a new Handlers instance
-func NewHandlers(s *store.Store, sec *secrets.Store) *Handlers {
-	return &Handlers{store: s, secrets: sec}
-}
-
-// SetRuntime attaches a runtime backend to the handlers after construction.
-func (h *Handlers) SetRuntime(rt runtime.Runtime) {
-	h.runtime = rt
-}
-
-// SetProvisioner attaches a Matrix provisioner to the handlers after construction.
-func (h *Handlers) SetProvisioner(p *provisioning.Provisioner) {
-	h.provisioner = p
-}
-
-// SetDistributor attaches a secrets distributor to the handlers.
-func (h *Handlers) SetDistributor(d *secrets.Distributor) {
-	h.distributor = d
-}
-
-// SetTemplates attaches a Gosuto template registry to the handlers.
-func (h *Handlers) SetTemplates(reg *templates.Registry) {
-	h.templates = reg
-}
-
-// SetApprovals attaches an approval Gate to the handlers.
-func (h *Handlers) SetApprovals(g *approvals.Gate) {
-	h.approvals = g
+// NewHandlers creates a new Handlers instance from the given config.
+func NewHandlers(cfg HandlersConfig) *Handlers {
+	return &Handlers{
+		store:       cfg.Store,
+		secrets:     cfg.Secrets,
+		runtime:     cfg.Runtime,
+		provisioner: cfg.Provisioner,
+		distributor: cfg.Distributor,
+		templates:   cfg.Templates,
+		approvals:   cfg.Approvals,
+	}
 }
 
 // SetDispatch sets the dispatch callback used to re-execute approved operations.
+// This is intentionally a setter rather than a config field because the dispatch
+// callback typically references the Router, which in turn holds references to the
+// Handlers — creating a circular dependency at construction time.
 func (h *Handlers) SetDispatch(fn DispatchFunc) {
 	h.dispatch = fn
 }

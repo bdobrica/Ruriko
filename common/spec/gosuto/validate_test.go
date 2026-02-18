@@ -105,7 +105,7 @@ func TestParse_FullValid(t *testing.T) {
 	if len(cfg.Secrets) != 1 {
 		t.Errorf("secrets count: got %d, want 1", len(cfg.Secrets))
 	}
-	if cfg.Persona.Temperature != 0.2 {
+	if cfg.Persona.Temperature == nil || *cfg.Persona.Temperature != 0.2 {
 		t.Errorf("temperature: got %v, want 0.2", cfg.Persona.Temperature)
 	}
 }

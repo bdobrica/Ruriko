@@ -91,7 +91,8 @@ Then bind it:
 			agentID, agent.MXID.String, traceID), nil
 	}
 
-	provisioned, err := h.provisioner.Register(ctx, agentID, agent.DisplayName)
+	tracedCtx := trace.WithTraceID(ctx, traceID)
+	provisioned, err := h.provisioner.Register(tracedCtx, agentID, agent.DisplayName)
 	if err != nil {
 		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.matrix.register", agentID, "error", nil, err.Error())
 		return "", fmt.Errorf("Matrix account provisioning failed: %w", err)
@@ -123,7 +124,7 @@ Then bind it:
 	}
 
 	// Invite to configured admin rooms (non-fatal).
-	inviteErrs := h.provisioner.InviteToRooms(ctx, provisioned.UserID)
+	inviteErrs := h.provisioner.InviteToRooms(tracedCtx, provisioned.UserID)
 	var inviteNote string
 	if len(inviteErrs) > 0 {
 		msgs := make([]string, len(inviteErrs))
@@ -182,6 +183,12 @@ func (h *Handlers) HandleAgentsDisable(ctx context.Context, cmd *Command, evt *e
 		return fmt.Sprintf("⚠️  Agent **%s** is already disabled\n\n(trace: %s)", agentID, traceID), nil
 	}
 
+	// Require approval for disabling agents.
+	if msg, needed, err := h.requestApprovalIfNeeded(ctx, "agents.disable", agentID, cmd, evt); needed {
+		return msg, err
+	}
+
+	tracedCtx := trace.WithTraceID(ctx, traceID)
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("🔒 Disabling agent **%s**...\n\n", agentID))
 
@@ -191,7 +198,7 @@ func (h *Handlers) HandleAgentsDisable(ctx context.Context, cmd *Command, evt *e
 			AgentID:     agentID,
 			ContainerID: agent.ContainerID.String,
 		}
-		if stopErr := h.runtime.Stop(ctx, handle); stopErr != nil {
+		if stopErr := h.runtime.Stop(tracedCtx, handle); stopErr != nil {
 			slog.Warn("disable: failed to stop container", "agent", agentID, "err", stopErr)
 			sb.WriteString(fmt.Sprintf("⚠️  Container stop failed (continuing): %v\n", stopErr))
 		} else {
@@ -204,7 +211,7 @@ func (h *Handlers) HandleAgentsDisable(ctx context.Context, cmd *Command, evt *e
 		mxid := id.UserID(agent.MXID.String)
 
 		// Remove from rooms.
-		kickErrs := h.provisioner.RemoveFromRooms(ctx, mxid)
+		kickErrs := h.provisioner.RemoveFromRooms(tracedCtx, mxid)
 		if len(kickErrs) > 0 {
 			for _, e := range kickErrs {
 				slog.Warn("disable: room kick error", "agent", agentID, "err", e)
@@ -215,7 +222,7 @@ func (h *Handlers) HandleAgentsDisable(ctx context.Context, cmd *Command, evt *e
 		}
 
 		// Deactivate account.
-		if deactivateErr := h.provisioner.Deactivate(ctx, mxid, erase); deactivateErr != nil {
+		if deactivateErr := h.provisioner.Deactivate(tracedCtx, mxid, erase); deactivateErr != nil {
 			slog.Warn("disable: account deactivation failed", "agent", agentID, "mxid", mxid, "err", deactivateErr)
 			sb.WriteString(fmt.Sprintf("⚠️  Account deactivation failed (continuing): %v\n", deactivateErr))
 		} else {
@@ -244,6 +251,15 @@ func (h *Handlers) HandleAgentsDisable(ctx context.Context, cmd *Command, evt *e
 			"agent", agentID, "secret", secretName, "err", delErr)
 	} else {
 		sb.WriteString(fmt.Sprintf("✅ Secret %s removed\n", secretName))
+	}
+
+	// Step 5: Unbind all remaining secrets for this agent so stale bindings
+	// don't persist after disabling.
+	if unboundN, unbindErr := h.secrets.UnbindAll(ctx, agentID); unbindErr != nil {
+		slog.Warn("disable: failed to unbind secrets", "agent", agentID, "err", unbindErr)
+		sb.WriteString(fmt.Sprintf("⚠️  Failed to unbind remaining secrets: %v\n", unbindErr))
+	} else if unboundN > 0 {
+		sb.WriteString(fmt.Sprintf("✅ Unbound %d secret binding(s)\n", unboundN))
 	}
 
 	if err := h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.disable", agentID, "success",

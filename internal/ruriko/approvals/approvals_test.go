@@ -343,7 +343,7 @@ func TestGate_DecodeParams(t *testing.T) {
 }
 
 func TestIsGated(t *testing.T) {
-	gated := []string{"agents.delete", "secrets.delete", "secrets.rotate", "gosuto.set", "gosuto.rollback"}
+	gated := []string{"agents.delete", "agents.disable", "secrets.delete", "secrets.rotate", "gosuto.set", "gosuto.rollback"}
 	for _, a := range gated {
 		if !approvals.IsGated(a) {
 			t.Errorf("expected %q to be gated", a)

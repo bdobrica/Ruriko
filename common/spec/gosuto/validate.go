@@ -138,8 +138,10 @@ func validateMCPServer(m MCPServer) error {
 }
 
 func validatePersona(p Persona) error {
-	if p.Temperature < 0 || p.Temperature > 2.0 {
-		return fmt.Errorf("temperature %.2f is outside valid range [0.0, 2.0]", p.Temperature)
+	if p.Temperature != nil {
+		if *p.Temperature < 0 || *p.Temperature > 2.0 {
+			return fmt.Errorf("temperature %.2f is outside valid range [0.0, 2.0]", *p.Temperature)
+		}
 	}
 	return nil
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"maunium.net/go/mautrix/event"
+	"maunium.net/go/mautrix/id"
 
 	"github.com/bdobrica/Ruriko/common/trace"
 	"github.com/bdobrica/Ruriko/internal/ruriko/approvals"
@@ -166,6 +167,11 @@ func (h *Handlers) HandleApprovalDecision(ctx context.Context, text string, evt 
 			decision.ApprovalID, approval.Status, traceID), nil
 	}
 
+	// Prevent self-approval: the requestor must not approve their own request.
+	if decision.Approve && approval.RequestorMXID == senderMXID {
+		return "", fmt.Errorf("cannot approve your own request; another operator must approve")
+	}
+
 	if approval.IsExpired() {
 		// Already expired — resolve and report.
 		_ = h.approvals.Store().Cancel(ctx, decision.ApprovalID, senderMXID, "expired before decision")
@@ -215,7 +221,7 @@ func (h *Handlers) HandleApprovalDecision(ctx context.Context, text string, evt 
 
 // executeApproved reconstructs the original Command from an approved Approval
 // and re-executes it via the registered dispatch function.
-func (h *Handlers) executeApproved(ctx context.Context, approval *approvals.Approval, originalEvt *event.Event, traceID string) (string, error) {
+func (h *Handlers) executeApproved(ctx context.Context, approval *approvals.Approval, approverEvt *event.Event, traceID string) (string, error) {
 	if h.dispatch == nil {
 		return "", fmt.Errorf("dispatch function not configured")
 	}
@@ -247,8 +253,13 @@ func (h *Handlers) executeApproved(ctx context.Context, approval *approvals.Appr
 		cmd.Subcommand = parts[1]
 	}
 
-	// Execute on behalf of the original requestor so audit logs show the right actor.
-	return h.dispatch(ctx, approval.Action, cmd, originalEvt)
+	// Execute on behalf of the original requestor so audit logs show the
+	// right actor.  We shallow-copy the approver's event and override the
+	// Sender field with the original requestor's MXID.
+	requestorEvt := *approverEvt
+	requestorEvt.Sender = id.UserID(approval.RequestorMXID)
+
+	return h.dispatch(ctx, approval.Action, cmd, &requestorEvt)
 }
 
 // requestApprovalIfNeeded checks whether the action requires approval, and if
@@ -271,7 +282,8 @@ func (h *Handlers) requestApprovalIfNeeded(
 
 	traceID := trace.GenerateID()
 
-	ap, err := h.approvals.Request(ctx, action, target, cmd.Args, cmd.Flags, evt.Sender.String())
+	tracedCtx := trace.WithTraceID(ctx, traceID)
+	ap, err := h.approvals.Request(tracedCtx, action, target, cmd.Args, cmd.Flags, evt.Sender.String())
 	if err != nil {
 		return "", true, fmt.Errorf("failed to create approval request: %w", err)
 	}

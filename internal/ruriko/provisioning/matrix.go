@@ -19,11 +19,14 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/id"
 	"maunium.net/go/mautrix/synapseadmin"
+
+	"github.com/bdobrica/Ruriko/common/trace"
 )
 
 // HomeserverType selects the registration strategy.
@@ -114,10 +117,16 @@ func generatePassword() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
+// validLocalpart matches the Matrix localpart character set: [a-z0-9._\-/].
+var validLocalpart = regexp.MustCompile(`[^a-z0-9._\-/]`)
+
 // usernameForAgent returns the localpart (no @, no server) for an agent.
+// The agent ID is lower-cased, underscores are replaced with hyphens, and
+// any characters outside the Matrix localpart set [a-z0-9._\-/] are stripped.
 func (p *Provisioner) usernameForAgent(agentID string) string {
-	// Replace underscores: Matrix localparts only allow [a-z0-9._\-/].
-	localpart := strings.ReplaceAll(agentID, "_", "-")
+	localpart := strings.ToLower(agentID)
+	localpart = strings.ReplaceAll(localpart, "_", "-")
+	localpart = validLocalpart.ReplaceAllString(localpart, "")
 	return localpart + p.cfg.UsernameSuffix
 }
 
@@ -138,6 +147,7 @@ func (p *Provisioner) mxidForAgent(agentID string) (id.UserID, error) {
 // The caller is responsible for persisting the returned access token as a
 // matrix_token secret before discarding it.
 func (p *Provisioner) Register(ctx context.Context, agentID, displayName string) (*ProvisionedAccount, error) {
+	traceID := trace.FromContext(ctx)
 	password, err := generatePassword()
 	if err != nil {
 		return nil, err
@@ -150,7 +160,7 @@ func (p *Provisioner) Register(ctx context.Context, agentID, displayName string)
 
 	username := p.usernameForAgent(agentID)
 
-	slog.Info("provisioning Matrix account", "agent", agentID, "mxid", mxid)
+	slog.Info("provisioning Matrix account", "agent", agentID, "mxid", mxid, "trace", traceID)
 
 	switch p.cfg.HomeserverType {
 	case HomeserverSynapse:
@@ -217,9 +227,10 @@ func (p *Provisioner) registerViaClientAPI(ctx context.Context, username, passwo
 // but do not fail the overall operation — the agent can always be re-invited
 // later with `/ruriko agents matrix register`.
 func (p *Provisioner) InviteToRooms(ctx context.Context, userID id.UserID) []error {
+	traceID := trace.FromContext(ctx)
 	var errs []error
 	for _, roomID := range p.cfg.AdminRooms {
-		slog.Info("inviting agent to room", "mxid", userID, "room", roomID)
+		slog.Info("inviting agent to room", "mxid", userID, "room", roomID, "trace", traceID)
 		_, err := p.client.InviteUser(ctx, id.RoomID(roomID), &mautrix.ReqInviteUser{
 			UserID: userID,
 		})
@@ -238,7 +249,8 @@ func (p *Provisioner) InviteToRooms(ctx context.Context, userID id.UserID) []err
 //
 // The erase flag requests that the homeserver purge all user data; use with care.
 func (p *Provisioner) Deactivate(ctx context.Context, userID id.UserID, erase bool) error {
-	slog.Info("deactivating Matrix account", "mxid", userID, "erase", erase)
+	traceID := trace.FromContext(ctx)
+	slog.Info("deactivating Matrix account", "mxid", userID, "erase", erase, "trace", traceID)
 
 	switch p.cfg.HomeserverType {
 	case HomeserverSynapse:
@@ -258,9 +270,10 @@ func (p *Provisioner) Deactivate(ctx context.Context, userID id.UserID, erase bo
 // RemoveFromRooms kicks the given user from all configured admin rooms.
 // Kick errors are logged but non-fatal; the caller decides whether to abort.
 func (p *Provisioner) RemoveFromRooms(ctx context.Context, userID id.UserID) []error {
+	traceID := trace.FromContext(ctx)
 	var errs []error
 	for _, roomID := range p.cfg.AdminRooms {
-		slog.Info("removing agent from room", "mxid", userID, "room", roomID)
+		slog.Info("removing agent from room", "mxid", userID, "room", roomID, "trace", traceID)
 		_, err := p.client.KickUser(ctx, id.RoomID(roomID), &mautrix.ReqKickUser{
 			UserID: userID,
 			Reason: "Agent deprovisioned by Ruriko",
