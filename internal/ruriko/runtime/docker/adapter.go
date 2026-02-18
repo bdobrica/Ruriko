@@ -4,7 +4,6 @@ package docker
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -288,8 +287,8 @@ func parseContainerState(s string) runtime.ContainerState {
 func controlURLFromInspect(inspect types.ContainerJSON, networkName string, port int) string {
 	if nets := inspect.NetworkSettings.Networks; nets != nil {
 		if ep, ok := nets[networkName]; ok && ep.IPAddress != "" {
-			return fmt.Sprintf("http://%s:%s", ep.IPAddress, strconv.Itoa(port))
+			return fmt.Sprintf("http://%s:%d", ep.IPAddress, port)
 		}
 	}
-	return fmt.Sprintf("http://localhost:%s", strconv.Itoa(port))
+	return fmt.Sprintf("http://localhost:%d", port)
 }

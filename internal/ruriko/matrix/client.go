@@ -68,10 +68,37 @@ func (c *Client) Start(ctx context.Context, handler MessageHandler) error {
 		}
 	}
 
-	// Start syncing in background
+	// Start syncing in background with exponential back-off reconnection.
+	// Without retries a transient homeserver error would silently kill the
+	// sync goroutine and leave the bot deaf to all new messages.
 	go func() {
-		if err := c.client.Sync(); err != nil {
-			slog.Error("Matrix sync stopped", "err", err)
+		const (
+			backoffMin = 2 * time.Second
+			backoffMax = 5 * time.Minute
+		)
+		backoff := backoffMin
+		for {
+			if err := c.client.Sync(); err != nil {
+				// Check whether Stop() was called; if so, exit cleanly.
+				select {
+				case <-c.stopCh:
+					return
+				default:
+				}
+				slog.Error("Matrix sync stopped; reconnecting", "err", err, "backoff", backoff)
+				select {
+				case <-c.stopCh:
+					return
+				case <-time.After(backoff):
+				}
+				backoff *= 2
+				if backoff > backoffMax {
+					backoff = backoffMax
+				}
+				continue
+			}
+			// Sync returned nil — only happens on a clean StopSync() call.
+			return
 		}
 	}()
 

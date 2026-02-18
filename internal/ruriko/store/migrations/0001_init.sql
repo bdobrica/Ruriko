@@ -1,13 +1,10 @@
 -- Initial schema for Ruriko control plane
 -- Version: 0001
 -- Description: Create core tables for agents, secrets, gosuto, and audit
-
--- Track schema migrations
-CREATE TABLE IF NOT EXISTS schema_migrations (
-	version INTEGER PRIMARY KEY,
-	applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-	description TEXT NOT NULL
-);
+--
+-- Note: the schema_migrations table is created programmatically by the Go
+-- migration runner (store/store.go) before any SQL file is applied.  It is
+-- intentionally omitted here to avoid a redundant DDL statement.
 
 -- Agents table: tracks all managed agents
 CREATE TABLE IF NOT EXISTS agents (

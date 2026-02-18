@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -84,6 +85,10 @@ func New(config *Config) (*App, error) {
 		if err != nil {
 			slog.Warn("Docker runtime unavailable", "err", err)
 		} else {
+			// Ensure the Ruriko bridge network exists before spawning any containers.
+			if netErr := dockerAdapter.EnsureNetwork(context.Background()); netErr != nil {
+				slog.Warn("could not ensure Docker network; agent spawning may fail", "network", networkName, "err", netErr)
+			}
 			handlers.SetRuntime(dockerAdapter)
 			reconcileInterval := config.ReconcileInterval
 			if reconcileInterval == 0 {
@@ -204,10 +209,87 @@ func (a *App) handleMessage(ctx context.Context, evt *event.Event) {
 		return
 	}
 
-	// Send response
+	// Send response — use the formatted variant so Markdown syntax (bold, code
+	// blocks, etc.) is rendered by Matrix clients that support HTML messages.
 	if response != "" {
-		if err := a.matrix.SendMessage(evt.RoomID.String(), response); err != nil {
+		htmlBody := markdownToHTML(response)
+		if err := a.matrix.SendFormattedMessage(evt.RoomID.String(), htmlBody, response); err != nil {
 			slog.Error("failed to send response", "room", evt.RoomID.String(), "err", err)
 		}
 	}
+}
+
+// markdownToHTML converts the small subset of Markdown produced by Ruriko
+// command handlers into HTML suitable for a Matrix m.text event with
+// format=org.matrix.custom.html.
+//
+// Supported constructs (in order of processing):
+//   - Fenced code blocks  ```…```  → <pre><code>…</code></pre>
+//   - Inline code  `…`             → <code>…</code>
+//   - Bold  **…**                  → <strong>…</strong>
+//   - Newlines                     → <br/>
+func markdownToHTML(md string) string {
+	// Process fenced code blocks first so their content is not touched by
+	// subsequent inline passes.
+	var out strings.Builder
+	lines := strings.Split(md, "\n")
+	inCode := false
+	for _, line := range lines {
+		if strings.HasPrefix(line, "```") {
+			if !inCode {
+				out.WriteString("<pre><code>")
+				inCode = true
+			} else {
+				out.WriteString("</code></pre>")
+				inCode = false
+			}
+			continue
+		}
+		if inCode {
+			// Escape HTML entities inside code blocks.
+			escaped := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(line)
+			out.WriteString(escaped)
+			out.WriteString("\n")
+		} else {
+			out.WriteString(line)
+			out.WriteString("\n")
+		}
+	}
+	result := out.String()
+
+	// Inline code: `…`
+	result = replaceDelimited(result, "`", "<code>", "</code>")
+
+	// Bold: **…**
+	result = replaceDelimited(result, "**", "<strong>", "</strong>")
+
+	// Convert bare newlines to <br/>.
+	result = strings.ReplaceAll(result, "\n", "<br/>")
+
+	return result
+}
+
+// replaceDelimited replaces occurrences of delim…delim with open+content+close.
+// Only complete pairs are replaced; an unmatched opener is left as-is.
+func replaceDelimited(s, delim, open, close string) string {
+	var b strings.Builder
+	for {
+		start := strings.Index(s, delim)
+		if start == -1 {
+			b.WriteString(s)
+			break
+		}
+		end := strings.Index(s[start+len(delim):], delim)
+		if end == -1 {
+			b.WriteString(s)
+			break
+		}
+		end += start + len(delim) // absolute index of closing delim
+		b.WriteString(s[:start])
+		b.WriteString(open)
+		b.WriteString(s[start+len(delim) : end])
+		b.WriteString(close)
+		s = s[end+len(delim):]
+	}
+	return b.String()
 }
