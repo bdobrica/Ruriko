@@ -293,42 +293,42 @@ Gitai (agent runtime) will be built in parallel but can start after Ruriko found
 **Goal**: Require human approval for sensitive operations.
 
 ### 6.1 Approval Objects
-- [ ] Create `internal/ruriko/approvals/types.go` - approval structs:
-  - [ ] `Approval` (id, action, target, params, requestor, approvers, status, created, expires, decisions)
-  - [ ] `ApprovalDecision` (approver, decision, reason, timestamp)
-- [ ] Create `internal/ruriko/approvals/store.go` - approval persistence
-- [ ] Create approval table migration
-- [ ] Test: Approvals can be stored and retrieved
+- [x] Create `internal/ruriko/approvals/types.go` - approval structs:
+  - [x] `Approval` (id, action, target, params, requestor, status, created, expires, decisions)
+  - [x] `ApprovalDecision` (approver, decision, reason, timestamp)
+- [x] Create `internal/ruriko/approvals/store.go` - approval persistence
+- [x] Create approval table migration (`store/migrations/0003_approvals.sql`)
+- [x] Test: Approvals can be stored and retrieved
 
 ### 6.2 Approval Command Parser
-- [ ] Create `internal/ruriko/approvals/parser.go` - deterministic approval parsing
-- [ ] Parse commands:
-  - [ ] `approve <approval_id> [reason]`
-  - [ ] `deny <approval_id> reason="..."` (reason required)
-- [ ] Verify sender is in approvers list
-- [ ] Enforce TTL (expired approvals auto-deny)
-- [ ] Test: Approval decisions parse correctly
+- [x] Create `internal/ruriko/approvals/parser.go` - deterministic approval parsing
+- [x] Parse commands:
+  - [x] `approve <approval_id> [reason]`
+  - [x] `deny <approval_id> reason="..."` (reason required)
+- [x] Verify sender is in approvers list
+- [x] Enforce TTL (expired approvals auto-deny)
+- [x] Test: Approval decisions parse correctly
 
 ### 6.3 Gated Operations
-- [ ] Identify operations requiring approval:
-  - [ ] Agent deletion
-  - [ ] Secret deletion/rotation (for critical secrets)
-  - [ ] Enabling risky MCP tools (browser, shell, filesystem write)
-  - [ ] Gosuto changes (optional, configurable)
-- [ ] Create `internal/ruriko/approvals/gate.go` - approval gating middleware
-- [ ] When gated operation requested:
-  - [ ] Generate approval request
-  - [ ] Post to approvals room
-  - [ ] Block operation until approval received
-  - [ ] Store approval in database
-- [ ] Test: Gated operations block until approved
+- [x] Identify operations requiring approval:
+  - [x] Agent deletion
+  - [x] Secret deletion/rotation (for critical secrets)
+  - [x] Gosuto changes (configurable)
+  - [x] Gosuto rollback
+- [x] Create `internal/ruriko/approvals/gate.go` - approval gating middleware
+- [x] When gated operation requested:
+  - [x] Generate approval request
+  - [x] Return approval ID to requester
+  - [x] Block operation until approval received
+  - [x] Store approval in database
+- [x] Test: Gated operations block until approved
 
 ### 6.4 Approval Commands
-- [ ] `/ruriko approvals list [--status pending|approved|denied]` - list approvals
-- [ ] `/ruriko approvals show <id>` - detailed approval info
-- [ ] `approve <id>` - approve operation
-- [ ] `deny <id> reason="..."` - deny operation
-- [ ] Test: Full approval workflow works
+- [x] `/ruriko approvals list [--status pending|approved|denied]` - list approvals
+- [x] `/ruriko approvals show <id>` - detailed approval info
+- [x] `approve <id>` - approve operation
+- [x] `deny <id> reason="..."` - deny operation
+- [x] Test: Full approval workflow works
 
 ---
 
@@ -515,7 +515,7 @@ Update this section as phases are completed:
 - [x] Phase 3: Agent Lifecycle Control ✅ **COMPLETED** (template loading + volume mounts deferred to Phase 5)
 - [x] Phase 4: Matrix Identity Provisioning ✅ **COMPLETED** (tests deferred)
 - [x] Phase 5: Gosuto - Versioned Configuration ✅ **COMPLETED**
-- [ ] Phase 6: Approval Workflow
+- [x] Phase 6: Approval Workflow ✅ **COMPLETED**
 - [ ] Phase 7: Observability and Safety Polish
 - [ ] Phase 8: Deployment and Documentation
 - [ ] Phase 9: Gitai Agent Runtime
@@ -524,4 +524,4 @@ Update this section as phases are completed:
 ---
 
 **Last Updated**: 2026-02-18
-**Current Focus**: Phase 6 - Approval Workflow
+**Current Focus**: Phase 7 - Observability and Safety Polish

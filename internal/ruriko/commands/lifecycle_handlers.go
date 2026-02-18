@@ -260,6 +260,11 @@ func (h *Handlers) HandleAgentsDelete(ctx context.Context, cmd *Command, evt *ev
 		return "", fmt.Errorf("usage: /ruriko agents delete <name>")
 	}
 
+	// Require approval for agent deletion.
+	if msg, needed, err := h.requestApprovalIfNeeded(ctx, "agents.delete", agentID, cmd, evt); needed {
+		return msg, err
+	}
+
 	agent, err := h.store.GetAgent(ctx, agentID)
 	if err != nil {
 		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.delete", agentID, "error", nil, err.Error())

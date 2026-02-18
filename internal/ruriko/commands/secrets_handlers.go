@@ -158,6 +158,11 @@ func (h *Handlers) HandleSecretsRotate(ctx context.Context, cmd *Command, evt *e
 		return "", fmt.Errorf("usage: /ruriko secrets rotate <name> --value <base64>")
 	}
 
+	// Require approval for secret rotation.
+	if msg, needed, err := h.requestApprovalIfNeeded(ctx, "secrets.rotate", name, cmd, evt); needed {
+		return msg, err
+	}
+
 	rawValue, err := base64.StdEncoding.DecodeString(b64Value)
 	if err != nil {
 		return "", fmt.Errorf("--value must be valid base64: %w", err)
@@ -198,6 +203,11 @@ func (h *Handlers) HandleSecretsDelete(ctx context.Context, cmd *Command, evt *e
 	name, ok := cmd.GetArg(0)
 	if !ok {
 		return "", fmt.Errorf("usage: /ruriko secrets delete <name>")
+	}
+
+	// Require approval for secret deletion.
+	if msg, needed, err := h.requestApprovalIfNeeded(ctx, "secrets.delete", name, cmd, evt); needed {
+		return msg, err
 	}
 
 	if err := h.secrets.Delete(ctx, name); err != nil {

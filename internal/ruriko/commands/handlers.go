@@ -11,6 +11,7 @@ import (
 
 	"github.com/bdobrica/Ruriko/common/trace"
 	"github.com/bdobrica/Ruriko/common/version"
+	"github.com/bdobrica/Ruriko/internal/ruriko/approvals"
 	"github.com/bdobrica/Ruriko/internal/ruriko/provisioning"
 	"github.com/bdobrica/Ruriko/internal/ruriko/runtime"
 	"github.com/bdobrica/Ruriko/internal/ruriko/secrets"
@@ -26,6 +27,8 @@ type Handlers struct {
 	provisioner *provisioning.Provisioner
 	distributor *secrets.Distributor
 	templates   *templates.Registry
+	approvals   *approvals.Gate
+	dispatch    DispatchFunc
 }
 
 // NewHandlers creates a new Handlers instance
@@ -51,6 +54,16 @@ func (h *Handlers) SetDistributor(d *secrets.Distributor) {
 // SetTemplates attaches a Gosuto template registry to the handlers.
 func (h *Handlers) SetTemplates(reg *templates.Registry) {
 	h.templates = reg
+}
+
+// SetApprovals attaches an approval Gate to the handlers.
+func (h *Handlers) SetApprovals(g *approvals.Gate) {
+	h.approvals = g
+}
+
+// SetDispatch sets the dispatch callback used to re-execute approved operations.
+func (h *Handlers) SetDispatch(fn DispatchFunc) {
+	h.dispatch = fn
 }
 
 // HandleHelp shows available commands
@@ -98,7 +111,11 @@ func (h *Handlers) HandleHelp(ctx context.Context, cmd *Command, evt *event.Even
 • /ruriko gosuto rollback <agent> --to <version> - Revert to previous version
 • /ruriko gosuto push <agent> - Push current config to running agent
 
-**Approvals Commands:** (TODO)
+**Approvals Commands:**
+• /ruriko approvals list [--status pending|approved|denied|expired|cancelled] - List approvals
+• /ruriko approvals show <id> - Show approval details
+• approve <id> [reason] - Approve a pending operation
+• deny <id> reason="<text>" - Deny a pending operation
 `
 	return help, nil
 }

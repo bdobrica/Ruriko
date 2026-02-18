@@ -109,6 +109,17 @@ func (r *Router) Parse(text string) (*Command, error) {
 	return cmd, nil
 }
 
+// Dispatch calls the registered handler for the given action key directly,
+// without parsing the raw text.  This is used by the approval workflow to
+// re-execute a gated operation after it has been approved.
+func (r *Router) Dispatch(ctx context.Context, action string, cmd *Command, evt *event.Event) (string, error) {
+	handler, ok := r.handlers[action]
+	if !ok {
+		return "", fmt.Errorf("no handler registered for action %q", action)
+	}
+	return handler(ctx, cmd, evt)
+}
+
 // Route parses and routes a command to its handler
 func (r *Router) Route(ctx context.Context, text string, evt *event.Event) (string, error) {
 	cmd, err := r.Parse(text)

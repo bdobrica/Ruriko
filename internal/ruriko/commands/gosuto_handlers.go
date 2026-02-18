@@ -201,6 +201,11 @@ func (h *Handlers) HandleGosutoSet(ctx context.Context, cmd *Command, evt *event
 		return "", fmt.Errorf("--content is required (base64-encoded YAML)")
 	}
 
+	// Require approval for Gosuto config changes.
+	if msg, needed, err := h.requestApprovalIfNeeded(ctx, "gosuto.set", agentID, cmd, evt); needed {
+		return msg, err
+	}
+
 	rawYAML, err := base64.StdEncoding.DecodeString(b64)
 	if err != nil {
 		// Try URL-safe base64 as fallback
@@ -285,6 +290,11 @@ func (h *Handlers) HandleGosutoRollback(ctx context.Context, cmd *Command, evt *
 	toStr := cmd.GetFlag("to", "")
 	if toStr == "" {
 		return "", fmt.Errorf("--to <version> is required")
+	}
+
+	// Require approval for Gosuto rollback.
+	if msg, needed, err := h.requestApprovalIfNeeded(ctx, "gosuto.rollback", agentID, cmd, evt); needed {
+		return msg, err
 	}
 
 	var targetVer int

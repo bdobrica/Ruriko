@@ -15,6 +15,7 @@ import (
 
 	"maunium.net/go/mautrix/event"
 
+	"github.com/bdobrica/Ruriko/internal/ruriko/approvals"
 	"github.com/bdobrica/Ruriko/internal/ruriko/commands"
 	"github.com/bdobrica/Ruriko/internal/ruriko/matrix"
 	"github.com/bdobrica/Ruriko/internal/ruriko/provisioning"
@@ -133,6 +134,12 @@ func New(config *Config) (*App, error) {
 		slog.Info("Gosuto template registry ready")
 	}
 
+	// Initialise approval gate.
+	approvalsStore := approvals.NewStore(store.DB())
+	approvalsGate := approvals.NewGate(approvalsStore, 0 /* default TTL */)
+	handlers.SetApprovals(approvalsGate)
+	slog.Info("approval workflow ready")
+
 	// Register command handlers
 	router.Register("help", handlers.HandleHelp)
 	router.Register("version", handlers.HandleVersion)
@@ -163,6 +170,13 @@ func New(config *Config) (*App, error) {
 	router.Register("gosuto.set", handlers.HandleGosutoSet)
 	router.Register("gosuto.rollback", handlers.HandleGosutoRollback)
 	router.Register("gosuto.push", handlers.HandleGosutoPush)
+	router.Register("approvals.list", handlers.HandleApprovalsList)
+	router.Register("approvals.show", handlers.HandleApprovalsShow)
+
+	// Wire the dispatch callback so approved operations can be re-executed.
+	handlers.SetDispatch(func(ctx context.Context, action string, cmd *commands.Command, evt *event.Event) (string, error) {
+		return router.Dispatch(ctx, action, cmd, evt)
+	})
 
 	return &App{
 		config:     config,
@@ -244,10 +258,27 @@ func (a *App) handleMessage(ctx context.Context, evt *event.Event) {
 	// Try to route the command
 	response, err := a.router.Route(ctx, text, evt)
 	if err != nil {
-		// Not a command or error
-		if !errors.Is(err, commands.ErrNotACommand) {
-			a.matrix.ReplyToMessage(evt.RoomID.String(), evt.ID.String(), fmt.Sprintf("❌ Error: %s", err))
+		if errors.Is(err, commands.ErrNotACommand) {
+			// Not a /ruriko command — check if it's an approval decision
+			// (approve <id> / deny <id> reason=...).
+			decisionResp, decisionErr := a.handlers.HandleApprovalDecision(ctx, text, evt)
+			if decisionErr != nil {
+				if !errors.Is(decisionErr, approvals.ErrNotADecision) {
+					// It parsed as a decision but failed — report the error.
+					a.matrix.ReplyToMessage(evt.RoomID.String(), evt.ID.String(),
+						fmt.Sprintf("❌ Error: %s", decisionErr))
+				}
+				// else: just a normal chat message — ignore silently.
+			} else if decisionResp != "" {
+				htmlBody := markdownToHTML(decisionResp)
+				if err2 := a.matrix.SendFormattedMessage(evt.RoomID.String(), htmlBody, decisionResp); err2 != nil {
+					slog.Error("failed to send approval response", "room", evt.RoomID.String(), "err", err2)
+				}
+			}
+			return
 		}
+		// A /ruriko-prefixed command that errored.
+		a.matrix.ReplyToMessage(evt.RoomID.String(), evt.ID.String(), fmt.Sprintf("❌ Error: %s", err))
 		return
 	}
 
