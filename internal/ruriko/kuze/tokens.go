@@ -128,6 +128,39 @@ UPDATE kuze_tokens SET used = 1 WHERE token = ? AND used = 0
 	return nil
 }
 
+// ListExpiredUnused returns all pending tokens whose expiry time has passed
+// but that have not yet been redeemed.  These are the candidates for
+// user-facing expiry notifications before the rows are deleted.
+func (s *TokenStore) ListExpiredUnused(ctx context.Context) ([]*PendingToken, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT token, secret_ref, secret_type, created_at, expires_at, used
+FROM kuze_tokens
+WHERE used = 0 AND expires_at < ?
+`, time.Now().UTC().Format(time.RFC3339))
+	if err != nil {
+		return nil, fmt.Errorf("kuze: query expired unused tokens: %w", err)
+	}
+	defer rows.Close()
+
+	var result []*PendingToken
+	for rows.Next() {
+		var pt PendingToken
+		var createdStr, expiresStr string
+		var usedInt int
+		if err := rows.Scan(
+			&pt.Token, &pt.SecretRef, &pt.SecretType,
+			&createdStr, &expiresStr, &usedInt,
+		); err != nil {
+			return nil, fmt.Errorf("kuze: scan expired token row: %w", err)
+		}
+		pt.Used = usedInt != 0
+		pt.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
+		pt.ExpiresAt, _ = time.Parse(time.RFC3339, expiresStr)
+		result = append(result, &pt)
+	}
+	return result, rows.Err()
+}
+
 // PruneExpired deletes tokens that have expired or have already been used.
 // Intended to be called periodically (e.g. from a background goroutine).
 func (s *TokenStore) PruneExpired(ctx context.Context) error {

@@ -1,4 +1,3 @@
-package acp
 package acp_test
 
 import (

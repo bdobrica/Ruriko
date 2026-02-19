@@ -226,6 +226,34 @@ func New(config *Config) (*App, error) {
 		})
 		handlersCfg.Kuze = kuzeServer
 		slog.Info("Kuze secret-entry server ready", "baseURL", config.KuzeBaseURL)
+
+		// Wire Matrix notifications for Kuze events.  Store confirmations and
+		// expiry notices are sent to all configured admin rooms so the operator
+		// is kept in the loop without polling.
+		adminRooms := config.Matrix.AdminRooms
+		kuzeServer.SetOnSecretStored(func(ctx context.Context, secretRef string) {
+			msg := fmt.Sprintf("✓ Secret **%s** stored securely.", secretRef)
+			for _, roomID := range adminRooms {
+				if err := matrixClient.SendNotice(roomID, msg); err != nil {
+					slog.Warn("kuze: send store-confirmation to Matrix",
+						"room", roomID, "ref", secretRef, "err", err)
+				}
+			}
+		})
+
+		kuzeServer.SetOnTokenExpired(func(ctx context.Context, pt *kuze.PendingToken) {
+			msg := fmt.Sprintf(
+				"⏰ The one-time link for secret **%s** has expired without being used. "+
+					"Use `/ruriko secrets set %s` to generate a new link.",
+				pt.SecretRef, pt.SecretRef,
+			)
+			for _, roomID := range adminRooms {
+				if err := matrixClient.SendNotice(roomID, msg); err != nil {
+					slog.Warn("kuze: send expiry notification to Matrix",
+						"room", roomID, "ref", pt.SecretRef, "err", err)
+				}
+			}
+		})
 	}
 
 	// Optionally build the health/status HTTP server.
@@ -273,6 +301,30 @@ func (a *App) Run() error {
 	// Start reconciler in background if configured
 	if a.reconciler != nil {
 		go a.reconciler.Run(ctx)
+	}
+
+	// Start Kuze token-pruning loop.  Expired tokens are detected, Matrix
+	// expiry notifications are sent, then the rows are deleted.  The loop
+	// runs on the same cadence as KuzeTTL (defaulting to kuze.DefaultTTL).
+	if a.kuzeServer != nil {
+		go func() {
+			interval := a.config.KuzeTTL
+			if interval <= 0 {
+				interval = kuze.DefaultTTL
+			}
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if err := a.kuzeServer.PruneExpiredWithNotify(ctx); err != nil {
+						slog.Warn("kuze: prune expired tokens", "err", err)
+					}
+				}
+			}
+		}()
 	}
 
 	// Send startup message to admin rooms
@@ -329,6 +381,26 @@ func (a *App) handleMessage(ctx context.Context, evt *event.Event) {
 	}
 
 	text := msgContent.Body
+
+	// Secret-in-chat guardrail: refuse to process any message that appears to
+	// contain a sensitive credential.  The guardrail is active only when Kuze
+	// is configured (production mode); in dev/test mode inline secrets are
+	// allowed as a deliberate fallback.
+	//
+	// For non-command messages all patterns (named + generic) are checked.
+	// For command messages only named vendor patterns (OpenAI sk-…, AWS AKIA…,
+	// etc.) are checked so that legitimate base64 command arguments like
+	// gosuto --content ... are not falsely rejected.
+	if a.kuzeServer != nil {
+		isCmd := strings.HasPrefix(text, "/ruriko")
+		if commands.LooksLikeSecret(text, isCmd) {
+			a.matrix.ReplyToMessage(
+				evt.RoomID.String(), evt.ID.String(),
+				commands.SecretGuardrailMessage,
+			)
+			return
+		}
+	}
 
 	// Try to route the command
 	response, err := a.router.Route(ctx, text, evt)

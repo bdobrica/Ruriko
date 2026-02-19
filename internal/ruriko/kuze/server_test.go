@@ -264,3 +264,142 @@ func TestKuze_IssueHumanGETNotAllowed(t *testing.T) {
 		t.Fatalf("GET /kuze/issue/human: expected 405, got %d", w.Code)
 	}
 }
+
+// --- R3.2: Matrix confirmation callback tests ---------------------------------
+
+// TestKuze_OnSecretStoredCallback verifies that SetOnSecretStored fires with
+// the correct secretRef after a successful form submission.
+func TestKuze_OnSecretStoredCallback(t *testing.T) {
+	srv, _, _ := newTestServer(t, time.Minute)
+	ctx := context.Background()
+
+	var notified []string
+	srv.SetOnSecretStored(func(_ context.Context, ref string) {
+		notified = append(notified, ref)
+	})
+
+	result, err := srv.IssueHumanToken(ctx, "finnhub_key", "api_key")
+	if err != nil {
+		t.Fatalf("IssueHumanToken: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	srv.RegisterRoutes(mux)
+
+	form := url.Values{"secret_value": {"secret-value-here"}}
+	req := httptest.NewRequest(http.MethodPost, "/s/"+result.Token,
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("POST /s/<token>: expected 200, got %d", w.Code)
+	}
+	if len(notified) != 1 {
+		t.Fatalf("expected 1 notification, got %d", len(notified))
+	}
+	if notified[0] != "finnhub_key" {
+		t.Errorf("notification secretRef = %q, want %q", notified[0], "finnhub_key")
+	}
+}
+
+// TestKuze_OnSecretStoredCallbackNotFiredOnEmpty verifies that the callback is
+// NOT fired when an empty value is submitted (form re-renders with error).
+func TestKuze_OnSecretStoredCallbackNotFiredOnEmpty(t *testing.T) {
+	srv, _, _ := newTestServer(t, time.Minute)
+	ctx := context.Background()
+
+	notified := 0
+	srv.SetOnSecretStored(func(_ context.Context, _ string) { notified++ })
+
+	result, _ := srv.IssueHumanToken(ctx, "mykey", "api_key")
+
+	mux := http.NewServeMux()
+	srv.RegisterRoutes(mux)
+
+	form := url.Values{"secret_value": {""}}
+	req := httptest.NewRequest(http.MethodPost, "/s/"+result.Token,
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("empty submit: expected 200 (re-render), got %d", w.Code)
+	}
+	if notified != 0 {
+		t.Errorf("expected 0 notifications for empty submit, got %d", notified)
+	}
+}
+
+// TestKuze_PruneExpiredWithNotifyFires verifies that SetOnTokenExpired fires
+// for each expired-but-unused token and that those tokens are deleted after
+// PruneExpiredWithNotify returns.
+func TestKuze_PruneExpiredWithNotifyFires(t *testing.T) {
+	srv, _, db := newTestServer(t, time.Minute)
+	ctx := context.Background()
+
+	var expired []string
+	srv.SetOnTokenExpired(func(_ context.Context, pt *kuze.PendingToken) {
+		expired = append(expired, pt.SecretRef)
+	})
+
+	// Insert two tokens that already expired (expires_at in the past).
+	past := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
+	for _, ref := range []string{"old_key_1", "old_key_2"} {
+		if _, err := db.ExecContext(ctx, `
+INSERT INTO kuze_tokens (token, secret_ref, secret_type, created_at, expires_at, used)
+VALUES (?, ?, 'api_key', ?, ?, 0)`, ref+"-tok", ref, past, past); err != nil {
+			t.Fatalf("insert expired token: %v", err)
+		}
+	}
+
+	if err := srv.PruneExpiredWithNotify(ctx); err != nil {
+		t.Fatalf("PruneExpiredWithNotify: %v", err)
+	}
+
+	if len(expired) != 2 {
+		t.Errorf("expected 2 expiry notifications, got %d: %v", len(expired), expired)
+	}
+
+	// Verify the rows were also deleted.
+	var count int
+	db.QueryRowContext(ctx, "SELECT COUNT(*) FROM kuze_tokens").Scan(&count)
+	if count != 0 {
+		t.Errorf("expected 0 rows after prune, got %d", count)
+	}
+}
+
+// TestKuze_PruneExpiredWithNotifySkipsUsedTokens verifies that already-used
+// tokens are pruned but do NOT trigger the expiry callback.
+func TestKuze_PruneExpiredWithNotifySkipsUsedTokens(t *testing.T) {
+	srv, _, db := newTestServer(t, time.Minute)
+	ctx := context.Background()
+
+	notified := 0
+	srv.SetOnTokenExpired(func(_ context.Context, _ *kuze.PendingToken) { notified++ })
+
+	// Insert one used token with an expired timestamp.
+	past := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
+	if _, err := db.ExecContext(ctx, `
+INSERT INTO kuze_tokens (token, secret_ref, secret_type, created_at, expires_at, used)
+VALUES ('used-tok', 'used_key', 'api_key', ?, ?, 1)`, past, past); err != nil {
+		t.Fatalf("insert used token: %v", err)
+	}
+
+	if err := srv.PruneExpiredWithNotify(ctx); err != nil {
+		t.Fatalf("PruneExpiredWithNotify: %v", err)
+	}
+
+	if notified != 0 {
+		t.Errorf("expected 0 expiry notifications for used token, got %d", notified)
+	}
+
+	// The row should still be deleted.
+	var count int
+	db.QueryRowContext(ctx, "SELECT COUNT(*) FROM kuze_tokens").Scan(&count)
+	if count != 0 {
+		t.Errorf("expected 0 rows after prune, got %d", count)
+	}
+}

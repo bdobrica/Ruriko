@@ -64,9 +64,42 @@ type secretsSetter interface {
 // Server handles Kuze HTTP routes and provides direct Go methods for the
 // command layer.
 type Server struct {
-	tokens  *TokenStore
-	secrets secretsSetter
-	baseURL string
+	tokens       *TokenStore
+	secrets      secretsSetter
+	baseURL      string
+	storeNotify  func(ctx context.Context, secretRef string)
+	expiryNotify func(ctx context.Context, pt *PendingToken)
+}
+
+// SetOnSecretStored registers fn to be called each time a secret is
+// successfully stored via the one-time HTML form.  fn receives the
+// secret_ref so callers can send a confirmation notification.
+func (srv *Server) SetOnSecretStored(fn func(ctx context.Context, secretRef string)) {
+	srv.storeNotify = fn
+}
+
+// SetOnTokenExpired registers fn to be called for each expired-but-unused
+// token when PruneExpiredWithNotify is executed.  Callers can use this to
+// send an expiry notification to the user.
+func (srv *Server) SetOnTokenExpired(fn func(ctx context.Context, pt *PendingToken)) {
+	srv.expiryNotify = fn
+}
+
+// PruneExpiredWithNotify calls OnTokenExpired for every pending token that
+// has expired without being used, then prunes all expired / used tokens.
+// It is safe to call concurrently; notifications are best-effort.
+func (srv *Server) PruneExpiredWithNotify(ctx context.Context) error {
+	if srv.expiryNotify != nil {
+		expired, err := srv.tokens.ListExpiredUnused(ctx)
+		if err != nil {
+			slog.Warn("kuze: list expired tokens for notification", "err", err)
+		} else {
+			for _, pt := range expired {
+				srv.expiryNotify(ctx, pt)
+			}
+		}
+	}
+	return srv.tokens.PruneExpired(ctx)
 }
 
 // New creates a new Kuze Server.
@@ -224,6 +257,14 @@ func (srv *Server) acceptSecret(w http.ResponseWriter, r *http.Request, token st
 	}
 
 	slog.Info("kuze: secret stored via one-time form", "ref", pt.SecretRef)
+
+	// Notify the Matrix room (or any registered listener) that the secret
+	// was stored successfully.  This is best-effort; errors are logged but
+	// do not affect the HTTP response.
+	if srv.storeNotify != nil {
+		srv.storeNotify(r.Context(), pt.SecretRef)
+	}
+
 	renderSuccessPage(w, pt.SecretRef)
 }
 

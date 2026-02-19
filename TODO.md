@@ -629,15 +629,15 @@ These are **real, working subsystems** — not scaffolding. The realignment phas
 ### R3.2 Matrix UX Integration
 - [x] Implement `/ruriko secrets set <name>` to generate a Kuze link instead of accepting inline values
 - [x] Ruriko replies with one-time link: "Use this link to enter the secret: https://…/s/<token>"
-- [ ] On successful secret storage, Ruriko confirms in Matrix: "✓ Secret '<name>' stored securely."
-- [ ] On token expiry, Ruriko optionally notifies: "Token for '<name>' expired. Use `/ruriko secrets set <name>` to try again."
-- [ ] Test: Full flow — command → link → form → store → confirmation
+- [x] On successful secret storage, Ruriko confirms in Matrix: "✓ Secret '<name>' stored securely."
+- [x] On token expiry, Ruriko optionally notifies: "Token for '<name>' expired. Use `/ruriko secrets set <name>` to try again."
+- [x] Test: Full flow — command → link → form → store → confirmation
 
 ### R3.3 Secret-in-Chat Guardrail
-- [ ] Add message filter: if an incoming Matrix message looks like a secret (API key pattern, long base64, etc.), refuse to process it
-- [ ] Reply with: "That looks like a secret. I won't store it from chat. Use: `/ruriko secrets set <name>`"
-- [ ] Add pattern matching for common secret formats (OpenAI `sk-…`, base64 > 40 chars, etc.)
-- [ ] Test: Secret-like messages are refused
+- [x] Add message filter: if an incoming Matrix message looks like a secret (API key pattern, long base64, etc.), refuse to process it
+- [x] Reply with: "That looks like a secret. I won't store it from chat. Use: `/ruriko secrets set <name>`"
+- [x] Add pattern matching for common secret formats (OpenAI `sk-…`, base64 > 40 chars, etc.)
+- [x] Test: Secret-like messages are refused
 
 ### R3.4 HTML Form
 - [ ] Create minimal, self-contained HTML form template (no external dependencies)
