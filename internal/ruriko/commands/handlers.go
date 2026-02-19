@@ -13,6 +13,7 @@ import (
 	"github.com/bdobrica/Ruriko/common/version"
 	"github.com/bdobrica/Ruriko/internal/ruriko/approvals"
 	"github.com/bdobrica/Ruriko/internal/ruriko/audit"
+	"github.com/bdobrica/Ruriko/internal/ruriko/kuze"
 	"github.com/bdobrica/Ruriko/internal/ruriko/provisioning"
 	"github.com/bdobrica/Ruriko/internal/ruriko/runtime"
 	"github.com/bdobrica/Ruriko/internal/ruriko/secrets"
@@ -33,6 +34,7 @@ type HandlersConfig struct {
 	Templates   *templates.Registry       // optional — enables Gosuto template commands
 	Approvals   *approvals.Gate           // optional — enables approval gating
 	Notifier    audit.Notifier            // optional — enables audit room notifications
+	Kuze        *kuze.Server              // optional — enables one-time secret-entry links
 }
 
 // Handlers holds all command handlers and dependencies.
@@ -45,6 +47,7 @@ type Handlers struct {
 	templates   *templates.Registry
 	approvals   *approvals.Gate
 	notifier    audit.Notifier
+	kuze        *kuze.Server
 	dispatch    DispatchFunc
 }
 
@@ -63,6 +66,7 @@ func NewHandlers(cfg HandlersConfig) *Handlers {
 		templates:   cfg.Templates,
 		approvals:   cfg.Approvals,
 		notifier:    n,
+		kuze:        cfg.Kuze,
 	}
 }
 

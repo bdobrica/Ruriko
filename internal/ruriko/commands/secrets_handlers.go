@@ -90,31 +90,29 @@ Updated:          %s
 
 // HandleSecretsSet stores a new secret or updates an existing one.
 //
-// Usage: /ruriko secrets set <name> --type <type> --value <base64>
+// When a Kuze server is configured (the common production path), the command
+// generates a one-time HTTPS link and replies with it so the user can enter
+// the secret value in their browser rather than pasting it into chat:
+//
+//	/ruriko secrets set <name> --type <type>
+//
+// When Kuze is NOT configured (dev/test mode), the old inline base64 path is
+// still available as a fallback:
+//
+//	/ruriko secrets set <name> --type <type> --value <base64>
 //
 // Valid types: matrix_token, api_key, generic_json
-// The --value flag must be the raw secret encoded as base64.
 func (h *Handlers) HandleSecretsSet(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
 
 	name, ok := cmd.GetArg(0)
 	if !ok {
-		return "", fmt.Errorf("usage: /ruriko secrets set <name> --type <type> --value <base64>")
+		return "", fmt.Errorf("usage: /ruriko secrets set <name> --type <type>")
 	}
 
 	secretType := cmd.GetFlag("type", "")
 	if secretType == "" {
-		return "", fmt.Errorf("usage: /ruriko secrets set <name> --type <type> --value <base64>\nValid types: matrix_token, api_key, generic_json")
-	}
-
-	b64Value := cmd.GetFlag("value", "")
-	if b64Value == "" {
-		return "", fmt.Errorf("usage: /ruriko secrets set <name> --type <type> --value <base64>")
-	}
-
-	rawValue, err := base64.StdEncoding.DecodeString(b64Value)
-	if err != nil {
-		return "", fmt.Errorf("--value must be valid base64: %w", err)
+		return "", fmt.Errorf("usage: /ruriko secrets set <name> --type <type>\nValid types: matrix_token, api_key, generic_json")
 	}
 
 	switch secrets.Type(secretType) {
@@ -122,6 +120,68 @@ func (h *Handlers) HandleSecretsSet(ctx context.Context, cmd *Command, evt *even
 		// valid
 	default:
 		return "", fmt.Errorf("unknown secret type %q; valid types: matrix_token, api_key, generic_json", secretType)
+	}
+
+	// ── Kuze path (production) ──────────────────────────────────────────────
+	if h.kuze != nil {
+		return h.handleSecretsSetKuze(ctx, traceID, name, secretType, evt)
+	}
+
+	// ── Legacy inline path (dev / no-Kuze mode) ─────────────────────────────
+	return h.handleSecretsSetInline(ctx, traceID, name, secretType, cmd, evt)
+}
+
+// handleSecretsSetKuze issues a one-time Kuze link for secret entry.
+func (h *Handlers) handleSecretsSetKuze(
+	ctx context.Context,
+	traceID, name, secretType string,
+	evt *event.Event,
+) (string, error) {
+	result, err := h.kuze.IssueHumanToken(ctx, name, secretType)
+	if err != nil {
+		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "secrets.set", name, "error", nil, err.Error())
+		return "", fmt.Errorf("failed to generate secret-entry link: %w", err)
+	}
+
+	if logErr := h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "secrets.set.link_issued", name, "success",
+		store.AuditPayload{"type": secretType, "expires_at": result.ExpiresAt.String()}, ""); logErr != nil {
+		slog.Warn("audit write failed", "op", "secrets.set.link_issued", "secret", name, "err", logErr)
+	}
+
+	return fmt.Sprintf(
+		"🔐 Use this link to enter the secret **%s** (type: %s):\n\n"+
+			"%s\n\n"+
+			"⏰ Expires: %s\n"+
+			"⚠️  Single-use — do not share this link.\n\n"+
+			"(trace: %s)",
+		name, secretType,
+		result.Link,
+		result.ExpiresAt.Format("2006-01-02 15:04:05 UTC"),
+		traceID,
+	), nil
+}
+
+// handleSecretsSetInline stores a secret from an inline base64-encoded value.
+// This path is only taken when Kuze is not configured.
+//
+// Usage: /ruriko secrets set <name> --type <type> --value <base64>
+func (h *Handlers) handleSecretsSetInline(
+	ctx context.Context,
+	traceID, name, secretType string,
+	cmd *Command,
+	evt *event.Event,
+) (string, error) {
+	b64Value := cmd.GetFlag("value", "")
+	if b64Value == "" {
+		return "", fmt.Errorf(
+			"usage: /ruriko secrets set <name> --type <type> --value <base64>\n" +
+				"Tip: configure KuzeBaseURL to use one-time secure links instead.",
+		)
+	}
+
+	rawValue, err := base64.StdEncoding.DecodeString(b64Value)
+	if err != nil {
+		return "", fmt.Errorf("--value must be valid base64: %w", err)
 	}
 
 	if err := h.secrets.Set(ctx, name, secrets.Type(secretType), rawValue); err != nil {

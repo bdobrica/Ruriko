@@ -612,23 +612,23 @@ These are **real, working subsystems** — not scaffolding. The realignment phas
 > Maps to REALIGNMENT_PLAN Phase 4.
 
 ### R3.1 Kuze HTTP Server
-- [ ] Create `internal/ruriko/kuze/` package
-- [ ] Embed Kuze HTTP endpoints into Ruriko's existing HTTP server:
-  - [ ] `POST /kuze/issue/human?secret_ref=<name>` — internal: generate one-time link
-  - [ ] `GET /s/<token>` — serve HTML form for secret entry
-  - [ ] `POST /s/<token>` — receive secret value, encrypt+store, burn token
-- [ ] Implement one-time tokens:
-  - [ ] Cryptographically random, URL-safe
-  - [ ] TTL: 5–10 minutes (configurable)
-  - [ ] Single-use: token is deleted after first use or expiry
-  - [ ] Scoped to a specific `secret_ref`
-- [ ] Store pending tokens in SQLite (token, secret_ref, created_at, expires_at, used)
-- [ ] Create migration for `kuze_tokens` table
-- [ ] Test: Token generation, HTML form render, secret submission, token burn
+- [x] Create `internal/ruriko/kuze/` package
+- [x] Embed Kuze HTTP endpoints into Ruriko's existing HTTP server:
+  - [x] `POST /kuze/issue/human?secret_ref=<name>` — internal: generate one-time link
+  - [x] `GET /s/<token>` — serve HTML form for secret entry
+  - [x] `POST /s/<token>` — receive secret value, encrypt+store, burn token
+- [x] Implement one-time tokens:
+  - [x] Cryptographically random, URL-safe
+  - [x] TTL: 5–10 minutes (configurable)
+  - [x] Single-use: token is deleted after first use or expiry
+  - [x] Scoped to a specific `secret_ref`
+- [x] Store pending tokens in SQLite (token, secret_ref, created_at, expires_at, used)
+- [x] Create migration for `kuze_tokens` table
+- [x] Test: Token generation, HTML form render, secret submission, token burn
 
 ### R3.2 Matrix UX Integration
-- [ ] Implement `/ruriko secrets set <name>` to generate a Kuze link instead of accepting inline values
-- [ ] Ruriko replies with one-time link: "Use this link to enter the secret: https://…/s/<token>"
+- [x] Implement `/ruriko secrets set <name>` to generate a Kuze link instead of accepting inline values
+- [x] Ruriko replies with one-time link: "Use this link to enter the secret: https://…/s/<token>"
 - [ ] On successful secret storage, Ruriko confirms in Matrix: "✓ Secret '<name>' stored securely."
 - [ ] On token expiry, Ruriko optionally notifies: "Token for '<name>' expired. Use `/ruriko secrets set <name>` to try again."
 - [ ] Test: Full flow — command → link → form → store → confirmation

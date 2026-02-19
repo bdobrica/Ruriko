@@ -18,6 +18,7 @@ import (
 	"github.com/bdobrica/Ruriko/internal/ruriko/approvals"
 	"github.com/bdobrica/Ruriko/internal/ruriko/audit"
 	"github.com/bdobrica/Ruriko/internal/ruriko/commands"
+	"github.com/bdobrica/Ruriko/internal/ruriko/kuze"
 	"github.com/bdobrica/Ruriko/internal/ruriko/matrix"
 	"github.com/bdobrica/Ruriko/internal/ruriko/provisioning"
 	"github.com/bdobrica/Ruriko/internal/ruriko/runtime"
@@ -48,6 +49,15 @@ type Config struct {
 	// HTTPAddr is the TCP address for the optional health/status HTTP server
 	// (e.g. ":8080"). When empty the server is disabled.
 	HTTPAddr string
+	// KuzeBaseURL is the externally reachable base URL of the Ruriko HTTP
+	// server (e.g. "https://ruriko.example.com"). When non-empty and HTTPAddr
+	// is also set, the Kuze one-time-link routes are mounted on the HTTP
+	// server and the /ruriko secrets set command issues links instead of
+	// accepting inline values.
+	KuzeBaseURL string
+	// KuzeTTL is the lifetime of Kuze one-time tokens. Defaults to 10 minutes
+	// when zero.
+	KuzeTTL time.Duration
 	// AuditRoomID is an optional Matrix room ID (e.g. "!abc:example.com") where
 	// Ruriko posts human-friendly summaries of major control-plane events.
 	// When empty, audit room notifications are disabled.
@@ -64,6 +74,7 @@ type App struct {
 	handlers     *commands.Handlers
 	reconciler   *runtime.Reconciler
 	healthServer *HealthServer
+	kuzeServer   *kuze.Server
 }
 
 // New creates a new Ruriko application
@@ -204,10 +215,27 @@ func New(config *Config) (*App, error) {
 		return router.Dispatch(ctx, action, cmd, evt)
 	})
 
+	// Initialise Kuze secret-entry server when both HTTPAddr and KuzeBaseURL
+	// are configured. The Kuze server is created before the health server so
+	// that its routes can be registered on the same mux.
+	var kuzeServer *kuze.Server
+	if config.HTTPAddr != "" && config.KuzeBaseURL != "" {
+		kuzeServer = kuze.New(store.DB(), secretsStore, kuze.Config{
+			BaseURL: config.KuzeBaseURL,
+			TTL:     config.KuzeTTL,
+		})
+		handlersCfg.Kuze = kuzeServer
+		slog.Info("Kuze secret-entry server ready", "baseURL", config.KuzeBaseURL)
+	}
+
 	// Optionally build the health/status HTTP server.
 	var healthServer *HealthServer
 	if config.HTTPAddr != "" {
 		healthServer = NewHealthServer(config.HTTPAddr, store)
+		if kuzeServer != nil {
+			kuzeServer.RegisterRoutes(healthServer)
+			slog.Info("Kuze routes registered on HTTP server")
+		}
 		slog.Info("health server configured", "addr", config.HTTPAddr)
 	}
 
@@ -220,6 +248,7 @@ func New(config *Config) (*App, error) {
 		handlers:     handlers,
 		reconciler:   reconciler,
 		healthServer: healthServer,
+		kuzeServer:   kuzeServer,
 	}, nil
 }
 

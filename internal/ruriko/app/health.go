@@ -12,13 +12,15 @@ import (
 	"github.com/bdobrica/Ruriko/common/version"
 )
 
-// HealthServer exposes /health and /status HTTP endpoints.
+// HealthServer exposes /health, /status, and any additionally registered
+// HTTP endpoints (e.g. Kuze routes).
 // It is optional; Ruriko runs without it when HTTPAddr is empty.
 type HealthServer struct {
 	addr      string
 	store     statusProvider
 	startedAt time.Time
 	server    *http.Server
+	mux       *http.ServeMux
 }
 
 // statusProvider is the minimal interface the health server needs from Store.
@@ -46,24 +48,29 @@ type statusResponse struct {
 
 // NewHealthServer creates and configures the HTTP server (does not start it).
 func NewHealthServer(addr string, sp statusProvider) *HealthServer {
-	return &HealthServer{
+	mux := http.NewServeMux()
+	hs := &HealthServer{
 		addr:      addr,
 		store:     sp,
 		startedAt: time.Now(),
+		mux:       mux,
 	}
+	mux.HandleFunc("/health", hs.handleHealth)
+	mux.HandleFunc("/status", hs.handleStatus)
+	return hs
 }
 
 // ServeHTTP implements http.Handler so the server can be tested without a
 // live network listener (e.g. with httptest.NewRecorder).
 func (h *HealthServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	switch r.URL.Path {
-	case "/health":
-		h.handleHealth(w, r)
-	case "/status":
-		h.handleStatus(w, r)
-	default:
-		http.NotFound(w, r)
-	}
+	h.mux.ServeHTTP(w, r)
+}
+
+// Handle registers a handler for the given URL pattern, delegating to the
+// underlying ServeMux.  Call this before Start to add extra routes (e.g.
+// Kuze endpoints).
+func (h *HealthServer) Handle(pattern string, handler http.Handler) {
+	h.mux.Handle(pattern, handler)
 }
 
 // Start begins listening in the background. Blocks until the listener is
