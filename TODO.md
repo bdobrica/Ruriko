@@ -640,12 +640,12 @@ These are **real, working subsystems** — not scaffolding. The realignment phas
 - [x] Test: Secret-like messages are refused
 
 ### R3.4 HTML Form
-- [ ] Create minimal, self-contained HTML form template (no external dependencies)
-- [ ] Form displays: secret ref name, single password field, submit button
-- [ ] On success: "Secret stored. You can close this page."
-- [ ] On expired/used token: "This link has expired."
-- [ ] Embed template in Go binary via `embed.FS`
-- [ ] Test: Form works in a browser
+- [x] Create minimal, self-contained HTML form template (no external dependencies)
+- [x] Form displays: secret ref name, single password field, submit button
+- [x] On success: "Secret stored. You can close this page."
+- [x] On expired/used token: "This link has expired."
+- [x] Embed template in Go binary via `embed.FS`
+- [x] Test: Form works in a browser (all server-side paths covered by automated tests; visual rendering verified manually)
 
 ### Definition of done
 - User can store OpenAI/finnhub/brave keys via one-time link
@@ -976,7 +976,7 @@ The MVP is ready when **all** of the following are true:
 - [x] Phase R0: Project Hygiene and Config Alignment ✅
 - [x] Phase R1: Matrix Stack Realignment — Tuwunel Default ✅
 - [x] Phase R2: ACP Hardening — Auth, Idempotency, Timeouts ✅
-- [ ] Phase R3: Kuze — Human Secret Entry
+- [x] Phase R3: Kuze — Human Secret Entry ✅
 - [ ] Phase R4: Token-Based Secret Distribution to Agents
 - [ ] Phase R5: Agent Provisioning UX — Tim, Warren, Brave
 - [ ] Phase R6: Canonical Workflow — Tim → Warren → Brave
