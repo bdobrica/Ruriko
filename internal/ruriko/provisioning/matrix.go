@@ -1,11 +1,16 @@
 // Package provisioning handles Matrix account lifecycle for agents.
 //
-// It supports three registration strategies selected by the HomeserverType field:
+// It supports four registration strategies selected by the HomeserverType field:
 //
+//   - "tuwunel" – Tuwunel (and compatible conduwuit-based) homeservers.  Uses the
+//     standard Matrix client-server registration endpoint.  If RegistrationToken
+//     is set the "m.login.registration_token" flow is used; otherwise the
+//     "m.login.dummy" open-registration flow is used.  Tuwunel is the default.
 //   - "synapse" – Synapse shared-secret registration API (recommended for
-//     self-hosted Synapse deployments).  Requires MATRIX_SHARED_SECRET to be set.
-//   - "generic" – Standard Matrix client-server registration endpoint.  Only
-//     works when open registration is enabled on the homeserver.
+//     self-hosted Synapse deployments).  Requires SharedSecret to be set.
+//   - "generic" – Standard Matrix client-server registration endpoint with the
+//     dummy auth flow.  Only works when open registration is enabled on the
+//     homeserver.
 //   - "manual" – No automatic registration; the caller must supply an existing
 //     MXID via the --mxid flag when creating an agent.
 //
@@ -33,6 +38,11 @@ import (
 type HomeserverType string
 
 const (
+	// HomeserverTuwunel uses the Matrix client-server registration endpoint.
+	// If RegistrationToken is set in Config, the m.login.registration_token auth
+	// flow is used.  Otherwise open (dummy) registration is attempted.
+	// This is the default homeserver type.
+	HomeserverTuwunel HomeserverType = "tuwunel"
 	// HomeserverSynapse uses the Synapse admin shared-secret registration API.
 	HomeserverSynapse HomeserverType = "synapse"
 	// HomeserverGeneric uses the standard open-registration endpoint.
@@ -50,11 +60,16 @@ type Config struct {
 	AdminUserID string
 	// AdminAccessToken is the access token for the AdminUserID account.
 	AdminAccessToken string
-	// HomeserverType selects the registration strategy (default: "synapse").
+	// HomeserverType selects the registration strategy (default: "tuwunel").
 	HomeserverType HomeserverType
 	// SharedSecret is the Synapse registration_shared_secret value.
 	// Required when HomeserverType == "synapse".
 	SharedSecret string
+	// RegistrationToken is an optional Matrix registration token used by
+	// Tuwunel (and other homeservers that support m.login.registration_token).
+	// When set, new accounts are registered using the token-based auth flow
+	// instead of open (dummy) registration.
+	RegistrationToken string
 	// UsernameSuffix is an optional suffix appended to agent usernames.
 	// For example, "-agent" would turn "mybot" into "mybot-agent".
 	UsernameSuffix string
@@ -89,7 +104,7 @@ func New(cfg Config) (*Provisioner, error) {
 	}
 
 	if cfg.HomeserverType == "" {
-		cfg.HomeserverType = HomeserverSynapse
+		cfg.HomeserverType = HomeserverTuwunel
 	}
 
 	if cfg.HomeserverType == HomeserverSynapse && cfg.SharedSecret == "" {
@@ -178,6 +193,8 @@ func (p *Provisioner) Register(ctx context.Context, agentID, displayName string)
 	switch p.cfg.HomeserverType {
 	case HomeserverSynapse:
 		return p.registerViaSynapse(ctx, username, password, displayName, mxid)
+	case HomeserverTuwunel:
+		return p.registerViaTuwunel(ctx, username, password, displayName)
 	case HomeserverGeneric:
 		return p.registerViaClientAPI(ctx, username, password, displayName)
 	default:
@@ -206,6 +223,58 @@ func (p *Provisioner) registerViaSynapse(ctx context.Context, username, password
 		"has_token", resp.AccessToken != "",
 	)
 
+	return &ProvisionedAccount{
+		UserID:      resp.UserID,
+		AccessToken: resp.AccessToken,
+	}, nil
+}
+
+// registerViaTuwunel registers a Matrix account on a Tuwunel (or conduwuit-
+// compatible) homeserver.
+//
+// If Config.RegistrationToken is set the m.login.registration_token auth flow
+// is used, which does not require open registration.  This is the recommended
+// approach: set a registration token, provision all accounts, then clear the
+// token to lock down the homeserver.
+//
+// If no registration token is configured the m.login.dummy open-registration
+// flow is used as a fallback, which requires CONDUWUIT_ALLOW_REGISTRATION=true.
+func (p *Provisioner) registerViaTuwunel(ctx context.Context, username, password, displayName string) (*ProvisionedAccount, error) {
+	req := &mautrix.ReqRegister{
+		Username:                 username,
+		Password:                 password,
+		InitialDeviceDisplayName: displayName,
+	}
+
+	if p.cfg.RegistrationToken != "" {
+		// Use the m.login.registration_token auth flow.
+		req.Auth = struct {
+			Type    string `json:"type"`
+			Token   string `json:"token"`
+			Session string `json:"session,omitempty"`
+		}{
+			Type:  "m.login.registration_token",
+			Token: p.cfg.RegistrationToken,
+		}
+		resp, uiaResp, err := p.client.Register(ctx, req)
+		if err != nil {
+			return nil, fmt.Errorf("tuwunel token registration failed for %q: %w", username, err)
+		}
+		_ = uiaResp // may be non-nil for multi-stage flows; we treat it as a hint only
+		slog.Info("Matrix account provisioned via Tuwunel token registration",
+			"mxid", resp.UserID, "username", username)
+		return &ProvisionedAccount{
+			UserID:      resp.UserID,
+			AccessToken: resp.AccessToken,
+		}, nil
+	}
+
+	// Fallback: open/dummy registration (requires CONDUWUIT_ALLOW_REGISTRATION=true).
+	resp, err := p.client.RegisterDummy(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("tuwunel open registration failed for %q: %w (is CONDUWUIT_ALLOW_REGISTRATION=true?)", username, err)
+	}
+	slog.Info("Matrix account provisioned via Tuwunel open registration", "mxid", resp.UserID)
 	return &ProvisionedAccount{
 		UserID:      resp.UserID,
 		AccessToken: resp.AccessToken,

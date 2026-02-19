@@ -401,7 +401,7 @@ func (h *Handlers) HandleGosutoPush(ctx context.Context, cmd *Command, evt *even
 		return "", fmt.Errorf("no Gosuto config stored for agent %q", agentID)
 	}
 
-	if err := pushGosuto(ctx, agent.ControlURL.String, gv); err != nil {
+	if err := pushGosuto(ctx, agent.ControlURL.String, agent.ACPToken.String, gv); err != nil {
 		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "gosuto.push", agentID, "error", nil, err.Error())
 		return "", fmt.Errorf("failed to push Gosuto config: %w", err)
 	}
@@ -454,10 +454,10 @@ func (h *Handlers) HandleSecretsPush(ctx context.Context, cmd *Command, evt *eve
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 // pushGosuto sends a Gosuto config to an agent via its ACP endpoint.
-func pushGosuto(ctx context.Context, controlURL string, gv *store.GosutoVersion) error {
+func pushGosuto(ctx context.Context, controlURL, acpToken string, gv *store.GosutoVersion) error {
 	traceID := trace.FromContext(ctx)
 	slog.Info("pushing Gosuto config to agent", "control_url", controlURL, "version", gv.Version, "trace", traceID)
-	client := acp.New(controlURL)
+	client := acp.New(controlURL, acp.Options{Token: acpToken})
 	// ApplyConfig is idempotent — retry up to 3 times on transient failures.
 	return retry.Do(ctx, retry.DefaultConfig, func() error {
 		return client.ApplyConfig(ctx, acp.ConfigApplyRequest{

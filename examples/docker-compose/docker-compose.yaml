@@ -5,11 +5,15 @@
 #
 # Services:
 #   ruriko   - The Ruriko control plane
-#   synapse  - A local Matrix homeserver (optional, comment out if you have one)
+#   tuwunel  - A local Matrix homeserver (optional, comment out if you have one)
 #
 # Volumes:
 #   ruriko-data     - SQLite database and persistent state
-#   synapse-data    - Synapse homeserver data (only used when synapse is enabled)
+#   tuwunel-data    - Tuwunel homeserver data (only used when tuwunel is enabled)
+#
+# Tuwunel is a lightweight, self-hostable Matrix homeserver written in Rust.
+# Federation and registration are disabled by default for security.
+# See docs/ops/deployment-docker.md for account creation instructions.
 
 version: "3.9"
 
@@ -19,7 +23,7 @@ networks:
 
 volumes:
   ruriko-data:
-  synapse-data:
+  tuwunel-data:
 
 services:
 
@@ -38,7 +42,7 @@ services:
     container_name: ruriko
     restart: unless-stopped
     depends_on:
-      synapse:
+      tuwunel:
         condition: service_healthy
 
     # Expose the optional health/status endpoint.
@@ -63,8 +67,10 @@ services:
 
       # --- Optional Matrix provisioning (account creation) ---
       MATRIX_PROVISIONING_ENABLE:      ${MATRIX_PROVISIONING_ENABLE:-false}
-      MATRIX_HOMESERVER_TYPE:          ${MATRIX_HOMESERVER_TYPE:-synapse}
+      MATRIX_HOMESERVER_TYPE:          ${MATRIX_HOMESERVER_TYPE:-tuwunel}
       MATRIX_SHARED_SECRET:            ${MATRIX_SHARED_SECRET:-}
+      TUWUNEL_REGISTRATION_TOKEN:      ${TUWUNEL_REGISTRATION_TOKEN:-}
+      MATRIX_AGENT_USERNAME_SUFFIX:    ${MATRIX_AGENT_USERNAME_SUFFIX:-}
       MATRIX_AGENT_USERNAME_SUFFIX:    ${MATRIX_AGENT_USERNAME_SUFFIX:-}
 
       # --- Docker runtime (optional) ---
@@ -105,22 +111,41 @@ services:
       start_period: 10s
 
   # --------------------------------------------------------------------------
-  # Synapse — local Matrix homeserver (optional)
+  # Tuwunel — local Matrix homeserver (default)
   #
-  # Comment this service out if you are connecting Ruriko to an existing
-  # Matrix homeserver.  See docs/ops/deployment-docker.md for setup steps.
+  # Tuwunel (https://tuwunel.chat) is a lightweight Matrix homeserver in Rust.
+  # Federation and registration are OFF for security (single-host MVP).
+  #
+  # Account creation (Ruriko bot + agents):
+  #   1. Set TUWUNEL_REGISTRATION_TOKEN to a random string in .env
+  #   2. Start the stack: docker compose up -d tuwunel
+  #   3. Register accounts using Element or the Matrix client API:
+  #        POST /_matrix/client/v3/register
+  #        { "username": "ruriko", "password": "<pass>", "auth": { "type": "m.login.registration_token", "token": "<token>" } }
+  #   4. Clear TUWUNEL_REGISTRATION_TOKEN (set to empty) and restart.
+  #
+  # Comment this service out if you are connecting Ruriko to an existing homeserver.
+  # See docs/ops/deployment-docker.md for full setup instructions.
+  #
+  # Alternative: Synapse (see the commented block at the bottom of this file)
   # --------------------------------------------------------------------------
-  synapse:
-    image: matrixdotorg/synapse:latest
-    container_name: synapse
+  tuwunel:
+    image: ghcr.io/girlbossceo/conduwuit:latest
+    container_name: tuwunel
     restart: unless-stopped
 
     environment:
-      SYNAPSE_SERVER_NAME:    ${SYNAPSE_SERVER_NAME:-localhost}
-      SYNAPSE_REPORT_STATS:   "no"
+      CONDUWUIT_SERVER_NAME:              ${TUWUNEL_SERVER_NAME:-localhost}
+      CONDUWUIT_DATABASE_PATH:            /var/lib/tuwunel
+      CONDUWUIT_ALLOW_REGISTRATION:       ${TUWUNEL_ALLOW_REGISTRATION:-false}
+      CONDUWUIT_REGISTRATION_TOKEN:       ${TUWUNEL_REGISTRATION_TOKEN:-}
+      CONDUWUIT_ALLOW_FEDERATION:         "false"
+      CONDUWUIT_ALLOW_PUBLIC_ROOM_DIRECTORY: "false"
+      CONDUWUIT_PORT:                     "8008"
+      CONDUWUIT_LOG:                      warn
 
     volumes:
-      - synapse-data:/data
+      - tuwunel-data:/var/lib/tuwunel
 
     networks:
       - ruriko-net
@@ -130,4 +155,36 @@ services:
       interval: 20s
       timeout: 10s
       retries: 5
-      start_period: 30s
+      start_period: 15s
+
+  # --------------------------------------------------------------------------
+  # Synapse — alternative Matrix homeserver (optional, disabled by default)
+  #
+  # To switch to Synapse:
+  #   1. Comment out the tuwunel service above and its volume entry.
+  #   2. Uncomment this service and the synapse-data volume entry.
+  #   3. Set MATRIX_HOMESERVER_TYPE=synapse and MATRIX_SHARED_SECRET in .env.
+  #   4. Update depends_on in the ruriko service to reference synapse.
+  #   5. Run: docker compose run --rm synapse generate
+  # --------------------------------------------------------------------------
+  # synapse:
+  #   image: matrixdotorg/synapse:latest
+  #   container_name: synapse
+  #   restart: unless-stopped
+  #   environment:
+  #     SYNAPSE_SERVER_NAME:    ${SYNAPSE_SERVER_NAME:-localhost}
+  #     SYNAPSE_REPORT_STATS:   "no"
+  #   volumes:
+  #     - synapse-data:/data
+  #   networks:
+  #     - ruriko-net
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-fsSL", "http://localhost:8008/_matrix/client/versions"]
+  #     interval: 20s
+  #     timeout: 10s
+  #     retries: 5
+  #     start_period: 30s
+
+  # Uncomment if using Synapse:
+  # volumes:
+  #   synapse-data:

@@ -2,6 +2,8 @@ package commands
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -38,6 +40,16 @@ func truncateID(s string, n int) string {
 		return s
 	}
 	return s[:n]
+}
+
+// generateACPToken returns a 32-char hex string (128 bits of entropy) suitable
+// for use as a bearer token on ACP requests.
+func generateACPToken() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }
 
 // HandleAgentsCreate provisions a new agent container.
@@ -83,6 +95,14 @@ func (h *Handlers) HandleAgentsCreate(ctx context.Context, cmd *Command, evt *ev
 	agent.Image.String = image
 	agent.Image.Valid = true
 
+	// Generate a per-agent ACP bearer token (R2.1).
+	acpToken, err := generateACPToken()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate ACP token: %w", err)
+	}
+	agent.ACPToken.String = acpToken
+	agent.ACPToken.Valid = true
+
 	if err := h.store.CreateAgent(ctx, agent); err != nil {
 		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.create", agentID, "error", nil, err.Error())
 		return "", fmt.Errorf("failed to create agent record: %w", err)
@@ -105,6 +125,9 @@ func (h *Handlers) HandleAgentsCreate(ctx context.Context, cmd *Command, evt *ev
 		DisplayName: displayName,
 		Image:       image,
 		Template:    template,
+		Env: map[string]string{
+			"GITAI_ACP_TOKEN": acpToken,
+		},
 	}
 
 	handle, err := h.runtime.Spawn(ctx, spec)
@@ -381,7 +404,7 @@ func (h *Handlers) HandleAgentsStatus(ctx context.Context, cmd *Command, evt *ev
 
 	// ACP health check
 	if agent.ControlURL.Valid && agent.ControlURL.String != "" {
-		acpClient := acp.New(agent.ControlURL.String)
+		acpClient := acp.New(agent.ControlURL.String, acp.Options{Token: agent.ACPToken.String})
 		health, err := acpClient.Health(ctx)
 		if err != nil {
 			sb.WriteString("ACP Health:   ❌ unreachable\n")
@@ -400,4 +423,40 @@ func (h *Handlers) HandleAgentsStatus(ctx context.Context, cmd *Command, evt *ev
 		slog.Warn("audit write failed", "op", "agents.status", "agent", agentID, "err", err)
 	}
 	return sb.String(), nil
+}
+
+// HandleAgentsCancel cancels the currently in-flight task on a running agent
+// by calling POST /tasks/cancel on the agent's ACP endpoint.
+//
+// Usage: /ruriko agents cancel <name>
+func (h *Handlers) HandleAgentsCancel(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
+	traceID := trace.GenerateID()
+	ctx = trace.WithTraceID(ctx, traceID)
+
+	agentID, _ := cmd.GetArg(0)
+	if agentID == "" {
+		return "", fmt.Errorf("usage: /ruriko agents cancel <name>")
+	}
+
+	agent, err := h.store.GetAgent(ctx, agentID)
+	if err != nil {
+		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.cancel", agentID, "error", nil, err.Error())
+		return "", fmt.Errorf("agent not found: %s", agentID)
+	}
+
+	if !agent.ControlURL.Valid || agent.ControlURL.String == "" {
+		return "", fmt.Errorf("agent %s has no control URL; is it running?", agentID)
+	}
+
+	acpClient := acp.New(agent.ControlURL.String, acp.Options{Token: agent.ACPToken.String})
+	if err := acpClient.Cancel(ctx); err != nil {
+		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.cancel", agentID, "error", nil, err.Error())
+		return "", fmt.Errorf("cancel request failed: %w", err)
+	}
+
+	if err := h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.cancel", agentID, "success", nil, ""); err != nil {
+		slog.Warn("audit write failed", "op", "agents.cancel", "agent", agentID, "err", err)
+	}
+
+	return fmt.Sprintf("⛔ Task cancel sent to **%s**\n\n(trace: %s)", agentID, traceID), nil
 }

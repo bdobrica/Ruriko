@@ -89,15 +89,16 @@ func loadConfig() (*app.Config, error) {
 	// Only enabled when MATRIX_PROVISIONING_ENABLE=true.
 	var provisioningCfg *provisioning.Config
 	if environment.BoolOr("MATRIX_PROVISIONING_ENABLE", false) {
-		hsType := provisioning.HomeserverType(environment.StringOr("MATRIX_HOMESERVER_TYPE", string(provisioning.HomeserverSynapse)))
+		hsType := provisioning.HomeserverType(environment.StringOr("MATRIX_HOMESERVER_TYPE", string(provisioning.HomeserverTuwunel)))
 		provisioningCfg = &provisioning.Config{
-			Homeserver:       homeserver,
-			AdminUserID:      userID,
-			AdminAccessToken: accessToken,
-			HomeserverType:   hsType,
-			SharedSecret:     environment.StringOr("MATRIX_SHARED_SECRET", ""),
-			UsernameSuffix:   environment.StringOr("MATRIX_AGENT_USERNAME_SUFFIX", ""),
-			AdminRooms:       adminRooms,
+			Homeserver:        homeserver,
+			AdminUserID:       userID,
+			AdminAccessToken:  accessToken,
+			HomeserverType:    hsType,
+			SharedSecret:      environment.StringOr("MATRIX_SHARED_SECRET", ""),
+			RegistrationToken: environment.StringOr("TUWUNEL_REGISTRATION_TOKEN", ""),
+			UsernameSuffix:    environment.StringOr("MATRIX_AGENT_USERNAME_SUFFIX", ""),
+			AdminRooms:        adminRooms,
 		}
 	}
 

@@ -20,8 +20,14 @@ type Agent struct {
 	ContainerID    sql.NullString
 	ControlURL     sql.NullString
 	Image          sql.NullString
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	// ACPToken is the bearer token Ruriko sends on every ACP request to this
+	// agent.  It is generated at provisioning time and stored here so that
+	// the token can be injected into the agent's environment and looked up
+	// when building an ACP client.  NULL means authentication is disabled
+	// (dev/test mode).
+	ACPToken  sql.NullString
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // CreateAgent inserts a new agent
@@ -30,10 +36,10 @@ func (s *Store) CreateAgent(ctx context.Context, agent *Agent) error {
 	agent.UpdatedAt = time.Now()
 
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO agents (id, mxid, display_name, template, status, container_id, control_url, image, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO agents (id, mxid, display_name, template, status, container_id, control_url, image, acp_token, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, agent.ID, agent.MXID, agent.DisplayName, agent.Template, agent.Status,
-		agent.ContainerID, agent.ControlURL, agent.Image, agent.CreatedAt, agent.UpdatedAt)
+		agent.ContainerID, agent.ControlURL, agent.Image, agent.ACPToken, agent.CreatedAt, agent.UpdatedAt)
 
 	if err != nil {
 		return fmt.Errorf("failed to create agent: %w", err)
@@ -48,14 +54,14 @@ func (s *Store) GetAgent(ctx context.Context, id string) (*Agent, error) {
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, mxid, display_name, template, status, last_seen,
 		       runtime_version, gosuto_version, container_id, control_url, image,
-		       created_at, updated_at
+		       acp_token, created_at, updated_at
 		FROM agents
 		WHERE id = ?
 	`, id).Scan(
 		&agent.ID, &agent.MXID, &agent.DisplayName, &agent.Template,
 		&agent.Status, &agent.LastSeen, &agent.RuntimeVersion,
 		&agent.GosutoVersion, &agent.ContainerID, &agent.ControlURL, &agent.Image,
-		&agent.CreatedAt, &agent.UpdatedAt,
+		&agent.ACPToken, &agent.CreatedAt, &agent.UpdatedAt,
 	)
 
 	if err == sql.ErrNoRows {
@@ -73,7 +79,7 @@ func (s *Store) ListAgents(ctx context.Context) ([]*Agent, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, mxid, display_name, template, status, last_seen,
 		       runtime_version, gosuto_version, container_id, control_url, image,
-		       created_at, updated_at
+		       acp_token, created_at, updated_at
 		FROM agents
 		ORDER BY created_at DESC
 	`)
@@ -89,7 +95,7 @@ func (s *Store) ListAgents(ctx context.Context) ([]*Agent, error) {
 			&agent.ID, &agent.MXID, &agent.DisplayName, &agent.Template,
 			&agent.Status, &agent.LastSeen, &agent.RuntimeVersion,
 			&agent.GosutoVersion, &agent.ContainerID, &agent.ControlURL, &agent.Image,
-			&agent.CreatedAt, &agent.UpdatedAt,
+			&agent.ACPToken, &agent.CreatedAt, &agent.UpdatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan agent: %w", err)
@@ -233,6 +239,26 @@ func (s *Store) DeleteAgent(ctx context.Context, id string) error {
 		return fmt.Errorf("agent not found: %s", id)
 	}
 
+	return nil
+}
+
+// SetAgentACPToken stores the ACP bearer token for an agent.
+func (s *Store) SetAgentACPToken(ctx context.Context, id, token string) error {
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE agents
+		SET acp_token = ?, updated_at = ?
+		WHERE id = ?
+	`, token, time.Now(), id)
+	if err != nil {
+		return fmt.Errorf("failed to set acp token: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("agent not found: %s", id)
+	}
 	return nil
 }
 

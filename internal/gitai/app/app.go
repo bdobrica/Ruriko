@@ -55,6 +55,11 @@ type Config struct {
 	// Defaults to ":8765".
 	ACPAddr string
 
+	// ACPToken, when non-empty, is the bearer token that ACP clients must
+	// supply in the Authorization header.  When empty, authentication is
+	// disabled (dev/test mode).
+	ACPToken string
+
 	// LogLevel is "debug", "info", "warn", or "error". Defaults to "info".
 	LogLevel string
 	// LogFormat is "text" or "json". Defaults to "text".
@@ -89,6 +94,9 @@ type App struct {
 	acpServer  *control.Server
 	startedAt  time.Time
 	restartCh  chan struct{}
+	// cancelCh is signalled when Ruriko sends a POST /tasks/cancel request.
+	// The currently running turn should watch this channel and abort early.
+	cancelCh chan struct{}
 }
 
 // New creates and initialises all Gitai subsystems. It does NOT start any
@@ -135,6 +143,7 @@ func New(cfg *Config) (*App, error) {
 	}
 
 	restartCh := make(chan struct{}, 1)
+	cancelCh := make(chan struct{}, 1)
 
 	app := &App{
 		cfg:        cfg,
@@ -147,6 +156,7 @@ func New(cfg *Config) (*App, error) {
 		matrixCli:  matrixCli,
 		startedAt:  time.Now(),
 		restartCh:  restartCh,
+		cancelCh:   cancelCh,
 	}
 
 	// Approval gate (needs matrix sender for posting to approvals room).
@@ -161,6 +171,7 @@ func New(cfg *Config) (*App, error) {
 		AgentID:    cfg.AgentID,
 		Version:    version.Version,
 		StartedAt:  app.startedAt,
+		Token:      cfg.ACPToken,
 		GosutoHash: gosutoLdr.Hash,
 		MCPNames:   supv.Names,
 		ApplyConfig: func(yaml, hash string) error {
@@ -186,6 +197,14 @@ func New(cfg *Config) (*App, error) {
 			return nil
 		},
 		RequestRestart: func() { restartCh <- struct{}{} },
+		// Signal the current turn to abort.  Non-blocking send: if no turn is
+		// running the signal is silently dropped.
+		RequestCancel: func() {
+			select {
+			case cancelCh <- struct{}{}:
+			default:
+			}
+		},
 	})
 
 	return app, nil

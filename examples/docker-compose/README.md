@@ -3,7 +3,10 @@
 This directory contains a ready-to-use Docker Compose stack that starts:
 
 - **ruriko** – The Ruriko control plane
-- **synapse** – A local Matrix homeserver_(optional; comment it out if you already have one)_
+- **tuwunel** – A local Matrix homeserver _(optional; comment it out if you already have one)_
+
+[Tuwunel](https://tuwunel.chat) is a lightweight, self-hostable Matrix homeserver
+written in Rust. Federation and registration are disabled by default for security.
 
 ---
 
@@ -34,24 +37,38 @@ Fill in at minimum:
 | `MATRIX_ADMIN_ROOMS` | Comma-separated admin room IDs |
 | `RURIKO_MASTER_KEY` | 32-byte hex key (`openssl rand -hex 32`) |
 
-### 3. (Optional) Bootstrap Synapse
+### 3. Bootstrap Tuwunel and create accounts
 
-If you want to use the bundled Synapse service instead of an existing homeserver:
+Tuwunel uses a registration token flow so registration can be unlocked
+temporarily without opening the homeserver to the public.
 
 ```bash
-# Generate initial Synapse config
-docker compose run --rm synapse generate
+# Generate a one-time registration token
+TUWUNEL_REGISTRATION_TOKEN=$(openssl rand -hex 16)
+echo "Token: $TUWUNEL_REGISTRATION_TOKEN"
 
-# Start Synapse
-docker compose up -d synapse
+# Start Tuwunel with registration temporarily enabled
+TUWUNEL_ALLOW_REGISTRATION=true \
+TUWUNEL_REGISTRATION_TOKEN=$TUWUNEL_REGISTRATION_TOKEN \
+docker compose up -d tuwunel
 
-# Register the Ruriko bot account
-docker compose exec synapse register_new_matrix_user \
-    -c /data/homeserver.yaml \
-    -u ruriko -p <password> --no-admin
+# Register the Ruriko bot account via the Matrix client API
+curl -s -X POST "http://localhost:8008/_matrix/client/v3/register" \
+  -H "Content-Type: application/json" \
+  -d "{\"username\":\"ruriko\",\"password\":\"$(openssl rand -hex 16)\",\"auth\":{\"type\":\"m.login.registration_token\",\"token\":\"$TUWUNEL_REGISTRATION_TOKEN\"}}"
+# Save the access_token from the response → MATRIX_ACCESS_TOKEN in .env
 ```
 
-Retrieve the access token through the Synapse admin API or Element web, then set it in `.env`.
+After creating all required accounts, lock down registration:
+
+```bash
+docker compose stop tuwunel
+# In .env: clear TUWUNEL_REGISTRATION_TOKEN, leave TUWUNEL_ALLOW_REGISTRATION=false
+docker compose up -d tuwunel
+```
+
+See [docs/ops/deployment-docker.md](../../docs/ops/deployment-docker.md) for
+detailed account setup and room creation instructions.
 
 ### 4. Start the stack
 
@@ -89,12 +106,26 @@ Then test from your Matrix client:
 
 ---
 
+---
+
+## Using Synapse instead of Tuwunel
+
+Synapse is supported as an alternative homeserver. To switch:
+
+1. Comment out the `tuwunel` service in `docker-compose.yaml` and uncomment `synapse`.
+2. Remove `tuwunel-data` from the volumes section and uncomment `synapse-data`.
+3. Change `depends_on` in the `ruriko` service to reference `synapse`.
+4. Set `MATRIX_HOMESERVER_TYPE=synapse` and `MATRIX_SHARED_SECRET` in `.env`.
+5. Run `docker compose run --rm synapse generate` to initialise the Synapse config.
+
+---
+
 ## Volumes
 
 | Mount | Purpose |
 |---|---|
 | `ruriko-data` | SQLite database and persistent state |
-| `synapse-data` | Synapse homeserver data |
+| `tuwunel-data` | Tuwunel homeserver data |
 | `../../templates` | Agent Gosuto templates (read-only) |
 | `/var/run/docker.sock` | Docker socket (only needed when `DOCKER_ENABLE=true`) |
 

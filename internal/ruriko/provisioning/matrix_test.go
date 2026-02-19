@@ -224,16 +224,43 @@ func TestNew_SynapseRequiresSharedSecret(t *testing.T) {
 	}
 }
 
-func TestNew_DefaultsToSynapse(t *testing.T) {
-	// HomeserverType == "" should default to "synapse", which then requires SharedSecret.
+func TestNew_DefaultsToTuwunel(t *testing.T) {
+	// HomeserverType == "" should default to "tuwunel", which does not require SharedSecret.
+	p, err := New(Config{
+		Homeserver:       "https://matrix.example.com",
+		AdminUserID:      "@admin:example.com",
+		AdminAccessToken: "tok",
+	})
+	if err != nil {
+		t.Fatalf("expected success with default homeserver type: %v", err)
+	}
+	if p.cfg.HomeserverType != HomeserverTuwunel {
+		t.Errorf("default HomeserverType = %q, want %q", p.cfg.HomeserverType, HomeserverTuwunel)
+	}
+}
+
+func TestNew_TuwunelDoesNotRequireSharedSecret(t *testing.T) {
 	_, err := New(Config{
 		Homeserver:       "https://matrix.example.com",
 		AdminUserID:      "@admin:example.com",
 		AdminAccessToken: "tok",
-		SharedSecret:     "sec",
+		HomeserverType:   HomeserverTuwunel,
 	})
 	if err != nil {
-		t.Fatalf("expected success with default homeserver type: %v", err)
+		t.Fatalf("tuwunel type should not require shared secret: %v", err)
+	}
+}
+
+func TestNew_TuwunelAcceptsRegistrationToken(t *testing.T) {
+	_, err := New(Config{
+		Homeserver:        "https://matrix.example.com",
+		AdminUserID:       "@admin:example.com",
+		AdminAccessToken:  "tok",
+		HomeserverType:    HomeserverTuwunel,
+		RegistrationToken: "sometoken",
+	})
+	if err != nil {
+		t.Fatalf("tuwunel type with registration token should succeed: %v", err)
 	}
 }
 

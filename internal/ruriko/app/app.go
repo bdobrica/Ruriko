@@ -177,6 +177,7 @@ func New(config *Config) (*App, error) {
 	router.Register("agents.respawn", handlers.HandleAgentsRespawn)
 	router.Register("agents.delete", handlers.HandleAgentsDelete)
 	router.Register("agents.status", handlers.HandleAgentsStatus)
+	router.Register("agents.cancel", handlers.HandleAgentsCancel)
 	router.Register("agents.matrix", handlers.HandleAgentsMatrixRegister)
 	router.Register("agents.disable", handlers.HandleAgentsDisable)
 	router.Register("audit.tail", handlers.HandleAuditTail)

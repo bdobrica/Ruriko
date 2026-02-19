@@ -91,6 +91,7 @@ func (h *Handlers) HandleHelp(ctx context.Context, cmd *Command, evt *event.Even
 • /ruriko agents start <name> - Start agent
 • /ruriko agents respawn <name> - Force respawn agent
 • /ruriko agents status <name> - Show agent runtime status
+• /ruriko agents cancel <name> - Cancel in-flight task on agent
 • /ruriko agents delete <name> - Delete agent
 • /ruriko agents matrix register <name> [--mxid <existing>] - Provision Matrix account
 • /ruriko agents disable <name> [--erase] - Soft-disable agent (deactivates Matrix account)

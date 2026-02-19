@@ -8,7 +8,7 @@ This guide walks through deploying Ruriko in a Docker or Docker Compose environm
 
 - Docker Engine 24+ (or Docker Desktop)
 - `docker compose` plugin (v2)
-- A Matrix homeserver (self-hosted Synapse/Dendrite, or a public homeserver)
+- A Matrix homeserver (self-hosted Tuwunel (default), Synapse, or any other provider)
 - A Matrix bot account for Ruriko
 
 ---
@@ -20,8 +20,8 @@ This guide walks through deploying Ruriko in a Docker or Docker Compose environm
 │                Docker host                       │
 │                                                  │
 │  ┌────────────┐          ┌──────────────────┐   │
-│  │   ruriko   │◄────────►│  Matrix (Synapse) │  │
-│  │  :8080     │          │  :8008 / :8448    │  │
+│  │   ruriko   │◄────────►│  Matrix (Tuwunel) │  │
+│  │  :8080     │          │  :8008            │  │
 │  └────────────┘          └──────────────────┘   │
 │       │                                          │
 │       │ /var/run/docker.sock (optional)          │
@@ -91,7 +91,8 @@ openssl rand -hex 32
 | `MATRIX_ADMIN_SENDERS` | _(any member)_ | Comma-separated allowed command senders |
 | `MATRIX_AUDIT_ROOM` | _(disabled)_ | Room ID for audit event notifications |
 | `MATRIX_PROVISIONING_ENABLE` | `false` | Enable automatic Matrix account creation |
-| `MATRIX_HOMESERVER_TYPE` | `synapse` | Homeserver type (`synapse` or `generic`) |
+| `MATRIX_HOMESERVER_TYPE` | `tuwunel` | Homeserver type: `tuwunel`, `synapse`, `generic`, or `manual` |
+| `TUWUNEL_REGISTRATION_TOKEN` | | Registration token for Tuwunel account creation |
 | `MATRIX_SHARED_SECRET` | | Synapse shared registration secret |
 | `DOCKER_ENABLE` | `false` | Enable Docker runtime adapter |
 | `DOCKER_NETWORK` | | Docker network for spawned agent containers |
@@ -142,31 +143,69 @@ A complete Compose stack (including an optional local Synapse) lives in
 3. Create an admin room and invite the Ruriko account.
 4. Set the variables in your environment or `.env`.
 
-### Using a local Synapse (Docker Compose)
+### Using a local Tuwunel homeserver (default)
+
+Tuwunel stores all data in a single volume and is configured via environment
+variables.  Federation and registration are disabled by default.
+
+**Initial account setup (token-based registration):**
 
 ```bash
 cd examples/docker-compose
 
-# Generate Synapse config
+# 1. Generate a one-time registration token
+TOKEN=$(openssl rand -hex 16)
+echo "Registration token: $TOKEN"
+
+# 2. Start Tuwunel with registration temporarily enabled
+TUWUNEL_ALLOW_REGISTRATION=true TUWUNEL_REGISTRATION_TOKEN=$TOKEN \
+  docker compose up -d tuwunel
+
+# 3. Wait for healthy
+docker compose ps tuwunel
+
+# 4. Register the Ruriko bot account
+PASS=$(openssl rand -hex 16)
+curl -s -X POST "http://localhost:8008/_matrix/client/v3/register" \
+  -H "Content-Type: application/json" \
+  -d "{\"username\":\"ruriko\",\"password\":\"$PASS\",\"auth\":{\"type\":\"m.login.registration_token\",\"token\":\"$TOKEN\"}}"
+# Save the returned access_token → MATRIX_ACCESS_TOKEN in .env
+
+# 5. Register any additional accounts (agents) the same way
+
+# 6. Lock down: stop Tuwunel, clear token, disable registration
+docker compose stop tuwunel
+# In .env: set TUWUNEL_REGISTRATION_TOKEN= and TUWUNEL_ALLOW_REGISTRATION=false
+docker compose up -d tuwunel
+```
+
+Set `MATRIX_HOMESERVER=http://tuwunel:8008` when Ruriko runs in the same
+Compose network (use the service name `tuwunel`).
+
+### Using a local Synapse homeserver (alternative)
+
+See the Synapse section in
+[`examples/docker-compose/README.md`](../../examples/docker-compose/README.md)
+for instructions.  The short version:
+
+```bash
+cd examples/docker-compose
+
+# Uncomment the synapse service in docker-compose.yaml, then:
 docker compose run --rm synapse generate
-
-# Edit synapse-data/homeserver.yaml as needed, then start
 docker compose up -d synapse
-
-# Register the Ruriko bot account (-a for homeserver admin)
 docker compose exec synapse register_new_matrix_user \
   -c /data/homeserver.yaml \
   -u ruriko -p <password> --no-admin
 
-# Retrieve the access token via the Admin API
-curl -X POST \
-  'http://localhost:8008/_matrix/client/v3/login' \
+# Retrieve the access token via login
+curl -X POST 'http://localhost:8008/_matrix/client/v3/login' \
   -H 'Content-Type: application/json' \
   -d '{"type":"m.login.password","user":"ruriko","password":"<password>"}'
 ```
 
-Set `MATRIX_HOMESERVER=http://synapse:8008` (service name) when Ruriko  
-runs in the same Compose network.
+Set `MATRIX_HOMESERVER=http://synapse:8008` and
+`MATRIX_HOMESERVER_TYPE=synapse` with a valid `MATRIX_SHARED_SECRET`.
 
 ---
 

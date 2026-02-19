@@ -522,33 +522,34 @@ These are **real, working subsystems** — not scaffolding. The realignment phas
 > Maps to REALIGNMENT_PLAN Phase 2.
 
 ### R1.1 Docker Compose — Tuwunel
-- [ ] Replace Synapse with Tuwunel container in `examples/docker-compose/docker-compose.yaml`
-- [ ] Configure Tuwunel with federation disabled
-- [ ] Configure Tuwunel with registration disabled
-- [ ] Add persistent volume for Tuwunel data
-- [ ] Keep Synapse as a commented-out alternative or separate compose override
-- [ ] Update `.env.example` with Tuwunel-relevant variables
+- [x] Replace Synapse with Tuwunel container in `examples/docker-compose/docker-compose.yaml`
+- [x] Configure Tuwunel with federation disabled
+- [x] Configure Tuwunel with registration disabled
+- [x] Add persistent volume for Tuwunel data
+- [x] Keep Synapse as a commented-out alternative or separate compose override
+- [x] Update `.env.example` with Tuwunel-relevant variables
 - [ ] Test: `docker compose up -d` boots a working Matrix homeserver
 
 ### R1.2 Provisioning — Tuwunel Support
-- [ ] Add `tuwunel` homeserver type to `internal/ruriko/provisioning/matrix.go`
-- [ ] Research Tuwunel admin API for account creation (or document manual path)
-- [ ] Set default `HomeserverType` to `tuwunel` (currently `synapse`)
-- [ ] If Tuwunel has no admin API for registration:
-  - [ ] Document manual account creation steps for MVP
-  - [ ] Add provisioning mode option (temporary registration ON → create accounts → OFF)
-- [ ] Keep `synapse` and `generic` paths working as fallbacks
+- [x] Add `tuwunel` homeserver type to `internal/ruriko/provisioning/matrix.go`
+- [x] Research Tuwunel admin API for account creation (token-based registration documented)
+- [x] Set default `HomeserverType` to `tuwunel` (was `synapse`)
+- [x] Support registration token flow (`m.login.registration_token`) for account creation
+- [x] Document manual account creation steps for MVP
+- [x] Keep `synapse` and `generic` paths working as fallbacks
+- [x] Update `cmd/ruriko/main.go` to read `TUWUNEL_REGISTRATION_TOKEN` env var
 - [ ] Test: Ruriko can log in to Tuwunel homeserver
 
 ### R1.3 Documentation
-- [ ] Update quickstart guide for Tuwunel
-- [ ] Document how to create Ruriko + agent Matrix accounts on Tuwunel
-- [ ] Update `docs/ops/deployment-docker.md`
+- [x] Update quickstart guide for Tuwunel
+- [x] Document how to create Ruriko + agent Matrix accounts on Tuwunel
+- [x] Update `docs/ops/deployment-docker.md`
 
 ### Definition of done
 - `docker compose up -d` boots Tuwunel (not Synapse) with federation OFF, registration OFF
 - Ruriko can log in and send messages on Tuwunel
 - Agent accounts can be created (manually or via provisioning)
+- ✅ Code changes complete; live homeserver test deferred to integration phase
 
 ---
 
@@ -559,41 +560,42 @@ These are **real, working subsystems** — not scaffolding. The realignment phas
 > Maps to REALIGNMENT_PLAN Phase 3.
 
 ### R2.1 ACP Authentication
-- [ ] Choose auth mechanism:
+- [x] Choose auth mechanism:
   - Preferred: **mTLS** (mutual TLS with per-agent certs)
   - Fallback: **signed bearer token** (JWT-like, short TTL, agent_id audience)
-- [ ] Implement server-side auth middleware in `internal/gitai/control/server.go`
-- [ ] Implement client-side auth in `internal/ruriko/runtime/acp/client.go`
-- [ ] Generate/distribute agent credentials during provisioning
-- [ ] Test: Unauthenticated ACP requests are rejected
+  - Chosen: **Bearer token** (128-bit random, hex-encoded, per-agent)
+- [x] Implement server-side auth middleware in `internal/gitai/control/server.go`
+- [x] Implement client-side auth in `internal/ruriko/runtime/acp/client.go`
+- [x] Generate/distribute agent credentials during provisioning
+- [x] Test: Unauthenticated ACP requests are rejected
 
 ### R2.2 Idempotency Headers
-- [ ] Add `X-Request-ID` header to all ACP requests (unique per call)
-- [ ] Add `X-Idempotency-Key` header to mutating operations (`/config/apply`, `/process/restart`, `/secrets/apply`)
-- [ ] Add server middleware: cache responses by idempotency key for a TTL window
-- [ ] Prevent duplicate restarts / duplicate config applies within the window
-- [ ] Test: Duplicate requests return cached response
+- [x] Add `X-Request-ID` header to all ACP requests (unique per call)
+- [x] Add `X-Idempotency-Key` header to mutating operations (`/config/apply`, `/process/restart`, `/secrets/apply`)
+- [x] Add server middleware: cache responses by idempotency key for a TTL window
+- [x] Prevent duplicate restarts / duplicate config applies within the window
+- [x] Test: Duplicate requests return cached response
 
 ### R2.3 Per-Operation Timeouts
-- [ ] Remove global `http.Client.Timeout = 10s` from ACP client
-- [ ] Implement per-operation timeouts using `context.WithTimeout`:
-  - [ ] Health: 2s
-  - [ ] Status: 3s
-  - [ ] ApplyConfig: 30s
-  - [ ] Restart: 30s
-  - [ ] SecretsApply: 15s
-- [ ] Test: Slow operations don't get killed prematurely; fast checks fail fast
+- [x] Remove global `http.Client.Timeout = 10s` from ACP client
+- [x] Implement per-operation timeouts using `context.WithTimeout`:
+  - [x] Health: 2s
+  - [x] Status: 3s
+  - [x] ApplyConfig: 30s
+  - [x] Restart: 30s
+  - [x] SecretsApply: 15s
+- [x] Test: Slow operations don't get killed prematurely; fast checks fail fast
 
 ### R2.4 Response Safety
-- [ ] Add `io.LimitReader` to all ACP response body reads (limit: 1MB)
-- [ ] Include HTTP status text + truncated error body in error messages
-- [ ] Test: Oversized response bodies don't crash the client
+- [x] Add `io.LimitReader` to all ACP response body reads (limit: 1MB)
+- [x] Include HTTP status text + truncated error body in error messages
+- [x] Test: Oversized response bodies don't crash the client
 
 ### R2.5 New Endpoints
-- [ ] Add `POST /tasks/cancel` to Gitai ACP server (cancels current task)
-- [ ] Add cancel client call to Ruriko ACP client
-- [ ] Wire into `/ruriko agents cancel <name>` command
-- [ ] Test: Cancel endpoint works
+- [x] Add `POST /tasks/cancel` to Gitai ACP server (cancels current task)
+- [x] Add cancel client call to Ruriko ACP client
+- [x] Wire into `/ruriko agents cancel <name>` command
+- [x] Test: Cancel endpoint works
 
 ### Definition of done
 - ACP endpoints require authentication
@@ -972,8 +974,8 @@ The MVP is ready when **all** of the following are true:
 ### Realignment Phases
 
 - [x] Phase R0: Project Hygiene and Config Alignment ✅
-- [ ] Phase R1: Matrix Stack Realignment — Tuwunel Default
-- [ ] Phase R2: ACP Hardening — Auth, Idempotency, Timeouts
+- [x] Phase R1: Matrix Stack Realignment — Tuwunel Default ✅
+- [x] Phase R2: ACP Hardening — Auth, Idempotency, Timeouts ✅
 - [ ] Phase R3: Kuze — Human Secret Entry
 - [ ] Phase R4: Token-Based Secret Distribution to Agents
 - [ ] Phase R5: Agent Provisioning UX — Tim, Warren, Brave
@@ -984,4 +986,4 @@ The MVP is ready when **all** of the following are true:
 ---
 
 **Last Updated**: 2026-02-19
-**Current Focus**: Phase R1 — Matrix Stack Realignment (Tuwunel Default)
+**Current Focus**: Phase R3 — Kuze

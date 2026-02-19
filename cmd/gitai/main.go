@@ -16,6 +16,7 @@
 //
 //	GITAI_GOSUTO_FILE     - path to initial gosuto.yaml (if not using ACP push)
 //	GITAI_ACP_ADDR        - ACP HTTP server listen address (default ":8765")
+//	GITAI_ACP_TOKEN       - bearer token required on all ACP requests; empty = auth disabled (dev)
 //	LLM_PROVIDER          - LLM backend: "openai" (default)
 //	LLM_API_KEY           - API key for the LLM provider
 //	LLM_BASE_URL          - override LLM API base URL (e.g. for Ollama)
@@ -80,6 +81,7 @@ func loadConfig() (*app.Config, error) {
 		DatabasePath: environment.StringOr("GITAI_DB_PATH", "/data/gitai.db"),
 		GosutoFile:   environment.StringOr("GITAI_GOSUTO_FILE", ""),
 		ACPAddr:      environment.StringOr("GITAI_ACP_ADDR", ":8765"),
+		ACPToken:     environment.StringOr("GITAI_ACP_TOKEN", ""),
 		LogLevel:     environment.StringOr("LOG_LEVEL", "info"),
 		LogFormat:    environment.StringOr("LOG_FORMAT", "text"),
 		Matrix: matrix.Config{
