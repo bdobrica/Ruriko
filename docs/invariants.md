@@ -226,6 +226,33 @@ These invariants are the foundation of Ruriko's design. They must never be viola
 
 ---
 
+### 11. Secrets Are Never Entered via Matrix
+
+**Principle**: Matrix is a conversation channel. It is not a secure channel for
+secret material. No secret value must ever travel through Matrix in any direction.
+
+**What this means**:
+- Users **never paste secret values** (API keys, tokens, passwords) into Matrix chat
+- The `/ruriko secrets set <name>` command issues a one-time Kuze link and never accepts an inline value
+- Agents never receive raw secret values over Matrix
+- Ruriko must refuse to process messages that look like secret material (pattern matching on known formats)
+
+**Rationale**: Matrix messages are stored in the homeserver database and may be
+readable by homeserver admins, leaked in backups, or cached by clients.
+Even in a single-host deployment the principle must hold: Matrix history
+is not a secrets vault.
+
+**Enforcement**:
+- ✅ `/ruriko secrets set <name>` replies with a Kuze one-time link, not a prompt for inline input
+- ✅ Kuze tokens are single-use with a short TTL (5–10 minutes)
+- ✅ Incoming messages matching common secret patterns are rejected with a guidance reply
+- ✅ Secrets are confirmed by reference only ("Secret 'openai_api_key' stored") 
+- ❌ Never prompt the user to type a secret into Matrix
+- ❌ Never echo, confirm, or repeat a secret value in Matrix
+- ❌ Never store a Matrix message body that contains a secret reference value
+
+---
+
 ## Enforcement Checklist
 
 When implementing a new feature, verify:
@@ -238,6 +265,7 @@ When implementing a new feature, verify:
 - [ ] Is it audited? (Should be YES)
 - [ ] What happens on error? (Should fail safely)
 - [ ] Can secrets leak? (Should be NO)
+- [ ] Could this feature cause a secret value to appear in a Matrix room or message? (Should be NO)
 - [ ] Are trust contexts checked? (Should be YES)
 - [ ] Is configuration versioned? (Should be YES)
 
@@ -273,6 +301,7 @@ Invariants should be stable. Frequent changes indicate architectural problems.
 
 ## References
 
+- [preamble.md](./preamble.md) - Product story, glossary, and architectural decisions
 - [RURIKO_COMPONENTS.md](../RURIKO_COMPONENTS.md) - Implementation details
 - [architecture.md](./architecture.md) - System architecture
 - [threat-model.md](./threat-model.md) - Security analysis

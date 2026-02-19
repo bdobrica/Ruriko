@@ -29,32 +29,17 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strconv"
 
+	"github.com/bdobrica/Ruriko/common/environment"
 	"github.com/bdobrica/Ruriko/internal/gitai/app"
 	"github.com/bdobrica/Ruriko/internal/gitai/matrix"
 )
 
 func main() {
-	cfg := &app.Config{
-		AgentID:      requireEnv("GITAI_AGENT_ID"),
-		DatabasePath: envOr("GITAI_DB_PATH", "/data/gitai.db"),
-		GosutoFile:   os.Getenv("GITAI_GOSUTO_FILE"),
-		ACPAddr:      envOr("GITAI_ACP_ADDR", ":8765"),
-		LogLevel:     envOr("LOG_LEVEL", "info"),
-		LogFormat:    envOr("LOG_FORMAT", "text"),
-		Matrix: matrix.Config{
-			Homeserver:  requireEnv("MATRIX_HOMESERVER"),
-			UserID:      requireEnv("MATRIX_USER_ID"),
-			AccessToken: requireEnv("MATRIX_ACCESS_TOKEN"),
-		},
-		LLM: app.LLMConfig{
-			Provider:  envOr("LLM_PROVIDER", "openai"),
-			APIKey:    os.Getenv("LLM_API_KEY"),
-			BaseURL:   os.Getenv("LLM_BASE_URL"),
-			Model:     envOr("LLM_MODEL", "gpt-4o"),
-			MaxTokens: envInt("LLM_MAX_TOKENS", 0),
-		},
+	cfg, err := loadConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Configuration error: %v\n", err)
+		os.Exit(1)
 	}
 
 	gitai, err := app.New(cfg)
@@ -69,30 +54,45 @@ func main() {
 	}
 }
 
-func requireEnv(key string) string {
-	v := os.Getenv(key)
-	if v == "" {
-		fmt.Fprintf(os.Stderr, "fatal: required environment variable %q is not set\n", key)
-		os.Exit(1)
-	}
-	return v
-}
-
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
-func envInt(key string, fallback int) int {
-	v := os.Getenv(key)
-	if v == "" {
-		return fallback
-	}
-	n, err := strconv.Atoi(v)
+// loadConfig loads all configuration from environment variables.
+// Returns an error (instead of calling os.Exit) so the caller controls process
+// termination and the function remains testable.
+func loadConfig() (*app.Config, error) {
+	agentID, err := environment.RequiredString("GITAI_AGENT_ID")
 	if err != nil {
-		return fallback
+		return nil, err
 	}
-	return n
+	homeserver, err := environment.RequiredString("MATRIX_HOMESERVER")
+	if err != nil {
+		return nil, err
+	}
+	userID, err := environment.RequiredString("MATRIX_USER_ID")
+	if err != nil {
+		return nil, err
+	}
+	accessToken, err := environment.RequiredString("MATRIX_ACCESS_TOKEN")
+	if err != nil {
+		return nil, err
+	}
+
+	return &app.Config{
+		AgentID:      agentID,
+		DatabasePath: environment.StringOr("GITAI_DB_PATH", "/data/gitai.db"),
+		GosutoFile:   environment.StringOr("GITAI_GOSUTO_FILE", ""),
+		ACPAddr:      environment.StringOr("GITAI_ACP_ADDR", ":8765"),
+		LogLevel:     environment.StringOr("LOG_LEVEL", "info"),
+		LogFormat:    environment.StringOr("LOG_FORMAT", "text"),
+		Matrix: matrix.Config{
+			Homeserver:  homeserver,
+			UserID:      userID,
+			AccessToken: accessToken,
+		},
+		LLM: app.LLMConfig{
+			Provider:  environment.StringOr("LLM_PROVIDER", "openai"),
+			APIKey:    environment.StringOr("LLM_API_KEY", ""),
+			BaseURL:   environment.StringOr("LLM_BASE_URL", ""),
+			Model:     environment.StringOr("LLM_MODEL", "gpt-4o"),
+			MaxTokens: environment.IntOr("LLM_MAX_TOKENS", 0),
+		},
+	}, nil
 }

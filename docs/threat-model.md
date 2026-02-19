@@ -3,7 +3,7 @@
 > **Security analysis and threat mitigation strategies**
 
 **Version**: 0.1.0  
-**Last Updated**: 2026-02-17  
+**Last Updated**: 2026-02-19  
 **Status**: Living Document
 
 ---
@@ -29,6 +29,29 @@ This document analyzes security threats to the Ruriko system and documents mitig
 - Asset-based: What needs protection?
 - Attacker-centric: Who might attack and why?
 - Defense-in-depth: Multiple layers of protection
+
+> For full product context and the canonical UX contract see
+> [preamble.md](./preamble.md).
+
+---
+
+## Deployment Topology (MVP)
+
+The MVP targets a **single-host deployment** with the following security properties:
+
+- **Tuwunel** is the bundled Matrix homeserver (lightweight, single-binary)
+- **Matrix federation: OFF** — no inbound traffic from the public Matrix network
+- **Matrix registration: OFF** — accounts are provisioned explicitly by Ruriko
+- **ACP endpoints** (Gitai agent control) are reachable only inside the Docker bridge network and are never exposed publicly
+- **Kuze** (embedded in Ruriko) provides one-time HTTPS links for secure secret entry — secrets never travel through Matrix
+- All services (Ruriko, Tuwunel, Gitai agents) run on the same VPS via Docker Compose
+- The Matrix homeserver port is exposed to the internet so the operator's Matrix client can connect; all other ports are internal
+
+**Threat surface reduction from this topology**:
+- No federated traffic eliminates a large class of spoofing and injection attacks
+- No open registration eliminates account-based DoS and infiltration
+- Private ACP network eliminates unauthenticated ACP access from the internet
+- Single host means secrets on disk require host-level compromise to access
 
 ---
 
@@ -716,6 +739,7 @@ Use this checklist when deploying Ruriko:
 
 ## References
 
+- [preamble.md](./preamble.md) - Product story, UX contract, and canonical glossary
 - [invariants.md](./invariants.md) - System invariants
 - [architecture.md](./architecture.md) - System architecture
 - [OWASP Top 10](https://owasp.org/www-project-top-ten/)

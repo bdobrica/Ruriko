@@ -5,11 +5,9 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
-	"strconv"
-	"strings"
-	"time"
 
 	"github.com/bdobrica/Ruriko/common/crypto"
+	"github.com/bdobrica/Ruriko/common/environment"
 	"github.com/bdobrica/Ruriko/common/version"
 	"github.com/bdobrica/Ruriko/internal/ruriko/app"
 	"github.com/bdobrica/Ruriko/internal/ruriko/matrix"
@@ -27,34 +25,13 @@ func main() {
 	fmt.Printf("Build Time: %s\n", version.BuildTime)
 	fmt.Println()
 
-	// Load configuration from environment
-	config := loadConfig()
-
-	// Validate required configuration
-	if config.Matrix.Homeserver == "" {
-		fmt.Fprintf(os.Stderr, "Error: MATRIX_HOMESERVER is required\n")
-		os.Exit(1)
-	}
-	if config.Matrix.UserID == "" {
-		fmt.Fprintf(os.Stderr, "Error: MATRIX_USER_ID is required\n")
-		os.Exit(1)
-	}
-	if config.Matrix.AccessToken == "" {
-		fmt.Fprintf(os.Stderr, "Error: MATRIX_ACCESS_TOKEN is required\n")
-		os.Exit(1)
-	}
-	if len(config.Matrix.AdminRooms) == 0 {
-		fmt.Fprintf(os.Stderr, "Error: MATRIX_ADMIN_ROOMS is required\n")
-		os.Exit(1)
-	}
-
-	// Load master encryption key
-	masterKey, err := crypto.LoadMasterKey()
+	// Load configuration from environment — returns an error instead of
+	// calling os.Exit so that the validation message is explicit.
+	config, err := loadConfig()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\nGenerate a key with: openssl rand -hex 32\n", err)
+		fmt.Fprintf(os.Stderr, "Configuration error: %v\n", err)
 		os.Exit(1)
 	}
-	config.MasterKey = masterKey
 
 	// Create application
 	ruriko, err := app.New(config)
@@ -71,65 +48,69 @@ func main() {
 	}
 }
 
-// loadConfig loads configuration from environment variables
-func loadConfig() *app.Config {
-	homeserver := getEnv("MATRIX_HOMESERVER", "")
-	userID := getEnv("MATRIX_USER_ID", "")
-	accessToken := getEnv("MATRIX_ACCESS_TOKEN", "")
-	adminRoomsStr := getEnv("MATRIX_ADMIN_ROOMS", "")
-	adminSendersStr := getEnv("MATRIX_ADMIN_SENDERS", "")
-	dbPath := getEnv("DATABASE_PATH", "./ruriko.db")
-
-	var adminRooms []string
-	if adminRoomsStr != "" {
-		adminRooms = strings.Split(adminRoomsStr, ",")
-		// Trim whitespace
-		for i := range adminRooms {
-			adminRooms[i] = strings.TrimSpace(adminRooms[i])
-		}
-	}
-
-	var adminSenders []string
-	if adminSendersStr != "" {
-		adminSenders = strings.Split(adminSendersStr, ",")
-		for i := range adminSenders {
-			adminSenders[i] = strings.TrimSpace(adminSenders[i])
-		}
-	}
-
-	enableDocker := getEnvBool("DOCKER_ENABLE", false)
-	dockerNetwork := getEnv("DOCKER_NETWORK", "")
-	reconcileIntervalStr := getEnv("RECONCILE_INTERVAL", "30s")
-	reconcileInterval, err := time.ParseDuration(reconcileIntervalStr)
+// loadConfig loads all configuration from environment variables.
+// Returns an error (instead of calling os.Exit) so the caller controls process
+// termination and the function remains testable.
+func loadConfig() (*app.Config, error) {
+	homeserver, err := environment.RequiredString("MATRIX_HOMESERVER")
 	if err != nil {
-		reconcileInterval = 30 * time.Second
+		return nil, err
 	}
+	userID, err := environment.RequiredString("MATRIX_USER_ID")
+	if err != nil {
+		return nil, err
+	}
+	accessToken, err := environment.RequiredString("MATRIX_ACCESS_TOKEN")
+	if err != nil {
+		return nil, err
+	}
+	adminRooms := environment.StringSliceOr("MATRIX_ADMIN_ROOMS", nil)
+	if len(adminRooms) == 0 {
+		return nil, fmt.Errorf("required environment variable %q is not set", "MATRIX_ADMIN_ROOMS")
+	}
+
+	// Load and decode the master encryption key.
+	masterKeyHex, err := environment.RequiredString("RURIKO_MASTER_KEY")
+	if err != nil {
+		return nil, fmt.Errorf("%w\nGenerate a key with: openssl rand -hex 32", err)
+	}
+	masterKey, err := crypto.ParseMasterKey(masterKeyHex)
+	if err != nil {
+		return nil, fmt.Errorf("invalid RURIKO_MASTER_KEY: %w", err)
+	}
+
+	adminSenders := environment.StringSliceOr("MATRIX_ADMIN_SENDERS", nil)
+	dbPath := environment.StringOr("DATABASE_PATH", "./ruriko.db")
+	enableDocker := environment.BoolOr("DOCKER_ENABLE", false)
+	dockerNetwork := environment.StringOr("DOCKER_NETWORK", "")
+	reconcileInterval := environment.DurationOr("RECONCILE_INTERVAL", 30*1e9) // 30s
 
 	// Optional Matrix provisioning configuration.
 	// Only enabled when MATRIX_PROVISIONING_ENABLE=true.
 	var provisioningCfg *provisioning.Config
-	if getEnvBool("MATRIX_PROVISIONING_ENABLE", false) {
-		hsType := provisioning.HomeserverType(getEnv("MATRIX_HOMESERVER_TYPE", string(provisioning.HomeserverSynapse)))
+	if environment.BoolOr("MATRIX_PROVISIONING_ENABLE", false) {
+		hsType := provisioning.HomeserverType(environment.StringOr("MATRIX_HOMESERVER_TYPE", string(provisioning.HomeserverSynapse)))
 		provisioningCfg = &provisioning.Config{
 			Homeserver:       homeserver,
 			AdminUserID:      userID,
 			AdminAccessToken: accessToken,
 			HomeserverType:   hsType,
-			SharedSecret:     getEnv("MATRIX_SHARED_SECRET", ""),
-			UsernameSuffix:   getEnv("MATRIX_AGENT_USERNAME_SUFFIX", ""),
+			SharedSecret:     environment.StringOr("MATRIX_SHARED_SECRET", ""),
+			UsernameSuffix:   environment.StringOr("MATRIX_AGENT_USERNAME_SUFFIX", ""),
 			AdminRooms:       adminRooms,
 		}
 	}
 
 	return &app.Config{
+		MasterKey:         masterKey,
 		DatabasePath:      dbPath,
 		EnableDocker:      enableDocker,
 		DockerNetwork:     dockerNetwork,
 		ReconcileInterval: reconcileInterval,
 		AdminSenders:      adminSenders,
 		Provisioning:      provisioningCfg,
-		HTTPAddr:          getEnv("HTTP_ADDR", ""),
-		AuditRoomID:       getEnv("MATRIX_AUDIT_ROOM", ""),
+		HTTPAddr:          environment.StringOr("HTTP_ADDR", ""),
+		AuditRoomID:       environment.StringOr("MATRIX_AUDIT_ROOM", ""),
 		TemplatesFS:       loadTemplatesFS(),
 		Matrix: matrix.Config{
 			Homeserver:  homeserver,
@@ -137,33 +118,14 @@ func loadConfig() *app.Config {
 			AccessToken: accessToken,
 			AdminRooms:  adminRooms,
 		},
-	}
-}
-
-func getEnv(key, defaultValue string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return defaultValue
-}
-
-func getEnvBool(key string, defaultValue bool) bool {
-	v := os.Getenv(key)
-	if v == "" {
-		return defaultValue
-	}
-	b, err := strconv.ParseBool(v)
-	if err != nil {
-		return defaultValue
-	}
-	return b
+	}, nil
 }
 
 // loadTemplatesFS returns a fs.FS for the Gosuto templates directory.
 // The directory is determined by the TEMPLATES_DIR env var (default: ./templates).
 // Returns nil if the directory does not exist (templates will be unavailable).
 func loadTemplatesFS() fs.FS {
-	dir := getEnv("TEMPLATES_DIR", "./templates")
+	dir := environment.StringOr("TEMPLATES_DIR", "./templates")
 	if _, err := os.Stat(dir); err != nil {
 		slog.Warn("templates directory not found; gosuto templates unavailable", "dir", dir)
 		return nil
@@ -178,7 +140,7 @@ func loadTemplatesFS() fs.FS {
 //   - LOG_LEVEL:  debug | info | warn | error  (default: info)
 //   - LOG_FORMAT: text | json                  (default: text)
 func configureLogging() {
-	levelStr := strings.ToLower(getEnv("LOG_LEVEL", "info"))
+	levelStr := environment.StringOr("LOG_LEVEL", "info")
 	var level slog.Level
 	switch levelStr {
 	case "debug":
@@ -194,13 +156,12 @@ func configureLogging() {
 	opts := &slog.HandlerOptions{Level: level}
 
 	var handler slog.Handler
-	format := strings.ToLower(getEnv("LOG_FORMAT", "text"))
-	if format == "json" {
+	if environment.StringOr("LOG_FORMAT", "text") == "json" {
 		handler = slog.NewJSONHandler(os.Stderr, opts)
 	} else {
 		handler = slog.NewTextHandler(os.Stderr, opts)
 	}
 
 	slog.SetDefault(slog.New(handler))
-	slog.Debug("logging configured", "level", level.String(), "format", format)
+	slog.Debug("logging configured", "level", level.String())
 }

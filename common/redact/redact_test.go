@@ -1,4 +1,3 @@
-package redact
 package redact_test
 
 import (

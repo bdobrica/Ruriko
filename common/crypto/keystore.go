@@ -3,43 +3,33 @@ package crypto
 import (
 	"encoding/hex"
 	"fmt"
-	"os"
 	"strings"
 )
 
-const masterKeyEnv = "RURIKO_MASTER_KEY"
-
-// LoadMasterKey reads the master encryption key from the environment.
+// ParseMasterKey decodes a 64-character hex string (32 bytes / 256 bits) into
+// a raw key suitable for use with the AES-GCM helpers in this package.
 //
-// The RURIKO_MASTER_KEY environment variable must be a 64-character hex string
-// (32 bytes / 256 bits). Generate one with:
+// This function is a pure library function with no environment dependencies.
+// Callers are responsible for reading the key material from env or config.
+//
+// Generate a suitable key with:
 //
 //	openssl rand -hex 32
-func LoadMasterKey() ([]byte, error) {
-	raw := strings.TrimSpace(os.Getenv(masterKeyEnv))
+func ParseMasterKey(rawHex string) ([]byte, error) {
+	raw := strings.TrimSpace(rawHex)
 	if raw == "" {
-		return nil, fmt.Errorf("environment variable %s is not set", masterKeyEnv)
+		return nil, fmt.Errorf("master key is empty")
 	}
 
 	key, err := hex.DecodeString(raw)
 	if err != nil {
-		return nil, fmt.Errorf("invalid hex in %s: %w", masterKeyEnv, err)
+		return nil, fmt.Errorf("invalid hex in master key: %w", err)
 	}
 
 	if len(key) != KeySize {
-		return nil, fmt.Errorf("%s must be %d bytes (%d hex chars), got %d bytes",
-			masterKeyEnv, KeySize, KeySize*2, len(key))
+		return nil, fmt.Errorf("master key must be %d bytes (%d hex chars), got %d bytes",
+			KeySize, KeySize*2, len(key))
 	}
 
 	return key, nil
-}
-
-// MustLoadMasterKey is like LoadMasterKey but panics on error.
-// Use only in main() after validation.
-func MustLoadMasterKey() []byte {
-	key, err := LoadMasterKey()
-	if err != nil {
-		panic(fmt.Sprintf("failed to load master key: %v", err))
-	}
-	return key
 }

@@ -1,4 +1,3 @@
-package app
 package app_test
 
 import (

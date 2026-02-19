@@ -3,8 +3,11 @@
 > **High-level architecture and component interactions**
 
 **Version**: 0.1.0  
-**Last Updated**: 2026-02-17  
+**Last Updated**: 2026-02-19  
 **Status**: Living Document
+
+> For the canonical product story, user UX contract, and full glossary see
+> [preamble.md](./preamble.md).
 
 ---
 
@@ -52,8 +55,9 @@ Ruriko is a distributed control plane for managing secure, capability-scoped AI 
 - Command Router: Deterministic Matrix command parser
 - Runtime Adapters: Docker, Kubernetes, systemd
 - Secret Store: Encrypted secrets with rotation
+- Kuze: One-time link secret entry + agent secret token distribution
 - Approval Engine: Workflow and decision tracking
-- Agent Control Protocol Client: HTTP client for agent management
+- Agent Control Protocol (ACP) Client: HTTP client for agent management
 
 **State Storage**:
 - SQLite database (agent inventory, secrets, audit logs, approvals)
@@ -489,28 +493,39 @@ Audit logged
 
 ## Deployment Models
 
-### 1. Docker Compose (Development)
+### 1. Docker Compose MVP (Tuwunel — Recommended)
 
 ```
 services:
+  tuwunel:         # lightweight, single-binary Matrix homeserver
+    image: tuwunel:latest
+    # Federation OFF, registration OFF
+
   ruriko:
     image: ruriko:latest
     volumes:
       - ./data:/data
     environment:
-      - MATRIX_HOMESERVER=https://matrix.org
-      - MASTER_KEY=...
+      - MATRIX_HOMESERVER=http://tuwunel:8008
+      - RURIKO_MASTER_KEY=...
 
-  agent-weatherbot:
+  agent-tim:
     image: gitai:latest
-    volumes:
-      - ./agents/weatherbot:/data
     environment:
-      - AGENT_NAME=weatherbot
+      - GITAI_AGENT_ID=tim
+
+  agent-warren:
+    image: gitai:latest
+    environment:
+      - GITAI_AGENT_ID=warren
 ```
 
-**Pros**: Simple, fast iteration  
+**Pros**: Single command (`docker compose up -d`), Tuwunel is lightweight and
+private, ACP stays inside the Docker network  
 **Cons**: Single host, no HA
+
+> Kuze is embedded in Ruriko in this model. Secret entry is done via one-time
+> browser links that Ruriko issues. Secrets never pass through Matrix.
 
 ---
 
@@ -582,7 +597,7 @@ systemd services:
 
 - Ruriko: Single instance (SQLite)
 - Agents: Multiple instances, independent
-- Matrix: Shared homeserver
+- Matrix: Tuwunel homeserver (local, single-host)
 
 **Bottlenecks**:
 - SQLite write concurrency
@@ -599,6 +614,7 @@ systemd services:
 
 ## References
 
+- [preamble.md](./preamble.md) - Product story, UX contract, and canonical glossary
 - [invariants.md](./invariants.md) - System invariants
 - [threat-model.md](./threat-model.md) - Security analysis
 - [gosuto-spec.md](./gosuto-spec.md) - Policy specification

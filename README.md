@@ -1,10 +1,12 @@
 # Ruriko
 
-> A distributed control plane for secure, capability-scoped AI agents running over Matrix.
+> A conversational control plane for secure, capability-scoped AI agents over Matrix.
 
-Ruriko is a lightweight, self-hosted infrastructure for running and managing AI agents as first-class services.
+Ruriko is a self-hosted system where a human talks to **Ruriko** over Matrix, and Ruriko coordinates specialized LLM-powered agents (**Gitai**) that collaborate like a small team — with secrets handled securely and control operations kept off the conversation layer.
 
-Instead of treating agents like chatbots, Ruriko treats them like **operated systems components** — with lifecycle control, secret management, deterministic policies, and auditable tool access.
+> 📖 **Full product story, UX contract, and canonical glossary:** [docs/preamble.md](docs/preamble.md)
+
+Instead of treating agents like chatbots, Ruriko treats them like **operated system components** — with lifecycle control, secret management, deterministic policies, and auditable tool access.
 
 ---
 
@@ -93,8 +95,10 @@ Ruriko uses capability-based enforcement:
 * First-match-wins rule evaluation.
 * Default deny.
 * Sensitive tool calls require explicit human approval.
-* Secrets are never stored in Gosuto.
-* Secrets are encrypted at rest.
+* Secrets are **never** stored in Gosuto or sent through Matrix.
+* Secrets are entered by humans via **Kuze** one-time secure links.
+* Secrets are encrypted at rest (AES-GCM, master key from environment).
+* Agents fetch secrets via one-time redemption tokens (never raw credentials).
 * All actions are auditable and traceable.
 
 Agents cannot:
@@ -108,15 +112,15 @@ Agents cannot:
 
 # 📡 Communication Model
 
-Ruriko uses Matrix as:
+Ruriko uses **three distinct channels**:
 
-* Identity layer
-* Message bus
-* Human + agent collaboration channel
-* Approval workflow surface
+| Channel | Used for |
+|---------|----------|
+| **Matrix** (conversation) | Human ↔ Ruriko dialogue, agent ↔ agent discussion, audit breadcrumbs |
+| **ACP** (Agent Control Protocol) | Lifecycle control, config apply, health checks, restarts — private to the Docker network |
+| **Kuze** (secret plane) | One-time secret entry (human) and one-time secret redemption (agents) — never through Matrix |
 
-Agents communicate using structured JSON envelopes embedded in Matrix messages.
-Human-friendly chat remains readable, but machine decisions are deterministic.
+This separation keeps the transcript meaningful and safe.
 
 ---
 
@@ -147,15 +151,16 @@ MCP processes are supervised and reconciled by Gitai.
 
 # 🚀 Deployment Philosophy
 
-* Single binary
+* Single command: `docker compose up -d`
+* Bundled **Tuwunel** Matrix homeserver (federation OFF, registration OFF)
 * Container-friendly
 * Runs on:
 
+  * Small VPS (1 CPU, 512MB RAM is sufficient)
   * Raspberry Pi
-  * Small VMs
-  * Kubernetes
-  * Homelabs
-* SQLite for state
+  * Homelab
+  * Kubernetes (runtime adapter available)
+* SQLite for state (WAL mode)
 * No heavy external dependencies required
 
 ---
@@ -172,17 +177,25 @@ MCP processes are supervised and reconciled by Gitai.
 
 # 🧪 Current Status
 
-Early-stage infrastructure project.
+Core infrastructure is complete. Working on MVP canonical workflow.
 
-Planned milestones:
+Completed:
 
-* [ ] Ruriko core control plane
-* [ ] Gitai runtime v1
-* [ ] Secret store + rotation
-* [ ] Policy engine
-* [ ] Approval workflow
-* [ ] MCP supervisor
-* [ ] Codex template generation
+* [x] Ruriko core control plane (Matrix command router, agent inventory)
+* [x] Gitai runtime (Matrix client, ACP server, policy engine)
+* [x] Secret store + rotation (AES-GCM, per-agent scoping)
+* [x] Gosuto versioned configuration
+* [x] Approval workflow
+* [x] MCP supervisor
+* [x] Docker lifecycle control
+* [x] Observability (structured logging, audit trail, trace IDs)
+
+In progress:
+
+* [ ] Tuwunel homeserver integration
+* [ ] ACP authentication (mTLS)
+* [ ] Kuze one-time secret entry (browser link)
+* [ ] Tim / Warren / Brave canonical agents
 
 ---
 
