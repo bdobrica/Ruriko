@@ -15,6 +15,9 @@ import (
 	"fmt"
 	"io/fs"
 	"text/template"
+
+	gosutospec "github.com/bdobrica/Ruriko/common/spec/gosuto"
+	"gopkg.in/yaml.v3"
 )
 
 // TemplateVars holds values interpolated into a Gosuto YAML template.
@@ -104,4 +107,34 @@ func (r *Registry) Render(name string, vars TemplateVars) ([]byte, error) {
 	}
 
 	return buf.Bytes(), nil
+}
+
+// RequiredSecrets renders the named template for agentName and returns the
+// names of all SecretRef entries that are marked required=true in the
+// resulting gosuto.yaml.
+//
+// This is used by the natural-language provisioning wizard to determine which
+// secrets must be stored in Ruriko before the agent can be provisioned.
+func (r *Registry) RequiredSecrets(templateName, agentName string) ([]string, error) {
+	vars := TemplateVars{
+		AgentName:   agentName,
+		DisplayName: agentName,
+	}
+	rendered, err := r.Render(templateName, vars)
+	if err != nil {
+		return nil, fmt.Errorf("RequiredSecrets: render template: %w", err)
+	}
+
+	var cfg gosutospec.Config
+	if err := yaml.Unmarshal(rendered, &cfg); err != nil {
+		return nil, fmt.Errorf("RequiredSecrets: parse gosuto yaml: %w", err)
+	}
+
+	names := make([]string, 0, len(cfg.Secrets))
+	for _, ref := range cfg.Secrets {
+		if ref.Required {
+			names = append(names, ref.Name)
+		}
+	}
+	return names, nil
 }

@@ -1,4 +1,3 @@
-package commands
 package commands_test
 
 // provision_test.go — integration tests for the R5.2 automated provisioning
@@ -50,11 +49,11 @@ func (s *stubRuntime) Spawn(_ context.Context, spec runtime.AgentSpec) (runtime.
 		ControlURL:  s.controlURL,
 	}, nil
 }
-func (s *stubRuntime) Stop(_ context.Context, _ runtime.AgentHandle) error     { return nil }
-func (s *stubRuntime) Start(_ context.Context, _ runtime.AgentHandle) error    { return nil }
-func (s *stubRuntime) Restart(_ context.Context, _ runtime.AgentHandle) error  { return nil }
-func (s *stubRuntime) Remove(_ context.Context, _ runtime.AgentHandle) error   { return nil }
-func (s *stubRuntime) List(_ context.Context) ([]runtime.AgentHandle, error)   { return nil, nil }
+func (s *stubRuntime) Stop(_ context.Context, _ runtime.AgentHandle) error    { return nil }
+func (s *stubRuntime) Start(_ context.Context, _ runtime.AgentHandle) error   { return nil }
+func (s *stubRuntime) Restart(_ context.Context, _ runtime.AgentHandle) error { return nil }
+func (s *stubRuntime) Remove(_ context.Context, _ runtime.AgentHandle) error  { return nil }
+func (s *stubRuntime) List(_ context.Context) ([]runtime.AgentHandle, error)  { return nil, nil }
 func (s *stubRuntime) Status(_ context.Context, _ runtime.AgentHandle) (runtime.RuntimeStatus, error) {
 	return runtime.RuntimeStatus{State: runtime.StateRunning}, nil
 }

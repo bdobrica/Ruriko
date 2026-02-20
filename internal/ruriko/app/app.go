@@ -62,6 +62,10 @@ type Config struct {
 	// Ruriko posts human-friendly summaries of major control-plane events.
 	// When empty, audit room notifications are disabled.
 	AuditRoomID string
+	// DefaultAgentImage is the container image used for agents created through
+	// the natural-language provisioning wizard (R5.4 stretch goal).
+	// When empty, "ghcr.io/bdobrica/gitai:latest" is used as a fallback.
+	DefaultAgentImage string
 }
 
 // App is the main Ruriko application
@@ -248,6 +252,9 @@ func New(config *Config) (*App, error) {
 	// provisioning pipeline (R5.2) can post breadcrumb notices back to the
 	// operator's admin room while each step is running.
 	handlersCfg.RoomSender = matrixClient
+
+	// Wire the default agent image for the natural-language wizard (R5.4).
+	handlersCfg.DefaultAgentImage = config.DefaultAgentImage
 
 	handlers := commands.NewHandlers(handlersCfg)
 
@@ -440,7 +447,7 @@ func (a *App) handleMessage(ctx context.Context, evt *event.Event) {
 	response, err := a.router.Route(ctx, text, evt)
 	if err != nil {
 		if errors.Is(err, commands.ErrNotACommand) {
-			// Not a /ruriko command — check if it's an approval decision
+			// Not a /ruriko command — first check if it's an approval decision
 			// (approve <id> / deny <id> reason=...).
 			decisionResp, decisionErr := a.handlers.HandleApprovalDecision(ctx, text, evt)
 			if decisionErr != nil {
@@ -449,13 +456,29 @@ func (a *App) handleMessage(ctx context.Context, evt *event.Event) {
 					a.matrix.ReplyToMessage(evt.RoomID.String(), evt.ID.String(),
 						fmt.Sprintf("❌ Error: %s", decisionErr))
 				}
-				// else: just a normal chat message — ignore silently.
+				// ErrNotADecision — fall through to natural-language handler.
 			} else if decisionResp != "" {
 				htmlBody := markdownToHTML(decisionResp)
 				if err2 := a.matrix.SendFormattedMessage(evt.RoomID.String(), htmlBody, decisionResp); err2 != nil {
 					slog.Error("failed to send approval response", "room", evt.RoomID.String(), "err", err2)
 				}
+				return
 			}
+
+			// Natural-language intent detection (R5.4).
+			// Active only when a template registry is configured (i.e. a production
+			// deployment with templates on disk or embedded).  In dev mode with no
+			// templates the handler is a no-op and returns ("", nil).
+			if nlResp, nlErr := a.handlers.HandleNaturalLanguage(ctx, text, evt); nlErr != nil {
+				a.matrix.ReplyToMessage(evt.RoomID.String(), evt.ID.String(),
+					fmt.Sprintf("❌ Error: %s", nlErr))
+			} else if nlResp != "" {
+				htmlBody := markdownToHTML(nlResp)
+				if err2 := a.matrix.SendFormattedMessage(evt.RoomID.String(), htmlBody, nlResp); err2 != nil {
+					slog.Error("failed to send NL response", "room", evt.RoomID.String(), "err", err2)
+				}
+			}
+			// else: ordinary chat message — ignore silently.
 			return
 		}
 		// A /ruriko-prefixed command that errored.

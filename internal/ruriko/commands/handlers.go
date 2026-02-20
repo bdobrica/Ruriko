@@ -39,6 +39,10 @@ type HandlersConfig struct {
 	// post Matrix breadcrumb notices back to the room where the operator
 	// issued the create command.  The *matrix.Client satisfies this interface.
 	RoomSender RoomSender // optional — enables provisioning breadcrumbs
+	// DefaultAgentImage is the container image used when creating agents via
+	// the natural-language provisioning wizard (R5.4).  When empty, the wizard
+	// falls back to "ghcr.io/bdobrica/gitai:latest".
+	DefaultAgentImage string // optional — default agent image for NL provisioning
 }
 
 // RoomSender is the subset of the Matrix client needed for posting breadcrumb
@@ -49,17 +53,19 @@ type RoomSender interface {
 
 // Handlers holds all command handlers and dependencies.
 type Handlers struct {
-	store       *store.Store
-	secrets     *secrets.Store
-	runtime     runtime.Runtime
-	provisioner *provisioning.Provisioner
-	distributor *secrets.Distributor
-	templates   *templates.Registry
-	approvals   *approvals.Gate
-	notifier    audit.Notifier
-	kuze        *kuze.Server
-	roomSender  RoomSender
-	dispatch    DispatchFunc
+	store             *store.Store
+	secrets           *secrets.Store
+	runtime           runtime.Runtime
+	provisioner       *provisioning.Provisioner
+	distributor       *secrets.Distributor
+	templates         *templates.Registry
+	approvals         *approvals.Gate
+	notifier          audit.Notifier
+	kuze              *kuze.Server
+	roomSender        RoomSender
+	dispatch          DispatchFunc
+	conversations     *conversationStore
+	defaultAgentImage string
 }
 
 // NewHandlers creates a new Handlers instance from the given config.
@@ -69,16 +75,18 @@ func NewHandlers(cfg HandlersConfig) *Handlers {
 		n = audit.Noop{}
 	}
 	return &Handlers{
-		store:       cfg.Store,
-		secrets:     cfg.Secrets,
-		runtime:     cfg.Runtime,
-		provisioner: cfg.Provisioner,
-		distributor: cfg.Distributor,
-		templates:   cfg.Templates,
-		approvals:   cfg.Approvals,
-		notifier:    n,
-		kuze:        cfg.Kuze,
-		roomSender:  cfg.RoomSender,
+		store:             cfg.Store,
+		secrets:           cfg.Secrets,
+		runtime:           cfg.Runtime,
+		provisioner:       cfg.Provisioner,
+		distributor:       cfg.Distributor,
+		templates:         cfg.Templates,
+		approvals:         cfg.Approvals,
+		notifier:          n,
+		kuze:              cfg.Kuze,
+		roomSender:        cfg.RoomSender,
+		conversations:     newConversationStore(),
+		defaultAgentImage: cfg.DefaultAgentImage,
 	}
 }
 

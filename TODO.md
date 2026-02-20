@@ -759,14 +759,23 @@ These are **real, working subsystems** — not scaffolding. The realignment phas
 - [x] Reconciler compares desired state vs actual state and alerts on drift
 - [x] Test: Registry tracks desired vs actual state correctly
 
-### R5.4 Chat-Driven Creation
-- [ ] Handle natural language requests (stretch goal — can be command-based for MVP):
-  - `/ruriko agents create --template saito --name Saito`
-  - `/ruriko agents create --template kairo --name Kairo`
-  - `/ruriko agents create --template kumo --name Kumo`
-- [ ] Guide user through required secrets if not yet stored:
-  - "Kairo needs a finnhub API key. Use `/ruriko secrets set finnhub_api_key` to add it."
-- [ ] Test: User can create Saito/Kairo/Kumo via commands; agents appear in Matrix and ACP
+### R5.4 Chat-Driven Creation ✅
+- [x] Handle natural language requests (stretch goal — implemented as deterministic keyword matching, no LLM for control decisions):
+  - `/ruriko agents create --template saito --name Saito` (command path, unchanged)
+  - Free-form: "set up Saito", "create a news agent called kumo2", "I need a browser agent", etc.
+  - Supports saito-agent, kumo-agent, browser-agent, kairo-agent, cron-agent, research-agent
+  - Explicit agent naming via "called <name>", "named <name>", "name it <name>"
+- [x] Guide user through required secrets if not yet stored:
+  - Ruriko detects which required secrets are missing from the store and lists them with set commands
+  - "Saito needs saito.openai-api-key. Use `/ruriko secrets set saito.openai-api-key` to add it."
+  - User replies **yes** after storing secrets; Ruriko re-checks before provisioning
+  - User can reply **no** to cancel at any point
+- [x] Conversation state: 5-minute TTL in-memory sessions, keyed per room+sender
+- [x] Test: `ParseIntent` — 18 cases covering all templates + naming patterns
+- [x] Test: `ParseIntent_NoIntent` — 9 negative cases (no false positives for ordinary chat)
+- [x] Test: `conversationStore` — session lifecycle + TTL expiry
+- [x] Test: `buildConfirmationPrompt` — all-present and missing-secret variants
+- [x] Test: User can create Saito/Kairo/Kumo via natural language; agents appear in Matrix and ACP
 
 ### Definition of done
 - User can ask Ruriko to create Saito, Kairo, and Kumo
