@@ -5,17 +5,15 @@
 #
 # Services:
 #   ruriko   - The Ruriko control plane
-#   tuwunel  - A local Matrix homeserver (optional, comment out if you have one)
+#   tuwunel  - A local Matrix homeserver
 #
 # Volumes:
 #   ruriko-data     - SQLite database and persistent state
-#   tuwunel-data    - Tuwunel homeserver data (only used when tuwunel is enabled)
+#   tuwunel-data    - Tuwunel homeserver data
 #
 # Tuwunel is a lightweight, self-hostable Matrix homeserver written in Rust.
 # Federation and registration are disabled by default for security.
-# See docs/ops/deployment-docker.md for account creation instructions.
-
-version: "3.9"
+# See OPERATIONS.md for full setup instructions.
 
 networks:
   ruriko-net:
@@ -65,12 +63,20 @@ services:
       MATRIX_ADMIN_SENDERS:   ${MATRIX_ADMIN_SENDERS:-}
       MATRIX_AUDIT_ROOM:      ${MATRIX_AUDIT_ROOM:-}
 
+      # --- Kuze (one-time secret entry) ---
+      # Set to the externally reachable base URL of Ruriko's HTTP server.
+      # When set, /ruriko secrets set generates browser links instead of accepting inline values.
+      KUZE_BASE_URL:                     ${KUZE_BASE_URL:-}
+      KUZE_TTL:                          ${KUZE_TTL:-10m}
+
+      # --- Default agent image ---
+      DEFAULT_AGENT_IMAGE:               ${DEFAULT_AGENT_IMAGE:-gitai:latest}
+
       # --- Optional Matrix provisioning (account creation) ---
       MATRIX_PROVISIONING_ENABLE:      ${MATRIX_PROVISIONING_ENABLE:-false}
       MATRIX_HOMESERVER_TYPE:          ${MATRIX_HOMESERVER_TYPE:-tuwunel}
       MATRIX_SHARED_SECRET:            ${MATRIX_SHARED_SECRET:-}
       TUWUNEL_REGISTRATION_TOKEN:      ${TUWUNEL_REGISTRATION_TOKEN:-}
-      MATRIX_AGENT_USERNAME_SUFFIX:    ${MATRIX_AGENT_USERNAME_SUFFIX:-}
       MATRIX_AGENT_USERNAME_SUFFIX:    ${MATRIX_AGENT_USERNAME_SUFFIX:-}
 
       # --- Docker runtime (optional) ---
@@ -133,6 +139,11 @@ services:
     image: ghcr.io/girlbossceo/conduwuit:latest
     container_name: tuwunel
     restart: unless-stopped
+
+    ports:
+      # Expose to the host so your Matrix client can connect.
+      # Use http://localhost:8008 as the homeserver URL in your client.
+      - "${TUWUNEL_HOST:-127.0.0.1}:${TUWUNEL_PORT:-8008}:8008"
 
     environment:
       CONDUWUIT_SERVER_NAME:              ${TUWUNEL_SERVER_NAME:-localhost}

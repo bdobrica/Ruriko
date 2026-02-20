@@ -94,13 +94,34 @@ mod-verify: ## Verify Go module dependencies
 
 docker-build-ruriko: ## Build Ruriko Docker image
 	@echo "Building Ruriko Docker image..."
-	docker build -f deploy/docker/Dockerfile.ruriko -t ruriko:latest .
+	docker build -f deploy/docker/Dockerfile.ruriko \
+		--build-arg GIT_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown) \
+		--build-arg GIT_TAG=$$(git describe --tags --abbrev=0 2>/dev/null || echo v0.0.0) \
+		--build-arg BUILD_TIME=$$(date -u '+%Y-%m-%d_%H:%M:%S') \
+		-t ruriko:latest .
 
 docker-build-gitai: ## Build Gitai Docker image
 	@echo "Building Gitai Docker image..."
-	docker build -f deploy/docker/Dockerfile.gitai -t gitai:latest .
+	docker build -f deploy/docker/Dockerfile.gitai \
+		--build-arg GIT_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown) \
+		--build-arg GIT_TAG=$$(git describe --tags --abbrev=0 2>/dev/null || echo v0.0.0) \
+		--build-arg BUILD_TIME=$$(date -u '+%Y-%m-%d_%H:%M:%S') \
+		-t gitai:latest .
 
 docker-build: docker-build-ruriko docker-build-gitai ## Build all Docker images
+
+compose-up: docker-build ## Build images and start the full stack
+	@echo "Starting Ruriko stack..."
+	cd examples/docker-compose && docker compose up -d
+
+compose-down: ## Stop the stack
+	cd examples/docker-compose && docker compose down
+
+compose-logs: ## Tail logs from all services
+	cd examples/docker-compose && docker compose logs -f
+
+compose-ps: ## Show service status
+	cd examples/docker-compose && docker compose ps
 
 help: ## Show this help message
 	@echo "Ruriko - Distributed AI Agent Control Plane"

@@ -1,0 +1,59 @@
+# syntax=docker/dockerfile:1
+
+# ---------------------------------------------------------------------------
+# Stage 1: builder
+# Compiles the Gitai binary with full version metadata injected at link time.
+# ---------------------------------------------------------------------------
+FROM golang:1.25-alpine AS builder
+
+RUN apk add --no-cache git ca-certificates tzdata
+
+WORKDIR /build
+
+# Cache module downloads before copying source code.
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy entire source tree.
+COPY . .
+
+# Inject version info via ldflags, matching the Makefile convention.
+ARG GIT_COMMIT=unknown
+ARG GIT_TAG=v0.0.0
+ARG BUILD_TIME=unknown
+
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build \
+      -trimpath \
+      -ldflags "-s -w \
+        -X github.com/bdobrica/Ruriko/common/version.GitCommit=${GIT_COMMIT} \
+        -X github.com/bdobrica/Ruriko/common/version.Version=${GIT_TAG} \
+        -X github.com/bdobrica/Ruriko/common/version.BuildTime=${BUILD_TIME}" \
+      -o /build/gitai \
+      ./cmd/gitai
+
+# ---------------------------------------------------------------------------
+# Stage 2: runtime image
+# Minimal Alpine image — only the binary, CA certs, and a non-root user.
+# ---------------------------------------------------------------------------
+FROM alpine:3.21
+
+RUN apk add --no-cache ca-certificates tzdata && \
+    addgroup -S gitai && \
+    adduser  -S -G gitai -h /data gitai
+
+# Data directory — SQLite database and any runtime state.
+VOLUME /data
+
+# Copy the compiled binary.
+COPY --from=builder /build/gitai /usr/local/bin/gitai
+
+# ACP server default port.
+EXPOSE 8765
+
+# Run as non-root.
+USER gitai
+
+WORKDIR /data
+
+ENTRYPOINT ["gitai"]

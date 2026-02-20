@@ -111,6 +111,9 @@ func loadConfig() (*app.Config, error) {
 		AdminSenders:      adminSenders,
 		Provisioning:      provisioningCfg,
 		HTTPAddr:          environment.StringOr("HTTP_ADDR", ""),
+		KuzeBaseURL:       environment.StringOr("KUZE_BASE_URL", ""),
+		KuzeTTL:           environment.DurationOr("KUZE_TTL", 0),
+		DefaultAgentImage: environment.StringOr("DEFAULT_AGENT_IMAGE", ""),
 		AuditRoomID:       environment.StringOr("MATRIX_AUDIT_ROOM", ""),
 		TemplatesFS:       loadTemplatesFS(),
 		Matrix: matrix.Config{
