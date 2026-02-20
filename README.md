@@ -195,7 +195,7 @@ In progress:
 * [ ] Tuwunel homeserver integration
 * [ ] ACP authentication (mTLS)
 * [ ] Kuze one-time secret entry (browser link)
-* [ ] Tim / Warren / Brave canonical agents
+* [ ] Saito / Kairo / Kumo canonical agents
 
 ---
 

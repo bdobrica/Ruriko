@@ -16,11 +16,11 @@ The MVP is ready when:
 - The Matrix homeserver is Tuwunel, federation OFF, registration OFF
 - The user can chat with Ruriko over Matrix
 - The user can store secrets via Kuze one-time links (never in chat)
-- Ruriko can provision Tim/Warren/Brave agents and apply Gosuto config via ACP
+- Ruriko can provision Saito/Kairo/Kumo agents and apply Gosuto config via ACP
 - ACP is authenticated and idempotent
-- Tim triggers Warren every 15 minutes
-- Warren fetches data from finnhub and stores results in DB
-- Brave fetches news for relevant tickers
+- Saito triggers Kairo every 15 minutes
+- Kairo fetches data from finnhub and stores results in DB
+- Kumo fetches news for relevant tickers
 - Bogdan receives a final report that combines market data + news
 - No secrets appear in Matrix history, ACP payloads, or logs
 
@@ -464,7 +464,7 @@ These are **real, working subsystems** — not scaffolding. The realignment phas
 >
 > The infrastructure built in Phases 0–9 is solid. What's missing is:
 > security hardening (ACP auth, Kuze, token-based secrets), the Tuwunel
-> switch, and the actual canonical workflow (Tim → Warren → Brave).
+> switch, and the actual canonical workflow (Saito → Kairo → Kumo).
 
 ---
 
@@ -710,23 +710,23 @@ These are **real, working subsystems** — not scaffolding. The realignment phas
 
 ---
 
-## 📋 Phase R5: Agent Provisioning UX — Tim, Warren, Brave (2–6 days)
+## 📋 Phase R5: Agent Provisioning UX — Saito, Kairo, Kumo (2–6 days)
 
 **Goal**: Ruriko can provision the canonical agents deterministically. Users request creation via chat.
 
 > Maps to REALIGNMENT_PLAN Phase 6.
 
 ### R5.1 Canonical Agent Templates
-- [ ] Create `templates/tim/gosuto.yaml` — cron/trigger agent:
+- [ ] Create `templates/saito/gosuto.yaml` — cron/trigger agent:
   - [ ] Schedule: configurable interval (default 15 min)
   - [ ] Capabilities: send Matrix DM, trigger other agents
   - [ ] No tools, no LLM reasoning (intentionally simple)
-- [ ] Create `templates/warren/gosuto.yaml` — finance agent:
+- [ ] Create `templates/kairo/gosuto.yaml` — finance agent:
   - [ ] MCP: finnhub, database
   - [ ] Capabilities: query market data, write analysis to DB, report to Ruriko
   - [ ] Persona: financial analyst
   - [ ] Secret refs: `finnhub_api_key`
-- [ ] Create `templates/brave/gosuto.yaml` — news/search agent:
+- [ ] Create `templates/kumo/gosuto.yaml` — news/search agent:
   - [ ] MCP: brave-search
   - [ ] Capabilities: search news, summarize, return structured output
   - [ ] Persona: research assistant
@@ -745,7 +745,7 @@ These are **real, working subsystems** — not scaffolding. The realignment phas
   7. Push secret tokens via ACP `/secrets/token`
 - [ ] Add provisioning state machine (pending → creating → configuring → healthy → error)
 - [ ] Post Matrix breadcrumbs at each step:
-  - "Provisioned Warren" / "Applied config hash …" / "Warren healthy"
+  - "Provisioned Kairo" / "Applied config hash …" / "Kairo healthy"
 - [ ] Test: Full provisioning pipeline from template to healthy agent
 
 ### R5.3 Agent Registry in Ruriko DB
@@ -759,49 +759,49 @@ These are **real, working subsystems** — not scaffolding. The realignment phas
 
 ### R5.4 Chat-Driven Creation
 - [ ] Handle natural language requests (stretch goal — can be command-based for MVP):
-  - `/ruriko agents create --template tim --name Tim`
-  - `/ruriko agents create --template warren --name Warren`
-  - `/ruriko agents create --template brave --name Brave`
+  - `/ruriko agents create --template saito --name Saito`
+  - `/ruriko agents create --template kairo --name Kairo`
+  - `/ruriko agents create --template kumo --name Kumo`
 - [ ] Guide user through required secrets if not yet stored:
-  - "Warren needs a finnhub API key. Use `/ruriko secrets set finnhub_api_key` to add it."
-- [ ] Test: User can create Tim/Warren/Brave via commands; agents appear in Matrix and ACP
+  - "Kairo needs a finnhub API key. Use `/ruriko secrets set finnhub_api_key` to add it."
+- [ ] Test: User can create Saito/Kairo/Kumo via commands; agents appear in Matrix and ACP
 
 ### Definition of done
-- User can ask Ruriko to create Tim, Warren, and Brave
+- User can ask Ruriko to create Saito, Kairo, and Kumo
 - Ruriko provisions them fully (container + config + secrets)
 - Agents appear in Matrix and respond to ACP health checks
 
 ---
 
-## 📋 Phase R6: Canonical Workflow — Tim → Warren → Brave (3–8 days)
+## 📋 Phase R6: Canonical Workflow — Saito → Kairo → Kumo (3–8 days)
 
 **Goal**: Deliver the reference story end-to-end. Make it feel like "agents collaborating as people."
 
 > Maps to REALIGNMENT_PLAN Phase 7.
 
-### R6.1 Tim Scheduling
-- [ ] Tim emits a trigger every N minutes (configurable, default 15)
-- [ ] Trigger is sent as a Matrix DM to Warren (human-readable but structured enough for parsing)
-- [ ] Tim is intentionally deterministic: no LLM reasoning, only schedule + notify
-- [ ] Tim should handle: start, stop, interval change via Gosuto
-- [ ] Test: Tim sends periodic triggers visible in Matrix
+### R6.1 Saito Scheduling
+- [ ] Saito emits a trigger every N minutes (configurable, default 15)
+- [ ] Trigger is sent as a Matrix DM to Kairo (human-readable but structured enough for parsing)
+- [ ] Saito is intentionally deterministic: no LLM reasoning, only schedule + notify
+- [ ] Saito should handle: start, stop, interval change via Gosuto
+- [ ] Test: Saito sends periodic triggers visible in Matrix
 
-### R6.2 Warren Analysis Pipeline
-- [ ] Warren receives trigger from Tim
-- [ ] Warren checks for portfolio config in DB:
+### R6.2 Kairo Analysis Pipeline
+- [ ] Kairo receives trigger from Saito
+- [ ] Kairo checks for portfolio config in DB:
   - If missing, asks Bogdan in Matrix DM for portfolio (tickers, allocations)
   - Stores portfolio in DB for subsequent runs
-- [ ] Warren queries finnhub MCP for market data (prices, changes, fundamentals)
-- [ ] Warren writes analysis to DB (structured: tickers, metrics, commentary)
-- [ ] Warren sends summary report to Ruriko (or to a shared Matrix room)
-- [ ] Test: Warren produces a portfolio analysis from finnhub data
+- [ ] Kairo queries finnhub MCP for market data (prices, changes, fundamentals)
+- [ ] Kairo writes analysis to DB (structured: tickers, metrics, commentary)
+- [ ] Kairo sends summary report to Ruriko (or to a shared Matrix room)
+- [ ] Test: Kairo produces a portfolio analysis from finnhub data
 
 ### R6.3 Ruriko Orchestration
-- [ ] Ruriko receives Warren's report
+- [ ] Ruriko receives Kairo's report
 - [ ] Ruriko extracts tickers/topics from the report
-- [ ] Ruriko asks Brave to search for related news
-- [ ] Ruriko forwards Brave's news results back to Warren for revision
-- [ ] Warren revises analysis with news context
+- [ ] Ruriko asks Kumo to search for related news
+- [ ] Ruriko forwards Kumo's news results back to Kairo for revision
+- [ ] Kairo revises analysis with news context
 - [ ] Ruriko decides whether to notify Bogdan based on:
   - [ ] Significance threshold (material changes, big news)
   - [ ] Rate limiting (no more than N notifications per hour)
@@ -809,22 +809,22 @@ These are **real, working subsystems** — not scaffolding. The realignment phas
 - [ ] If not significant: Ruriko logs but does not notify
 - [ ] Test: Full orchestration loop produces a final report
 
-### R6.4 Brave News Search
-- [ ] Brave receives search request from Ruriko (tickers/company names)
-- [ ] Brave uses Brave Search MCP to fetch news
-- [ ] Brave summarizes results (structured output + short narrative)
-- [ ] Brave returns results to Ruriko
-- [ ] Test: Brave searches and returns relevant news summaries
+### R6.4 Kumo News Search
+- [ ] Kumo receives search request from Ruriko (tickers/company names)
+- [ ] Kumo uses Kumo Search MCP to fetch news
+- [ ] Kumo summarizes results (structured output + short narrative)
+- [ ] Kumo returns results to Ruriko
+- [ ] Test: Kumo searches and returns relevant news summaries
 
 ### R6.5 End-to-End Story Validation
-- [ ] Full cycle test: Tim triggers → Warren analyzes → Brave searches → Warren revises → Bogdan gets report
+- [ ] Full cycle test: Saito triggers → Kairo analyzes → Kumo searches → Kairo revises → Bogdan gets report
 - [ ] Validate: No secrets visible in any Matrix room
 - [ ] Validate: Control operations happen via ACP, not Matrix
 - [ ] Validate: Report is coherent, timely, and actionable
 - [ ] Validate: User can intervene mid-cycle (e.g., "stop", "skip this one")
 
 ### Definition of done
-- The full Tim → Warren → Brave workflow runs reliably
+- The full Saito → Kairo → Kumo workflow runs reliably
 - The user receives a coherent, useful final report
 - No secrets are visible in chat
 - Control and orchestration do not depend on Matrix reliability
@@ -893,15 +893,15 @@ These are **real, working subsystems** — not scaffolding. The realignment phas
 - [ ] Test: Secret stored via Kuze, verified in encrypted store
 
 ### R8.3 Agent Provisioning Flow
-- [ ] User runs `/ruriko agents create --template warren --name Warren`
+- [ ] User runs `/ruriko agents create --template kairo --name Kairo`
 - [ ] Ruriko provisions container, applies config, pushes secret tokens
-- [ ] Warren appears in Matrix and responds to ACP health check
+- [ ] Kairo appears in Matrix and responds to ACP health check
 - [ ] Test: Full provisioning from command to healthy agent
 
 ### R8.4 Canonical Workflow Flow
-- [ ] Tim triggers Warren every 15 minutes
-- [ ] Warren queries finnhub, writes analysis, reports to Ruriko
-- [ ] Ruriko asks Brave for news, forwards to Warren, sends report to user
+- [ ] Saito triggers Kairo every 15 minutes
+- [ ] Kairo queries finnhub, writes analysis, reports to Ruriko
+- [ ] Ruriko asks Kumo for news, forwards to Kairo, sends report to user
 - [ ] Test: At least 3 consecutive cycles complete successfully
 
 ### R8.5 Failure and Recovery
@@ -931,9 +931,9 @@ The MVP is ready when **all** of the following are true:
 ✅ **Deployment**: `docker compose up -d` boots Tuwunel + Ruriko on a single host
 ✅ **Conversation**: User can chat with Ruriko over Matrix
 ✅ **Secrets**: User stores secrets via Kuze one-time links; secrets never in chat
-✅ **Agents**: Ruriko provisions Tim/Warren/Brave via ACP with Gosuto config
+✅ **Agents**: Ruriko provisions Saito/Kairo/Kumo via ACP with Gosuto config
 ✅ **ACP**: Authenticated, idempotent, private to Docker network
-✅ **Workflow**: Tim triggers Warren → Warren analyzes → Brave searches → report delivered
+✅ **Workflow**: Saito triggers Kairo → Kairo analyzes → Kumo searches → report delivered
 ✅ **Security**: No secrets in Matrix history, ACP payloads, or logs
 
 ---
@@ -955,7 +955,7 @@ The MVP is ready when **all** of the following are true:
 
 ## 📝 Notes
 
-- **Ship the canonical story**: Tim → Warren → Brave is the north star
+- **Ship the canonical story**: Saito → Kairo → Kumo is the north star
 - **Security by default**: Secrets never in chat, ACP always authenticated
 - **Conversation-first**: Everything important should be explainable in chat
 - **Non-technical friendly**: Setup must not require engineering expertise
@@ -987,8 +987,8 @@ The MVP is ready when **all** of the following are true:
 - [x] Phase R2: ACP Hardening — Auth, Idempotency, Timeouts ✅
 - [x] Phase R3: Kuze — Human Secret Entry ✅
 - [x] Phase R4: Token-Based Secret Distribution to Agents ✅
-- [ ] Phase R5: Agent Provisioning UX — Tim, Warren, Brave
-- [ ] Phase R6: Canonical Workflow — Tim → Warren → Brave
+- [ ] Phase R5: Agent Provisioning UX — Saito, Kairo, Kumo
+- [ ] Phase R6: Canonical Workflow — Saito → Kairo → Kumo
 - [ ] Phase R7: Observability, Safety, and Polish
 - [ ] Phase R8: Integration and End-to-End Testing
 

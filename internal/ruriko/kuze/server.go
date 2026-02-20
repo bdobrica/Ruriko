@@ -213,7 +213,7 @@ func (srv *Server) IssueHumanToken(ctx context.Context, secretRef, secretType st
 // AgentIssueResult carries the RedeemURL that the agent must call (once, within
 // AgentTTL) to obtain the plaintext secret value.
 //
-// agentID must be the canonical agent identifier (e.g. "warren").
+// agentID must be the canonical agent identifier (e.g. "kairo").
 // secretType defaults to "api_key" when empty.
 // purpose is optional; pass "" to omit.
 func (srv *Server) IssueAgentToken(ctx context.Context, agentID, secretRef, secretType, purpose string) (*AgentIssueResult, error) {

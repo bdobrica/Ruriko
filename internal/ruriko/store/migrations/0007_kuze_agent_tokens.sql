@@ -5,7 +5,7 @@
 --               against the X-Agent-ID header on GET /kuze/redeem/<token>).
 --               NULL means the token is a human one-time-link (existing behaviour).
 --   purpose   — optional free-form label for audit / diagnostics
---               (e.g. "finnhub_api_key for warren initial provisioning").
+--               (e.g. "finnhub_api_key for kairo initial provisioning").
 --               NULL for tokens issued without an explicit purpose.
 --
 -- Human tokens (agent_id IS NULL) keep their existing semantics; the new columns

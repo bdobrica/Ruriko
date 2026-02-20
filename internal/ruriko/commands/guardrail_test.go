@@ -89,7 +89,7 @@ func TestLooksLikeSecret_SafeMessages(t *testing.T) {
 		{"command without secret", "/ruriko agents list"},
 		{"approve command", "approve abc-123"},
 		{"deny command", "deny abc-123 reason=\"not authorised\""},
-		{"gosuto show command", "/ruriko gosuto show warren"},
+		{"gosuto show command", "/ruriko gosuto show kairo"},
 		// Short base64 — below the 40-char threshold
 		{"short base64", "dGVzdA=="},
 		// A SHA-1 (40 hex chars) — below the 48-char threshold, should not match
@@ -112,7 +112,7 @@ func TestLooksLikeSecret_SafeMessages(t *testing.T) {
 // carrying a long base64 YAML payload is NOT rejected in command context.
 func TestLooksLikeSecret_GosutoBase64Command(t *testing.T) {
 	// A plausible gosuto --content value: 80+ base64 chars, no sk- prefix.
-	body := "/ruriko gosuto set warren --content " +
+	body := "/ruriko gosuto set kairo --content " +
 		"cGVyc29uYTogZmluYW5jaWFsIGFuYWx5c3QKbGltaXRzOiB7bWF4X3Rva2VuczogMTAwMH0="
 
 	if commands.LooksLikeSecret(body, true) {

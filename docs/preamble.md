@@ -42,21 +42,21 @@ This separation is what makes the system both usable *and* safe.
 Bogdan (the user) wants a team of agents to manage and explain his stock portfolio.
 
 **Bogdan → Ruriko (Matrix DM):**
-“Hi Ruriko. Can you set up Tim so that every 15 minutes he asks Warren to check my stock portfolio and report to you? I want long-term optimization, but also event speculation. If Warren finds something interesting, ask Brave to pull news for those companies, then ask Warren again to adjust his findings and report back.”
+"Hi Ruriko. Can you set up Saito so that every 15 minutes he asks Kairo to check my stock portfolio and report to you? I want long-term optimization, but also event speculation. If Kairo finds something interesting, ask Kumo to pull news for those companies, then ask Kairo again to adjust his findings and report back."
 
 Ruriko responds by creating and configuring the relevant agents:
 
-* **Tim** (cron / trigger agent): emits periodic reminders
-* **Warren** (finance agent): portfolio analysis, uses finnhub + DB MCP
-* **Brave** (news agent): searches news for relevant tickers/topics
+* **Saito** (cron / trigger agent): emits periodic reminders
+* **Kairo** (finance agent): portfolio analysis, uses finnhub + DB MCP
+* **Kumo** (news agent): searches news for relevant tickers/topics
 
 A typical cycle looks like:
 
-1. Tim triggers a scheduled check.
-2. Warren retrieves portfolio data and market state, writes analysis to the DB.
-3. Ruriko summarizes Warren’s output and asks Brave for related news.
-4. Brave returns news highlights.
-5. Warren revises analysis based on news.
+1. Saito triggers a scheduled check.
+2. Kairo retrieves portfolio data and market state, writes analysis to the DB.
+3. Ruriko summarizes Kairo's output and asks Kumo for related news.
+4. Kumo returns news highlights.
+5. Kairo revises analysis based on news.
 6. Ruriko sends Bogdan a concise report and optionally offers deeper detail or follow-up actions.
 
 Agents can ask Bogdan clarifying questions directly when needed (e.g., missing portfolio), and Ruriko remains the coordinator and policy authority.
@@ -182,13 +182,13 @@ An individual LLM-powered worker agent. Each Gitai runs as its own process/conta
 **Gosuto (Persona + Tool Profile)**
 The agent’s personality + role + tool permissions packaged as configuration. A Gosuto defines what a Gitai is allowed to do (MCPs, tools, DB access, prompts, constraints). In practice: the “job description” and guardrails for an agent.
 
-**Tim (Cron / Trigger Agent)**
-A canonical Gitai role responsible for scheduling and emitting periodic triggers. Tim is intentionally deterministic and low-intelligence: it should not reason, only schedule and notify.
+**Saito (Cron / Trigger Agent)**
+A canonical Gitai role responsible for scheduling and emitting periodic triggers. Saito is intentionally deterministic and low-intelligence: it should not reason, only schedule and notify.
 
-**Warren (Finance Agent)**
-A canonical Gitai role responsible for portfolio analysis, market data retrieval (e.g., finnhub MCP), and writing structured findings into the database. Warren can ask the user for missing inputs and produces reports.
+**Kairo (Finance Agent)**
+A canonical Gitai role responsible for portfolio analysis, market data retrieval (e.g., finnhub MCP), and writing structured findings into the database. Kairo can ask the user for missing inputs and produces reports.
 
-**Brave (News/Search Agent)**
+**Kumo (News/Search Agent)**
 A canonical Gitai role responsible for retrieving news and public information (e.g., Brave Search API/MCP) related to tickers, companies, or topics requested by Ruriko or other agents.
 
 **Matrix (Conversation Layer)**
@@ -210,7 +210,7 @@ The encrypted storage used by Ruriko to persist secrets at rest. It is protected
 A tool integration mechanism that lets agents access external services (e.g., finnhub, database, brave search) through a controlled interface. MCP access is governed by the agent’s Gosuto.
 
 **Audit Breadcrumbs**
-Short, non-sensitive status messages posted to Matrix to preserve observability. Examples: “Warren config applied (hash=…)”, “Task started”, “Task completed”, “Issued secret token (ttl=60s)”. Breadcrumbs must never contain secret values.
+Short, non-sensitive status messages posted to Matrix to preserve observability. Examples: “Kairo config applied (hash=…)”, “Task started”, “Task completed”, “Issued secret token (ttl=60s)”. Breadcrumbs must never contain secret values.
 
 **Provisioning**
 The process by which Ruriko creates/configures agents and (if applicable) their Matrix accounts, applies Gosuto configuration, and ensures they are online and healthy.

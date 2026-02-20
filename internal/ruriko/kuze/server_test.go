@@ -431,13 +431,13 @@ func TestKuze_IssueAgentToken(t *testing.T) {
 	srv, _, _ := newTestServer(t, 10*time.Minute) // server TTL is long for human tokens
 	ctx := context.Background()
 
-	res, err := srv.IssueAgentToken(ctx, "warren", "finnhub_key", "api_key", "initial provisioning")
+	res, err := srv.IssueAgentToken(ctx, "kairo", "finnhub_key", "api_key", "initial provisioning")
 	if err != nil {
 		t.Fatalf("IssueAgentToken: %v", err)
 	}
 
-	if res.AgentID != "warren" {
-		t.Errorf("AgentID = %q, want %q", res.AgentID, "warren")
+	if res.AgentID != "kairo" {
+		t.Errorf("AgentID = %q, want %q", res.AgentID, "kairo")
 	}
 	if res.SecretRef != "finnhub_key" {
 		t.Errorf("SecretRef = %q, want %q", res.SecretRef, "finnhub_key")
@@ -469,7 +469,7 @@ func TestKuze_IssueAgentHTTPEndpoint(t *testing.T) {
 	srv.RegisterRoutes(mux)
 
 	req := httptest.NewRequest(http.MethodPost,
-		"/kuze/issue/agent?agent_id=warren&secret_ref=finnhub_key&type=api_key&purpose=test", nil)
+		"/kuze/issue/agent?agent_id=kairo&secret_ref=finnhub_key&type=api_key&purpose=test", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -487,8 +487,8 @@ func TestKuze_IssueAgentHTTPEndpoint(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if resp.AgentID != "warren" {
-		t.Errorf("agent_id = %q, want %q", resp.AgentID, "warren")
+	if resp.AgentID != "kairo" {
+		t.Errorf("agent_id = %q, want %q", resp.AgentID, "kairo")
 	}
 	if resp.SecretRef != "finnhub_key" {
 		t.Errorf("secret_ref = %q, want %q", resp.SecretRef, "finnhub_key")
@@ -527,7 +527,7 @@ func TestKuze_RedeemSuccess(t *testing.T) {
 	// Pre-store the secret that the agent will receive after redemption.
 	_ = ss.Set(ctx, "finnhub_key", secrets.TypeAPIKey, []byte("sk-test-value"))
 
-	res, err := srv.IssueAgentToken(ctx, "warren", "finnhub_key", "api_key", "")
+	res, err := srv.IssueAgentToken(ctx, "kairo", "finnhub_key", "api_key", "")
 	if err != nil {
 		t.Fatalf("IssueAgentToken: %v", err)
 	}
@@ -536,7 +536,7 @@ func TestKuze_RedeemSuccess(t *testing.T) {
 	srv.RegisterRoutes(mux)
 
 	req := httptest.NewRequest(http.MethodGet, "/kuze/redeem/"+res.Token, nil)
-	req.Header.Set("X-Agent-ID", "warren")
+	req.Header.Set("X-Agent-ID", "kairo")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -601,7 +601,7 @@ func TestKuze_RedeemWrongAgentID(t *testing.T) {
 	ctx := context.Background()
 
 	_ = ss.Set(ctx, "sec", secrets.TypeAPIKey, []byte("value"))
-	res, _ := srv.IssueAgentToken(ctx, "warren", "sec", "api_key", "")
+	res, _ := srv.IssueAgentToken(ctx, "kairo", "sec", "api_key", "")
 
 	mux := http.NewServeMux()
 	srv.RegisterRoutes(mux)
@@ -623,7 +623,7 @@ func TestKuze_RedeemMissingAgentIDHeader(t *testing.T) {
 	ctx := context.Background()
 
 	_ = ss.Set(ctx, "sec", secrets.TypeAPIKey, []byte("value"))
-	res, _ := srv.IssueAgentToken(ctx, "warren", "sec", "api_key", "")
+	res, _ := srv.IssueAgentToken(ctx, "kairo", "sec", "api_key", "")
 
 	mux := http.NewServeMux()
 	srv.RegisterRoutes(mux)
@@ -646,7 +646,7 @@ func TestKuze_RedeemUnknownToken(t *testing.T) {
 	srv.RegisterRoutes(mux)
 
 	req := httptest.NewRequest(http.MethodGet, "/kuze/redeem/definitely-not-a-valid-token", nil)
-	req.Header.Set("X-Agent-ID", "warren")
+	req.Header.Set("X-Agent-ID", "kairo")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 

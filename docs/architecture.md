@@ -509,15 +509,15 @@ services:
       - MATRIX_HOMESERVER=http://tuwunel:8008
       - RURIKO_MASTER_KEY=...
 
-  agent-tim:
+  agent-saito:
     image: gitai:latest
     environment:
-      - GITAI_AGENT_ID=tim
+      - GITAI_AGENT_ID=saito
 
-  agent-warren:
+  agent-kairo:
     image: gitai:latest
     environment:
-      - GITAI_AGENT_ID=warren
+      - GITAI_AGENT_ID=kairo
 ```
 
 **Pros**: Single command (`docker compose up -d`), Tuwunel is lightweight and
