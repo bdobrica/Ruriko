@@ -93,6 +93,27 @@ type SecretsApplyRequest struct {
 	Secrets map[string]string `json:"secrets"`
 }
 
+// SecretLease is a single token-based secret lease issued to the agent.
+// The agent redeems RedemptionToken from KuzeURL to obtain the plaintext value.
+// Secrets never travel in this payload; only the token reference does.
+type SecretLease struct {
+	// SecretRef is the name of the secret this lease is for.
+	SecretRef string `json:"secret_ref"`
+	// RedemptionToken is the one-time Kuze token the agent presents on redemption.
+	RedemptionToken string `json:"redemption_token"`
+	// KuzeURL is the fully-qualified URL the agent calls to redeem the token.
+	// Example: "https://ruriko.example.com/kuze/redeem/<token>"
+	KuzeURL string `json:"kuze_url"`
+}
+
+// SecretsTokenRequest is the body for POST /secrets/token.
+// It replaces SecretsApplyRequest in the token-based distribution model:
+// secrets are pulled by the agent from Kuze rather than pushed as plaintext.
+type SecretsTokenRequest struct {
+	// Leases is the list of token leases; one entry per bound secret.
+	Leases []SecretLease `json:"leases"`
+}
+
 // ErrorResponse is returned by the ACP server on errors.
 type ErrorResponse struct {
 	Error string `json:"error"`
@@ -132,6 +153,15 @@ func (c *Client) ApplySecrets(ctx context.Context, req SecretsApplyRequest) erro
 	ctx, cancel := context.WithTimeout(ctx, timeoutSecrets)
 	defer cancel()
 	return c.post(ctx, "/secrets/apply", req, nil, true)
+}
+
+// ApplySecretsToken sends a token-based secret distribution request to the agent.
+// The agent redeems each lease from Kuze to obtain the plaintext value; secrets
+// never travel in the ACP payload.
+func (c *Client) ApplySecretsToken(ctx context.Context, req SecretsTokenRequest) error {
+	ctx, cancel := context.WithTimeout(ctx, timeoutSecrets)
+	defer cancel()
+	return c.post(ctx, "/secrets/token", req, nil, true)
 }
 
 // Restart requests the agent to gracefully restart its process.

@@ -175,3 +175,56 @@ func TestClient_Cancel(t *testing.T) {
 		t.Errorf("expected POST /tasks/cancel, got %s %s", gotMethod, gotPath)
 	}
 }
+
+// --- ApplySecretsToken test (R4.2) ----------------------------------------
+
+func TestClient_ApplySecretsToken(t *testing.T) {
+	var gotMethod, gotPath string
+	var gotBody acp.SecretsTokenRequest
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		json.NewDecoder(r.Body).Decode(&gotBody)
+
+		// Verify idempotency key is present.
+		if r.Header.Get("X-Idempotency-Key") == "" {
+			t.Error("expected X-Idempotency-Key on mutating request")
+		}
+
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	client := acp.New(ts.URL)
+	err := client.ApplySecretsToken(context.Background(), acp.SecretsTokenRequest{
+		Leases: []acp.SecretLease{
+			{
+				SecretRef:       "openai_api_key",
+				RedemptionToken: "tok-abc123",
+				KuzeURL:         "http://kuze.local/kuze/redeem/tok-abc123",
+			},
+			{
+				SecretRef:       "finnhub_api_key",
+				RedemptionToken: "tok-def456",
+				KuzeURL:         "http://kuze.local/kuze/redeem/tok-def456",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ApplySecretsToken: %v", err)
+	}
+
+	if gotMethod != "POST" {
+		t.Errorf("method = %q; want POST", gotMethod)
+	}
+	if gotPath != "/secrets/token" {
+		t.Errorf("path = %q; want /secrets/token", gotPath)
+	}
+	if len(gotBody.Leases) != 2 {
+		t.Fatalf("expected 2 leases in body, got %d", len(gotBody.Leases))
+	}
+	if gotBody.Leases[0].SecretRef != "openai_api_key" {
+		t.Errorf("lease[0].SecretRef = %q; want openai_api_key", gotBody.Leases[0].SecretRef)
+	}
+}

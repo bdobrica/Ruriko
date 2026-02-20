@@ -262,3 +262,253 @@ func TestCancelEndpoint_Unavailable(t *testing.T) {
 		t.Errorf("expected 503, got %d", resp.StatusCode)
 	}
 }
+
+// --- Secrets token (R4.2) --------------------------------------------------
+
+// fakeKuzeServer creates an httptest.Server that simulates the Kuze
+// GET /kuze/redeem/<token> endpoint. It verifies X-Agent-ID, and returns
+// a redeemResponse with the base64-encoded secret value for known tokens.
+func fakeKuzeServer(t *testing.T, agentID string, tokenSecrets map[string]string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		token := strings.TrimPrefix(r.URL.Path, "/kuze/redeem/")
+		if token == "" {
+			http.NotFound(w, r)
+			return
+		}
+
+		claimed := r.Header.Get("X-Agent-ID")
+		if claimed != agentID {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(map[string]string{"error": "agent identity mismatch"})
+			return
+		}
+
+		b64val, ok := tokenSecrets[token]
+		if !ok {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusGone)
+			json.NewEncoder(w).Encode(map[string]string{"error": "token not valid or already used"})
+			return
+		}
+
+		// Remove from map to simulate single-use burn.
+		delete(tokenSecrets, token)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"secret_ref":  "ref-for-" + token,
+			"secret_type": "api_key",
+			"value":       b64val,
+		})
+	}))
+}
+
+func TestSecretsToken_SingleLease(t *testing.T) {
+	tokenSecrets := map[string]string{
+		"tok-aaa": "c2VjcmV0LXZhbHVlLWFhYQ==", // base64("secret-value-aaa")
+	}
+	kuze := fakeKuzeServer(t, "test-agent", tokenSecrets)
+	defer kuze.Close()
+
+	var applied map[string]string
+	srv := control.New(":0", control.Handlers{
+		AgentID:   "test-agent",
+		Version:   "v0.1",
+		StartedAt: time.Now(),
+		ApplySecrets: func(secrets map[string]string) error {
+			applied = secrets
+			return nil
+		},
+	})
+	ts := httptest.NewServer(srv.TestHandler())
+	defer ts.Close()
+
+	body, _ := json.Marshal(control.SecretsTokenRequest{
+		Leases: []control.SecretLease{
+			{
+				SecretRef:       "openai_api_key",
+				RedemptionToken: "tok-aaa",
+				KuzeURL:         kuze.URL + "/kuze/redeem/tok-aaa",
+			},
+		},
+	})
+
+	resp, err := http.Post(ts.URL+"/secrets/token", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /secrets/token: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, b)
+	}
+
+	if len(applied) != 1 {
+		t.Fatalf("expected 1 secret applied, got %d", len(applied))
+	}
+	if v, ok := applied["openai_api_key"]; !ok || v != "c2VjcmV0LXZhbHVlLWFhYQ==" {
+		t.Errorf("unexpected applied value: %v", applied)
+	}
+}
+
+func TestSecretsToken_MultipleLeases(t *testing.T) {
+	tokenSecrets := map[string]string{
+		"tok-bbb": "dmFsdWUtYmJi", // base64("value-bbb")
+		"tok-ccc": "dmFsdWUtY2Nj", // base64("value-ccc")
+	}
+	kuze := fakeKuzeServer(t, "test-agent", tokenSecrets)
+	defer kuze.Close()
+
+	var applied map[string]string
+	srv := control.New(":0", control.Handlers{
+		AgentID:   "test-agent",
+		Version:   "v0.1",
+		StartedAt: time.Now(),
+		ApplySecrets: func(secrets map[string]string) error {
+			applied = secrets
+			return nil
+		},
+	})
+	ts := httptest.NewServer(srv.TestHandler())
+	defer ts.Close()
+
+	body, _ := json.Marshal(control.SecretsTokenRequest{
+		Leases: []control.SecretLease{
+			{SecretRef: "key-b", RedemptionToken: "tok-bbb", KuzeURL: kuze.URL + "/kuze/redeem/tok-bbb"},
+			{SecretRef: "key-c", RedemptionToken: "tok-ccc", KuzeURL: kuze.URL + "/kuze/redeem/tok-ccc"},
+		},
+	})
+
+	resp, err := http.Post(ts.URL+"/secrets/token", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /secrets/token: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, b)
+	}
+
+	if len(applied) != 2 {
+		t.Fatalf("expected 2 secrets applied, got %d", len(applied))
+	}
+}
+
+func TestSecretsToken_AllFail_ReturnsBadGateway(t *testing.T) {
+	kuze := fakeKuzeServer(t, "test-agent", map[string]string{})
+	defer kuze.Close()
+
+	srv := control.New(":0", control.Handlers{
+		AgentID:   "test-agent",
+		Version:   "v0.1",
+		StartedAt: time.Now(),
+		ApplySecrets: func(secrets map[string]string) error {
+			t.Error("ApplySecrets should not be called when all redemptions fail")
+			return nil
+		},
+	})
+	ts := httptest.NewServer(srv.TestHandler())
+	defer ts.Close()
+
+	body, _ := json.Marshal(control.SecretsTokenRequest{
+		Leases: []control.SecretLease{
+			{SecretRef: "ghost", RedemptionToken: "tok-bad", KuzeURL: kuze.URL + "/kuze/redeem/tok-bad"},
+		},
+	})
+
+	resp, err := http.Post(ts.URL+"/secrets/token", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /secrets/token: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Errorf("expected 502, got %d", resp.StatusCode)
+	}
+}
+
+func TestSecretsToken_SecondRedemptionFails(t *testing.T) {
+	tokenSecrets := map[string]string{
+		"tok-once": "c2luZ2xl", // base64("single")
+	}
+	kuze := fakeKuzeServer(t, "test-agent", tokenSecrets)
+	defer kuze.Close()
+
+	srv := control.New(":0", control.Handlers{
+		AgentID:   "test-agent",
+		Version:   "v0.1",
+		StartedAt: time.Now(),
+		ApplySecrets: func(secrets map[string]string) error {
+			return nil
+		},
+	})
+	ts := httptest.NewServer(srv.TestHandler())
+	defer ts.Close()
+
+	leaseBody := func() []byte {
+		b, _ := json.Marshal(control.SecretsTokenRequest{
+			Leases: []control.SecretLease{
+				{SecretRef: "once-key", RedemptionToken: "tok-once", KuzeURL: kuze.URL + "/kuze/redeem/tok-once"},
+			},
+		})
+		return b
+	}
+
+	// First call — succeeds.
+	resp1, err := http.Post(ts.URL+"/secrets/token", "application/json", bytes.NewReader(leaseBody()))
+	if err != nil {
+		t.Fatalf("first POST: %v", err)
+	}
+	resp1.Body.Close()
+	if resp1.StatusCode != http.StatusOK {
+		t.Fatalf("first call: expected 200, got %d", resp1.StatusCode)
+	}
+
+	// Second call — token consumed, all fail → 502.
+	resp2, err := http.Post(ts.URL+"/secrets/token", "application/json", bytes.NewReader(leaseBody()))
+	if err != nil {
+		t.Fatalf("second POST: %v", err)
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusBadGateway {
+		t.Fatalf("second call: expected 502, got %d", resp2.StatusCode)
+	}
+}
+
+func TestSecretsToken_EmptyLeases_OK(t *testing.T) {
+	srv := control.New(":0", control.Handlers{
+		AgentID:   "test-agent",
+		Version:   "v0.1",
+		StartedAt: time.Now(),
+	})
+	ts := httptest.NewServer(srv.TestHandler())
+	defer ts.Close()
+
+	body, _ := json.Marshal(control.SecretsTokenRequest{Leases: nil})
+
+	resp, err := http.Post(ts.URL+"/secrets/token", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /secrets/token: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+}
+
+func TestSecretsToken_WrongMethod(t *testing.T) {
+	ts := startTestServer(t, "")
+	resp, err := http.Get(ts.URL + "/secrets/token")
+	if err != nil {
+		t.Fatalf("GET /secrets/token: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", resp.StatusCode)
+	}
+}

@@ -77,6 +77,25 @@ type App struct {
 	kuzeServer   *kuze.Server
 }
 
+// kuzeTokenAdapter bridges *kuze.Server → secrets.TokenIssuer, breaking the
+// circular import between the secrets and kuze packages. The adapter converts
+// *kuze.AgentIssueResult → *secrets.TokenLeaseResult.
+type kuzeTokenAdapter struct {
+	srv *kuze.Server
+}
+
+func (a *kuzeTokenAdapter) IssueAgentToken(ctx context.Context, agentID, secretRef, secretType, purpose string) (*secrets.TokenLeaseResult, error) {
+	r, err := a.srv.IssueAgentToken(ctx, agentID, secretRef, secretType, purpose)
+	if err != nil {
+		return nil, err
+	}
+	return &secrets.TokenLeaseResult{
+		RedeemURL: r.RedeemURL,
+		SecretRef: r.SecretRef,
+		Token:     r.Token,
+	}, nil
+}
+
 // New creates a new Ruriko application
 func New(config *Config) (*App, error) {
 	// Initialize database
@@ -149,8 +168,59 @@ func New(config *Config) (*App, error) {
 		}
 	}
 
-	// Initialise secrets distributor.
-	distributor := secrets.NewDistributor(secretsStore, store)
+	// Initialise Kuze secret-entry server when both HTTPAddr and KuzeBaseURL
+	// are configured. Kuze is created before the distributor and handlers so
+	// that (a) the distributor can use token-based distribution and (b) the
+	// handlers receive a non-nil Kuze reference.
+	var kuzeServer *kuze.Server
+	if config.HTTPAddr != "" && config.KuzeBaseURL != "" {
+		kuzeServer = kuze.New(store.DB(), secretsStore, kuze.Config{
+			BaseURL: config.KuzeBaseURL,
+			TTL:     config.KuzeTTL,
+		})
+		kuzeServer.SetSecretsGetter(secretsStore)
+		handlersCfg.Kuze = kuzeServer
+		slog.Info("Kuze secret-entry server ready", "baseURL", config.KuzeBaseURL)
+
+		// Wire Matrix notifications for Kuze events.  Store confirmations and
+		// expiry notices are sent to all configured admin rooms so the operator
+		// is kept in the loop without polling.
+		adminRooms := config.Matrix.AdminRooms
+		kuzeServer.SetOnSecretStored(func(ctx context.Context, secretRef string) {
+			msg := fmt.Sprintf("✓ Secret **%s** stored securely.", secretRef)
+			for _, roomID := range adminRooms {
+				if err := matrixClient.SendNotice(roomID, msg); err != nil {
+					slog.Warn("kuze: send store-confirmation to Matrix",
+						"room", roomID, "ref", secretRef, "err", err)
+				}
+			}
+		})
+
+		kuzeServer.SetOnTokenExpired(func(ctx context.Context, pt *kuze.PendingToken) {
+			msg := fmt.Sprintf(
+				"⏰ The one-time link for secret **%s** has expired without being used. "+
+					"Use `/ruriko secrets set %s` to generate a new link.",
+				pt.SecretRef, pt.SecretRef,
+			)
+			for _, roomID := range adminRooms {
+				if err := matrixClient.SendNotice(roomID, msg); err != nil {
+					slog.Warn("kuze: send expiry notification to Matrix",
+						"room", roomID, "ref", pt.SecretRef, "err", err)
+				}
+			}
+		})
+	}
+
+	// Initialise secrets distributor. When Kuze is available, the distributor
+	// issues one-time tokens so plaintext secrets never traverse ACP payloads.
+	var distributor *secrets.Distributor
+	if kuzeServer != nil {
+		distributor = secrets.NewDistributorWithKuze(secretsStore, store, &kuzeTokenAdapter{srv: kuzeServer})
+		slog.Info("secrets distributor ready (token-based via Kuze)")
+	} else {
+		distributor = secrets.NewDistributor(secretsStore, store)
+		slog.Info("secrets distributor ready (legacy direct push)")
+	}
 	handlersCfg.Distributor = distributor
 
 	// Initialise template registry if a templates FS is provided.
@@ -214,48 +284,6 @@ func New(config *Config) (*App, error) {
 	handlers.SetDispatch(func(ctx context.Context, action string, cmd *commands.Command, evt *event.Event) (string, error) {
 		return router.Dispatch(ctx, action, cmd, evt)
 	})
-
-	// Initialise Kuze secret-entry server when both HTTPAddr and KuzeBaseURL
-	// are configured. The Kuze server is created before the health server so
-	// that its routes can be registered on the same mux.
-	var kuzeServer *kuze.Server
-	if config.HTTPAddr != "" && config.KuzeBaseURL != "" {
-		kuzeServer = kuze.New(store.DB(), secretsStore, kuze.Config{
-			BaseURL: config.KuzeBaseURL,
-			TTL:     config.KuzeTTL,
-		})
-		kuzeServer.SetSecretsGetter(secretsStore)
-		handlersCfg.Kuze = kuzeServer
-		slog.Info("Kuze secret-entry server ready", "baseURL", config.KuzeBaseURL)
-
-		// Wire Matrix notifications for Kuze events.  Store confirmations and
-		// expiry notices are sent to all configured admin rooms so the operator
-		// is kept in the loop without polling.
-		adminRooms := config.Matrix.AdminRooms
-		kuzeServer.SetOnSecretStored(func(ctx context.Context, secretRef string) {
-			msg := fmt.Sprintf("✓ Secret **%s** stored securely.", secretRef)
-			for _, roomID := range adminRooms {
-				if err := matrixClient.SendNotice(roomID, msg); err != nil {
-					slog.Warn("kuze: send store-confirmation to Matrix",
-						"room", roomID, "ref", secretRef, "err", err)
-				}
-			}
-		})
-
-		kuzeServer.SetOnTokenExpired(func(ctx context.Context, pt *kuze.PendingToken) {
-			msg := fmt.Sprintf(
-				"⏰ The one-time link for secret **%s** has expired without being used. "+
-					"Use `/ruriko secrets set %s` to generate a new link.",
-				pt.SecretRef, pt.SecretRef,
-			)
-			for _, roomID := range adminRooms {
-				if err := matrixClient.SendNotice(roomID, msg); err != nil {
-					slog.Warn("kuze: send expiry notification to Matrix",
-						"room", roomID, "ref", pt.SecretRef, "err", err)
-				}
-			}
-		})
-	}
 
 	// Optionally build the health/status HTTP server.
 	var healthServer *HealthServer

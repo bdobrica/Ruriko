@@ -673,11 +673,11 @@ These are **real, working subsystems** — not scaffolding. The realignment phas
 - [x] Test: Agent can redeem token exactly once; second attempt fails
 
 ### R4.2 Replace `/secrets/apply` Push Model
-- [ ] Add ACP endpoint on Gitai: `POST /secrets/token` or `POST /secrets/lease`
+- [x] Add ACP endpoint on Gitai: `POST /secrets/token` or `POST /secrets/lease`
   - Agent receives a list of `{secret_ref, redemption_token, kuze_url}` instead of raw secrets
-- [ ] Agent redeems each token against Kuze to fetch the actual secret
-- [ ] Update `internal/ruriko/secrets/distributor.go` to issue tokens via Kuze instead of sending raw secrets
-- [ ] Test: Secrets flow via token redemption, not raw ACP payload
+- [x] Agent redeems each token against Kuze to fetch the actual secret
+- [x] Update `internal/ruriko/secrets/distributor.go` to issue tokens via Kuze instead of sending raw secrets
+- [x] Test: Secrets flow via token redemption, not raw ACP payload
 
 ### R4.3 Agent Secret Manager
 - [ ] Create `internal/gitai/secrets/manager.go`:
