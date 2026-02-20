@@ -680,12 +680,12 @@ These are **real, working subsystems** — not scaffolding. The realignment phas
 - [x] Test: Secrets flow via token redemption, not raw ACP payload
 
 ### R4.3 Agent Secret Manager
-- [ ] Create `internal/gitai/secrets/manager.go`:
-  - [ ] In-memory cache with TTL for redeemed secrets
-  - [ ] `GetSecret(ref string) (string, error)` — returns cached or redeems token
-  - [ ] Never logs secret values
+- [x] Create `internal/gitai/secrets/manager.go`:
+  - [x] In-memory cache with TTL for redeemed secrets
+  - [x] `GetSecret(ref string) (string, error)` — returns cached or redeems token
+  - [x] Never logs secret values
 - [ ] Wire secret manager into MCP tool calls (tools that need API keys call `GetSecret`)
-- [ ] Test: Secret manager caches, respects TTL, never logs values
+- [x] Test: Secret manager caches, respects TTL, never logs values
 
 ### R4.4 Deprecate Direct Secret Push
 - [ ] Add `FEATURE_DIRECT_SECRET_PUSH=false` flag (default OFF)

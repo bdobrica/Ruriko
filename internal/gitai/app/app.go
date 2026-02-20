@@ -86,6 +86,7 @@ type App struct {
 	db         *store.Store
 	gosutoLdr  *gosuto.Loader
 	secretsStr *secrets.Store
+	secretsMgr *secrets.Manager
 	policyEng  *policy.Engine
 	supv       *supervisor.Supervisor
 	llmProv    llm.Provider
@@ -129,6 +130,7 @@ func New(cfg *Config) (*App, error) {
 	}
 
 	secStore := secrets.New()
+	secMgr := secrets.NewManager(secStore, 0) // uses DefaultCacheTTL (4 h)
 	policyEng := policy.New(gosutoLdr)
 	supv := supervisor.New()
 
@@ -150,6 +152,7 @@ func New(cfg *Config) (*App, error) {
 		db:         db,
 		gosutoLdr:  gosutoLdr,
 		secretsStr: secStore,
+		secretsMgr: secMgr,
 		policyEng:  policyEng,
 		supv:       supv,
 		llmProv:    llmProv,
@@ -187,7 +190,9 @@ func New(cfg *Config) (*App, error) {
 			return nil
 		},
 		ApplySecrets: func(sec map[string]string) error {
-			if err := secStore.Apply(sec); err != nil {
+			// Route through the Manager so TTL entries are recorded.
+			// Manager.Apply calls secStore.Apply internally.
+			if err := secMgr.Apply(sec, 0); err != nil {
 				return err
 			}
 			// Re-inject secret env into supervisor (new processes will pick it up).
@@ -242,6 +247,23 @@ func (a *App) Run() error {
 		"version", version.Version,
 	)
 
+	// Start secret eviction goroutine — sweeps expired cached secrets every
+	// minute to reduce the in-memory credential exposure window.
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if n := a.secretsMgr.Evict(); n > 0 {
+					slog.Debug("secrets eviction sweep", "evicted", n)
+				}
+			}
+		}
+	}()
+
 	// Wait for stop signal or restart request.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
@@ -264,6 +286,24 @@ func (a *App) Stop() {
 	a.supv.Stop()
 	a.acpServer.Stop()
 	a.db.Close()
+}
+
+// GetSecret retrieves a named secret value from the Manager cache.
+//
+// It returns secrets.ErrSecretNotFound when the ref was never applied and
+// secrets.ErrSecretExpired when the TTL has elapsed. Callers MUST NOT log
+// the returned value.
+//
+// This is the canonical point for tool implementations, LLM provider
+// rebuilds, or any other subsystem that needs to read a secret at call time.
+func (a *App) GetSecret(ref string) (string, error) {
+	return a.secretsMgr.GetSecret(ref)
+}
+
+// GetSecretBytes is the raw-byte variant of GetSecret. See GetSecret for the
+// full semantics.
+func (a *App) GetSecretBytes(ref string) ([]byte, error) {
+	return a.secretsMgr.GetSecretBytes(ref)
 }
 
 // handleMessage is called by the Matrix client for every incoming text message.
