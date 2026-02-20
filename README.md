@@ -140,12 +140,18 @@ MCP processes are supervised and reconciled by Gitai.
 
 ---
 
-# 🛠 Example Agent Templates
+# 🛠 Agent Templates
+
+### Canonical agents
+
+* **Saito Agent** – deterministic cron/trigger agent; no tool calls, no reasoning; emits periodic triggers to coordinate other agents
+* **Kumo Agent** – news and web search via the Brave Search MCP; summarises news for tickers and topics on request
+
+### Generic templates
 
 * **Cron Agent** – scheduled checks and recurring tasks
 * **Browser Agent** – headless browsing with approval-gated navigation
 * **Research Agent** – structured envelope-based task delegation
-* **Notification Agent** – policy-controlled outbound messaging
 
 ---
 
@@ -189,13 +195,16 @@ Completed:
 * [x] MCP supervisor
 * [x] Docker lifecycle control
 * [x] Observability (structured logging, audit trail, trace IDs)
+* [x] Tuwunel homeserver integration (Docker Compose + provisioning)
+* [x] ACP authentication (bearer token, idempotency keys, per-op timeouts)
+* [x] Kuze one-time secret entry and agent token redemption
+* [x] Saito (cron/trigger) and Kumo (news/search) Gosuto templates
 
 In progress:
 
-* [ ] Tuwunel homeserver integration
-* [ ] ACP authentication (mTLS)
-* [ ] Kuze one-time secret entry (browser link)
-* [ ] Saito / Kairo / Kumo canonical agents
+* [ ] Automated provisioning pipeline (R5.2 — container → ACP health → Gosuto apply)
+* [ ] Kairo (finnhub finance agent) template
+* [ ] Canonical Saito → Kairo → Kumo orchestration workflow (R6)
 
 ---
 

@@ -278,14 +278,16 @@ These are **real, working subsystems** — not scaffolding. The realignment phas
   - [x] `Approval` requirements
   - [x] `Persona` (LLM prompt)
 - [x] Create `common/spec/gosuto/validate.go` - schema validator
-- [x] Test: Valid Gosuto configs parse correctly (validate_test.go — 11 tests)
+- [x] Test: Valid Gosuto configs parse correctly (validate_test.go — 13 tests)
 
 ### 5.2 Template System
 - [x] Create `templates/cron-agent/gosuto.yaml` - example cron agent config
 - [x] Create `templates/browser-agent/gosuto.yaml` - example browser agent config
+- [x] Create `templates/saito-agent/gosuto.yaml` - canonical cron/trigger agent
+- [x] Create `templates/kumo-agent/gosuto.yaml` - canonical news/search agent
 - [x] Create `internal/ruriko/templates/loader.go` - template registry
 - [x] Implement template interpolation (agent name, room IDs, etc.)
-- [x] Test: Templates load and validate (loader_test.go — 4 tests)
+- [x] Test: Templates load and validate (loader_test.go — 9 tests)
 
 ### 5.3 Gosuto Commands
 - [x] `/ruriko gosuto show <agent> [--version <n>]` - display current (or specific) Gosuto config
@@ -717,22 +719,22 @@ These are **real, working subsystems** — not scaffolding. The realignment phas
 > Maps to REALIGNMENT_PLAN Phase 6.
 
 ### R5.1 Canonical Agent Templates
-- [ ] Create `templates/saito/gosuto.yaml` — cron/trigger agent:
-  - [ ] Schedule: configurable interval (default 15 min)
-  - [ ] Capabilities: send Matrix DM, trigger other agents
-  - [ ] No tools, no LLM reasoning (intentionally simple)
-- [ ] Create `templates/kairo/gosuto.yaml` — finance agent:
+- [x] Create `templates/saito-agent/gosuto.yaml` — cron/trigger agent:
+  - [x] No MCP tools (single `deny-all-tools` capability rule)
+  - [x] No LLM reasoning (intentionally deterministic; `temperature: 0.0`)
+  - [x] Secret refs: `<agent>.openai-api-key`
+- [ ] Create `templates/kairo-agent/gosuto.yaml` — finance agent (**deferred — skipped for now**):
   - [ ] MCP: finnhub, database
   - [ ] Capabilities: query market data, write analysis to DB, report to Ruriko
   - [ ] Persona: financial analyst
-  - [ ] Secret refs: `finnhub_api_key`
-- [ ] Create `templates/kumo/gosuto.yaml` — news/search agent:
-  - [ ] MCP: brave-search
-  - [ ] Capabilities: search news, summarize, return structured output
-  - [ ] Persona: research assistant
-  - [ ] Secret refs: `brave_api_key`
-- [ ] Validate all templates pass Gosuto schema validation
-- [ ] Test: Templates load and validate correctly
+  - [ ] Secret refs: `<agent>.finnhub-api-key`
+- [x] Create `templates/kumo-agent/gosuto.yaml` — news/search agent:
+  - [x] MCP: brave-search + fetch (GET-only, constrained)
+  - [x] Capabilities: allow brave-search.\*, allow fetch.fetch (GET), deny all others
+  - [x] Persona: research assistant (`gpt-4o`, `temperature: 0.3`)
+  - [x] Secret refs: `<agent>.openai-api-key`, `<agent>.brave-api-key`
+- [x] Validate saito-agent and kumo-agent templates pass Gosuto schema validation
+- [x] Test: Templates load, render, and validate correctly (validate_test.go +2 tests; loader_test.go +5 tests)
 
 ### R5.2 Automated Provisioning Pipeline
 - [ ] Implement sequential provisioning in `/ruriko agents create`:
@@ -987,12 +989,12 @@ The MVP is ready when **all** of the following are true:
 - [x] Phase R2: ACP Hardening — Auth, Idempotency, Timeouts ✅
 - [x] Phase R3: Kuze — Human Secret Entry ✅
 - [x] Phase R4: Token-Based Secret Distribution to Agents ✅
-- [ ] Phase R5: Agent Provisioning UX — Saito, Kairo, Kumo
+- [ ] Phase R5: Agent Provisioning UX — Saito, Kairo, Kumo 🔄 *(R5.1 partial: saito-agent ✅ + kumo-agent ✅; kairo-agent deferred; R5.2–R5.4 pending)*
 - [ ] Phase R6: Canonical Workflow — Saito → Kairo → Kumo
 - [ ] Phase R7: Observability, Safety, and Polish
 - [ ] Phase R8: Integration and End-to-End Testing
 
 ---
 
-**Last Updated**: 2026-02-19
-**Current Focus**: Phase R3 — Kuze
+**Last Updated**: 2026-02-20
+**Current Focus**: Phase R5 — Agent Provisioning UX (saito-agent + kumo-agent templates done; R5.2 automated provisioning pipeline next)

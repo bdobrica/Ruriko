@@ -1,0 +1,78 @@
+apiVersion: gosuto/v1
+metadata:
+  name: "{{.AgentName}}"
+  template: kumo-agent
+  description: >
+    News and web search agent. Searches Brave Search for recent news, articles,
+    and public information about the companies, tickers, or topics requested by
+    Ruriko or other agents.
+
+trust:
+  allowedRooms:
+    - "{{.AdminRoom}}"
+  allowedSenders:
+    - "*"
+  requireE2EE: false
+  adminRoom: "{{.AdminRoom}}"
+
+limits:
+  maxRequestsPerMinute: 10
+  maxTokensPerRequest: 8192
+  maxConcurrentRequests: 2
+  maxMonthlyCostUSD: 10.00
+
+capabilities:
+  - name: allow-brave-search
+    mcp: brave-search
+    tool: "*"
+    allow: true
+
+  - name: allow-fetch-read
+    mcp: fetch
+    tool: fetch
+    allow: true
+    constraints:
+      method: GET
+
+  - name: deny-all-others
+    mcp: "*"
+    tool: "*"
+    allow: false
+
+persona:
+  systemPrompt: |
+    You are Kumo, a news and web search agent. Your role is to search for and
+    retrieve recent news, articles, and public information about the companies,
+    tickers, or topics you are given. Summarise the key findings clearly and
+    concisely in a structured format. Focus on factual reporting. Do not
+    speculate or add commentary beyond what the sources say. Always include
+    source references for every claim.
+  llmProvider: openai
+  model: gpt-4o
+  temperature: 0.3
+  apiKeySecretRef: "{{.AgentName}}.openai-api-key"
+
+secrets:
+  - name: "{{.AgentName}}.openai-api-key"
+    envVar: OPENAI_API_KEY
+    required: true
+  - name: "{{.AgentName}}.brave-api-key"
+    envVar: BRAVE_API_KEY
+    required: true
+
+mcps:
+  - name: brave-search
+    command: npx
+    args:
+      - "-y"
+      - "@modelcontextprotocol/server-brave-search"
+    env:
+      BRAVE_API_KEY: "{{`${BRAVE_API_KEY}`}}"
+    autoRestart: true
+
+  - name: fetch
+    command: npx
+    args:
+      - "-y"
+      - "@modelcontextprotocol/server-fetch"
+    autoRestart: true
