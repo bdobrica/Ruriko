@@ -224,6 +224,7 @@ func New(config *Config) (*App, error) {
 			BaseURL: config.KuzeBaseURL,
 			TTL:     config.KuzeTTL,
 		})
+		kuzeServer.SetSecretsGetter(secretsStore)
 		handlersCfg.Kuze = kuzeServer
 		slog.Info("Kuze secret-entry server ready", "baseURL", config.KuzeBaseURL)
 

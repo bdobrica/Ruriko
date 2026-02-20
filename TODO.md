@@ -661,16 +661,16 @@ These are **real, working subsystems** — not scaffolding. The realignment phas
 > Maps to REALIGNMENT_PLAN Phase 5.
 
 ### R4.1 Kuze Agent Redemption Endpoints
-- [ ] Add to Kuze HTTP server:
-  - [ ] `POST /kuze/issue/agent` — internal, Ruriko-only: issue token for agent+secret_ref
-  - [ ] `GET /kuze/redeem/<token>` — agent fetches secret value once, token is burned
-- [ ] Token scope includes:
-  - [ ] `agent_id`
-  - [ ] `secret_ref`
-  - [ ] `ttl` (short: 30–60 seconds)
-  - [ ] optional: `task_id` / `purpose`
-- [ ] Validate agent identity on redemption (match token's `agent_id` against requesting agent)
-- [ ] Test: Agent can redeem token exactly once; second attempt fails
+- [x] Add to Kuze HTTP server:
+  - [x] `POST /kuze/issue/agent` — internal, Ruriko-only: issue token for agent+secret_ref
+  - [x] `GET /kuze/redeem/<token>` — agent fetches secret value once, token is burned
+- [x] Token scope includes:
+  - [x] `agent_id`
+  - [x] `secret_ref`
+  - [x] `ttl` (short: 30–60 seconds)
+  - [x] optional: `task_id` / `purpose`
+- [x] Validate agent identity on redemption (match token's `agent_id` against requesting agent)
+- [x] Test: Agent can redeem token exactly once; second attempt fails
 
 ### R4.2 Replace `/secrets/apply` Push Model
 - [ ] Add ACP endpoint on Gitai: `POST /secrets/token` or `POST /secrets/lease`

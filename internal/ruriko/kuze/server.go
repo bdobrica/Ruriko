@@ -3,6 +3,7 @@ package kuze
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -47,6 +48,22 @@ type IssueResult struct {
 	SecretRef string
 }
 
+// AgentIssueResult is returned by IssueAgentToken.
+type AgentIssueResult struct {
+	// RedeemURL is the fully-qualified URL the agent should call once to fetch
+	// the secret value (GET /kuze/redeem/<token>).
+	RedeemURL string
+	// Token is the raw token value (for audit / logging; never log the value it
+	// unlocks).
+	Token string
+	// ExpiresAt is the UTC time after which the token is invalid.
+	ExpiresAt time.Time
+	// SecretRef is the name of the secret this token is scoped to.
+	SecretRef string
+	// AgentID is the agent the token was issued for.
+	AgentID string
+}
+
 // issueHumanResponse is the JSON body returned by POST /kuze/issue/human.
 type issueHumanResponse struct {
 	Link      string    `json:"link"`
@@ -55,10 +72,37 @@ type issueHumanResponse struct {
 	SecretRef string    `json:"secret_ref"`
 }
 
+// issueAgentResponse is the JSON body returned by POST /kuze/issue/agent.
+type issueAgentResponse struct {
+	RedeemURL string    `json:"redeem_url"`
+	Token     string    `json:"token"`
+	ExpiresAt time.Time `json:"expires_at"`
+	SecretRef string    `json:"secret_ref"`
+	AgentID   string    `json:"agent_id"`
+}
+
+// redeemResponse is the JSON body returned by GET /kuze/redeem/<token>.
+// value is the base64-standard-encoded plaintext secret so the response
+// body is safe to transmit over HTTPS without binary encoding concerns.
+type redeemResponse struct {
+	SecretRef  string `json:"secret_ref"`
+	SecretType string `json:"secret_type"`
+	// Value is the base64-encoded plaintext secret value.  The agent MUST
+	// decode this before use and MUST NOT log it.
+	Value string `json:"value"`
+}
+
 // secretsSetter is the minimal interface Kuze needs from the secrets store.
 // The production implementation is *secrets.Store.
 type secretsSetter interface {
 	Set(ctx context.Context, name string, secretType secrets.Type, value []byte) error
+}
+
+// secretsGetter is the interface Kuze needs to look up a stored secret value
+// for delivery to an agent on redemption.  The production implementation is
+// *secrets.Store.
+type secretsGetter interface {
+	Get(ctx context.Context, name string) ([]byte, error)
 }
 
 // Server handles Kuze HTTP routes and provides direct Go methods for the
@@ -66,9 +110,17 @@ type secretsSetter interface {
 type Server struct {
 	tokens       *TokenStore
 	secrets      secretsSetter
+	getter       secretsGetter // optional; required for agent redemption
 	baseURL      string
 	storeNotify  func(ctx context.Context, secretRef string)
 	expiryNotify func(ctx context.Context, pt *PendingToken)
+}
+
+// SetSecretsGetter registers fn as the secrets getter used by the
+// GET /kuze/redeem/<token> endpoint.  It must be called before the route is
+// used in production.  If not set, redemption requests will return 501.
+func (srv *Server) SetSecretsGetter(g secretsGetter) {
+	srv.getter = g
 }
 
 // SetOnSecretStored registers fn to be called each time a secret is
@@ -119,11 +171,15 @@ func New(db *sql.DB, secretsStore secretsSetter, cfg Config) *Server {
 // RegisterRoutes adds the Kuze HTTP routes to the given RouteRegistrar (e.g.
 // the application's *http.ServeMux or HealthServer):
 //
-//   - POST /kuze/issue/human — internal: generate and return a one-time link.
-//   - GET  /s/<token>        — serve the HTML secret-entry form.
-//   - POST /s/<token>        — accept the submitted value, encrypt+store, burn.
+//   - POST /kuze/issue/human  — internal: generate and return a human one-time link.
+//   - POST /kuze/issue/agent  — internal: generate and return an agent redemption token.
+//   - GET  /kuze/redeem/<tok> — agent: redeem a token to obtain the secret value.
+//   - GET  /s/<token>         — serve the HTML secret-entry form.
+//   - POST /s/<token>         — accept the submitted value, encrypt+store, burn.
 func (srv *Server) RegisterRoutes(r RouteRegistrar) {
 	r.Handle("/kuze/issue/human", http.HandlerFunc(srv.handleIssueHuman))
+	r.Handle("/kuze/issue/agent", http.HandlerFunc(srv.handleIssueAgent))
+	r.Handle("/kuze/redeem/", http.HandlerFunc(srv.handleRedeem))
 	r.Handle("/s/", http.HandlerFunc(srv.handleForm))
 }
 
@@ -149,6 +205,39 @@ func (srv *Server) IssueHumanToken(ctx context.Context, secretRef, secretType st
 		Token:     token,
 		ExpiresAt: expiresAt,
 		SecretRef: secretRef,
+	}, nil
+}
+
+// IssueAgentToken is a direct Go method (used by the secret distributor) that
+// creates a short-lived, agent-scoped redemption token.  The returned
+// AgentIssueResult carries the RedeemURL that the agent must call (once, within
+// AgentTTL) to obtain the plaintext secret value.
+//
+// agentID must be the canonical agent identifier (e.g. "warren").
+// secretType defaults to "api_key" when empty.
+// purpose is optional; pass "" to omit.
+func (srv *Server) IssueAgentToken(ctx context.Context, agentID, secretRef, secretType, purpose string) (*AgentIssueResult, error) {
+	if agentID == "" {
+		return nil, fmt.Errorf("kuze: agentID must not be empty")
+	}
+	if secretRef == "" {
+		return nil, fmt.Errorf("kuze: secret_ref must not be empty")
+	}
+	if secretType == "" {
+		secretType = string(secrets.TypeAPIKey)
+	}
+
+	token, expiresAt, err := srv.tokens.IssueAgent(ctx, secretRef, secretType, agentID, purpose)
+	if err != nil {
+		return nil, fmt.Errorf("kuze: issue agent token: %w", err)
+	}
+
+	return &AgentIssueResult{
+		RedeemURL: fmt.Sprintf("%s/kuze/redeem/%s", srv.baseURL, token),
+		Token:     token,
+		ExpiresAt: expiresAt,
+		SecretRef: secretRef,
+		AgentID:   agentID,
 	}, nil
 }
 
@@ -191,6 +280,144 @@ func (srv *Server) handleIssueHuman(w http.ResponseWriter, r *http.Request) {
 		Token:     result.Token,
 		ExpiresAt: result.ExpiresAt,
 		SecretRef: result.SecretRef,
+	})
+}
+
+// handleIssueAgent handles POST /kuze/issue/agent
+//
+// Query params:
+//   - agent_id   (required) — the canonical agent identifier.
+//   - secret_ref (required) — the name of the secret the agent needs.
+//   - type       (optional) — secret type; defaults to "api_key".
+//   - purpose    (optional) — free-form audit label.
+//
+// This endpoint is internal and must not be exposed to the public internet.
+// The returned token is valid for AgentTTL (60 s) and can be redeemed exactly
+// once via GET /kuze/redeem/<token>.
+func (srv *Server) handleIssueAgent(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	agentID := r.URL.Query().Get("agent_id")
+	secretRef := r.URL.Query().Get("secret_ref")
+	secretType := r.URL.Query().Get("type")
+	purpose := r.URL.Query().Get("purpose")
+
+	result, err := srv.IssueAgentToken(r.Context(), agentID, secretRef, secretType, purpose)
+	if err != nil {
+		slog.Error("kuze: issue agent token via HTTP", "err", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	slog.Info("kuze: issued agent redemption token",
+		"agent", result.AgentID,
+		"ref", result.SecretRef,
+		"token_prefix", safePrefix(result.Token, 8),
+		"expires_at", result.ExpiresAt,
+	)
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(issueAgentResponse{
+		RedeemURL: result.RedeemURL,
+		Token:     result.Token,
+		ExpiresAt: result.ExpiresAt,
+		SecretRef: result.SecretRef,
+		AgentID:   result.AgentID,
+	})
+}
+
+// handleRedeem handles GET /kuze/redeem/<token>
+//
+// The agent sends:
+//   - The token in the URL path.
+//   - Its identity in the X-Agent-ID header (must match the token's agent_id).
+//
+// On success the token is atomically burned and the response carries the
+// base64-encoded plaintext secret value.  Any subsequent attempt with the
+// same token returns 410 Gone.
+//
+// This endpoint should be reachable by agents inside the Docker network.
+// It does NOT return HTML — responses are always JSON.
+func (srv *Server) handleRedeem(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	token := strings.TrimPrefix(r.URL.Path, "/kuze/redeem/")
+	if token == "" || strings.Contains(token, "/") {
+		http.NotFound(w, r)
+		return
+	}
+
+	claimedAgentID := r.Header.Get("X-Agent-ID")
+	if claimedAgentID == "" {
+		http.Error(w, `{"error":"X-Agent-ID header is required"}`, http.StatusUnauthorized)
+		return
+	}
+
+	// Check the getter is wired (misconfiguration guard).
+	if srv.getter == nil {
+		slog.Error("kuze: redeem called but no secrets getter is configured")
+		http.Error(w, `{"error":"service not fully initialised"}`, http.StatusNotImplemented)
+		return
+	}
+
+	// Atomically validate, enforce agent identity, and burn the token.
+	pt, err := srv.tokens.Redeem(r.Context(), token, claimedAgentID)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrTokenUsed), errors.Is(err, ErrTokenExpired), errors.Is(err, ErrTokenNotFound):
+			// Return 410 for all "token no longer valid" variants — do not
+			// distinguish between them to avoid oracle behaviour.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusGone)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "token not valid or already used"})
+		case errors.Is(err, ErrAgentIDMismatch):
+			slog.Warn("kuze: agent identity mismatch on redeem",
+				"claimed_agent", claimedAgentID,
+				"token_prefix", safePrefix(token, 8),
+			)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "agent identity mismatch"})
+		default:
+			slog.Error("kuze: redeem token", "err", err)
+			http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		}
+		return
+	}
+
+	// Fetch the plaintext secret value.
+	raw, err := srv.getter.Get(r.Context(), pt.SecretRef)
+	if err != nil {
+		// The token is already burned; log the failure but return an error so
+		// the agent knows to request a new token.
+		slog.Error("kuze: fetch secret after redeem",
+			"ref", pt.SecretRef,
+			"agent", claimedAgentID,
+			"err", err,
+		)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "secret unavailable; request a new token"})
+		return
+	}
+
+	slog.Info("kuze: secret redeemed by agent",
+		"agent", claimedAgentID,
+		"ref", pt.SecretRef,
+		"token_prefix", safePrefix(token, 8),
+	)
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(redeemResponse{
+		SecretRef:  pt.SecretRef,
+		SecretType: pt.SecretType,
+		Value:      base64.StdEncoding.EncodeToString(raw),
 	})
 }
 
