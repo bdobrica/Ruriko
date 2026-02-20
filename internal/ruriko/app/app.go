@@ -244,6 +244,11 @@ func New(config *Config) (*App, error) {
 	}
 	handlersCfg.Notifier = notifier
 
+	// Wire the Matrix client as the RoomSender so that the async
+	// provisioning pipeline (R5.2) can post breadcrumb notices back to the
+	// operator's admin room while each step is running.
+	handlersCfg.RoomSender = matrixClient
+
 	handlers := commands.NewHandlers(handlersCfg)
 
 	// Register command handlers

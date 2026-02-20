@@ -736,8 +736,8 @@ These are **real, working subsystems** — not scaffolding. The realignment phas
 - [x] Validate saito-agent and kumo-agent templates pass Gosuto schema validation
 - [x] Test: Templates load, render, and validate correctly (validate_test.go +2 tests; loader_test.go +5 tests)
 
-### R5.2 Automated Provisioning Pipeline
-- [ ] Implement sequential provisioning in `/ruriko agents create`:
+### R5.2 Automated Provisioning Pipeline ✅
+- [x] Implement sequential provisioning in `/ruriko agents create`:
   1. Create DB record
   2. Create Docker container
   3. Wait for container healthy
@@ -745,17 +745,17 @@ These are **real, working subsystems** — not scaffolding. The realignment phas
   5. Apply Gosuto config via ACP `/config/apply`
   6. Verify ACP `/status` reflects correct config hash
   7. Push secret tokens via ACP `/secrets/token`
-- [ ] Add provisioning state machine (pending → creating → configuring → healthy → error)
-- [ ] Post Matrix breadcrumbs at each step:
+- [x] Add provisioning state machine (pending → creating → configuring → healthy → error)
+- [x] Post Matrix breadcrumbs at each step:
   - "Provisioned Kairo" / "Applied config hash …" / "Kairo healthy"
-- [ ] Test: Full provisioning pipeline from template to healthy agent
+- [x] Test: Full provisioning pipeline from template to healthy agent
 
 ### R5.3 Agent Registry in Ruriko DB
 - [ ] Extend `agents` table (or create `agent_desired_state` table):
   - [ ] assigned gosuto hash (desired vs actual)
   - [ ] enabled/disabled flag
   - [ ] last health check timestamp
-  - [ ] provisioning state
+  - [x] provisioning state (`migration 0008_provisioning_state.sql` — `pending | creating | configuring | healthy | error`)
 - [ ] Reconciler compares desired state vs actual state and alerts on drift
 - [ ] Test: Registry tracks desired vs actual state correctly
 
@@ -989,12 +989,12 @@ The MVP is ready when **all** of the following are true:
 - [x] Phase R2: ACP Hardening — Auth, Idempotency, Timeouts ✅
 - [x] Phase R3: Kuze — Human Secret Entry ✅
 - [x] Phase R4: Token-Based Secret Distribution to Agents ✅
-- [ ] Phase R5: Agent Provisioning UX — Saito, Kairo, Kumo 🔄 *(R5.1 partial: saito-agent ✅ + kumo-agent ✅; kairo-agent deferred; R5.2–R5.4 pending)*
+- [ ] Phase R5: Agent Provisioning UX — Saito, Kairo, Kumo 🔄 *(R5.1 partial: saito-agent ✅ + kumo-agent ✅; kairo-agent deferred; R5.2 ✅; R5.3–R5.4 pending)*
 - [ ] Phase R6: Canonical Workflow — Saito → Kairo → Kumo
 - [ ] Phase R7: Observability, Safety, and Polish
 - [ ] Phase R8: Integration and End-to-End Testing
 
 ---
 
-**Last Updated**: 2026-02-20
-**Current Focus**: Phase R5 — Agent Provisioning UX (saito-agent + kumo-agent templates done; R5.2 automated provisioning pipeline next)
+**Last Updated**: 2026-02-21
+**Current Focus**: Phase R5 — Agent Provisioning UX (R5.2 automated provisioning pipeline ✅; R5.3 agent registry drift detection next)

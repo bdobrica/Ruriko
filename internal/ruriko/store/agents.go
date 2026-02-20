@@ -25,9 +25,15 @@ type Agent struct {
 	// the token can be injected into the agent's environment and looked up
 	// when building an ACP client.  NULL means authentication is disabled
 	// (dev/test mode).
-	ACPToken  sql.NullString
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ACPToken sql.NullString
+	// ProvisioningState tracks the fine-grained phase of the automated
+	// provisioning pipeline (R5.2).  Empty string = legacy agent created
+	// before this column was added.
+	//
+	// Values: 'pending' | 'creating' | 'configuring' | 'healthy' | 'error'
+	ProvisioningState string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 // CreateAgent inserts a new agent
@@ -36,10 +42,10 @@ func (s *Store) CreateAgent(ctx context.Context, agent *Agent) error {
 	agent.UpdatedAt = time.Now()
 
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO agents (id, mxid, display_name, template, status, container_id, control_url, image, acp_token, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO agents (id, mxid, display_name, template, status, container_id, control_url, image, acp_token, provisioning_state, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, agent.ID, agent.MXID, agent.DisplayName, agent.Template, agent.Status,
-		agent.ContainerID, agent.ControlURL, agent.Image, agent.ACPToken, agent.CreatedAt, agent.UpdatedAt)
+		agent.ContainerID, agent.ControlURL, agent.Image, agent.ACPToken, agent.ProvisioningState, agent.CreatedAt, agent.UpdatedAt)
 
 	if err != nil {
 		return fmt.Errorf("failed to create agent: %w", err)
@@ -54,14 +60,14 @@ func (s *Store) GetAgent(ctx context.Context, id string) (*Agent, error) {
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, mxid, display_name, template, status, last_seen,
 		       runtime_version, gosuto_version, container_id, control_url, image,
-		       acp_token, created_at, updated_at
+		       acp_token, provisioning_state, created_at, updated_at
 		FROM agents
 		WHERE id = ?
 	`, id).Scan(
 		&agent.ID, &agent.MXID, &agent.DisplayName, &agent.Template,
 		&agent.Status, &agent.LastSeen, &agent.RuntimeVersion,
 		&agent.GosutoVersion, &agent.ContainerID, &agent.ControlURL, &agent.Image,
-		&agent.ACPToken, &agent.CreatedAt, &agent.UpdatedAt,
+		&agent.ACPToken, &agent.ProvisioningState, &agent.CreatedAt, &agent.UpdatedAt,
 	)
 
 	if err == sql.ErrNoRows {
@@ -79,7 +85,7 @@ func (s *Store) ListAgents(ctx context.Context) ([]*Agent, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, mxid, display_name, template, status, last_seen,
 		       runtime_version, gosuto_version, container_id, control_url, image,
-		       acp_token, created_at, updated_at
+		       acp_token, provisioning_state, created_at, updated_at
 		FROM agents
 		ORDER BY created_at DESC
 	`)
@@ -95,7 +101,7 @@ func (s *Store) ListAgents(ctx context.Context) ([]*Agent, error) {
 			&agent.ID, &agent.MXID, &agent.DisplayName, &agent.Template,
 			&agent.Status, &agent.LastSeen, &agent.RuntimeVersion,
 			&agent.GosutoVersion, &agent.ContainerID, &agent.ControlURL, &agent.Image,
-			&agent.ACPToken, &agent.CreatedAt, &agent.UpdatedAt,
+			&agent.ACPToken, &agent.ProvisioningState, &agent.CreatedAt, &agent.UpdatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan agent: %w", err)
@@ -176,6 +182,50 @@ func (s *Store) UpdateAgentHandle(ctx context.Context, id, containerID, controlU
 		return fmt.Errorf("agent not found: %s", id)
 	}
 
+	return nil
+}
+
+// UpdateAgentProvisioningState updates the fine-grained provisioning pipeline
+// state for an agent (R5.2).
+//
+// Valid values: "pending", "creating", "configuring", "healthy", "error".
+func (s *Store) UpdateAgentProvisioningState(ctx context.Context, id, state string) error {
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE agents
+		SET provisioning_state = ?, updated_at = ?
+		WHERE id = ?
+	`, state, time.Now(), id)
+	if err != nil {
+		return fmt.Errorf("failed to update provisioning state: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("agent not found: %s", id)
+	}
+	return nil
+}
+
+// UpdateAgentGosutoApplied records the version number of the Gosuto config
+// that was successfully applied to a running agent via ACP.
+func (s *Store) UpdateAgentGosutoApplied(ctx context.Context, id string, version int) error {
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE agents
+		SET gosuto_version = ?, updated_at = ?
+		WHERE id = ?
+	`, version, time.Now(), id)
+	if err != nil {
+		return fmt.Errorf("failed to update applied gosuto version: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("agent not found: %s", id)
+	}
 	return nil
 }
 

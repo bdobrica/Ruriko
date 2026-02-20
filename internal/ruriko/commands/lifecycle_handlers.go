@@ -55,6 +55,18 @@ func generateACPToken() (string, error) {
 // HandleAgentsCreate provisions a new agent container.
 //
 // Usage: /ruriko agents create --name <id> --template <tmpl> --image <image>
+//
+// When a template registry is available the handler spawns the container
+// synchronously (so a container ID is immediately persisted), then launches
+// the async provisioning pipeline (R5.2) which:
+//
+//  1. Waits for the container to reach "running"
+//  2. Waits for ACP /health to respond
+//  3. Renders the Gosuto template and pushes it via ACP /config/apply
+//  4. Verifies /status reports the correct config hash
+//  5. Pushes bound secrets via the distributor
+//
+// Progress breadcrumbs are posted back to the originating Matrix room.
 func (h *Handlers) HandleAgentsCreate(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
 	ctx = trace.WithTraceID(ctx, traceID)
@@ -85,21 +97,22 @@ func (h *Handlers) HandleAgentsCreate(ctx context.Context, cmd *Command, evt *ev
 		return "", fmt.Errorf("agent %q already exists", agentID)
 	}
 
-	// Insert agent record with status=creating
-	agent := &store.Agent{
-		ID:          agentID,
-		DisplayName: displayName,
-		Template:    template,
-		Status:      "creating",
-	}
-	agent.Image.String = image
-	agent.Image.Valid = true
-
 	// Generate a per-agent ACP bearer token (R2.1).
 	acpToken, err := generateACPToken()
 	if err != nil {
 		return "", fmt.Errorf("failed to generate ACP token: %w", err)
 	}
+
+	// Insert agent record with status=creating and provisioning_state=pending.
+	agent := &store.Agent{
+		ID:                agentID,
+		DisplayName:       displayName,
+		Template:          template,
+		Status:            "creating",
+		ProvisioningState: "pending",
+	}
+	agent.Image.String = image
+	agent.Image.Valid = true
 	agent.ACPToken.String = acpToken
 	agent.ACPToken.Valid = true
 
@@ -108,8 +121,10 @@ func (h *Handlers) HandleAgentsCreate(ctx context.Context, cmd *Command, evt *ev
 		return "", fmt.Errorf("failed to create agent record: %w", err)
 	}
 
+	// --- no runtime path ------------------------------------------------
 	if h.runtime == nil {
 		h.store.UpdateAgentStatus(ctx, agentID, "stopped")
+		h.store.UpdateAgentProvisioningState(ctx, agentID, "")
 		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.create", agentID, "success",
 			store.AuditPayload{"note": "no runtime configured, agent created as stopped"}, "")
 		h.notifier.Notify(ctx, audit.Event{
@@ -119,7 +134,7 @@ func (h *Handlers) HandleAgentsCreate(ctx context.Context, cmd *Command, evt *ev
 		return fmt.Sprintf("✅ Agent **%s** created (no runtime configured, status: stopped)\n\n(trace: %s)", agentID, traceID), nil
 	}
 
-	// Spawn container via runtime
+	// --- spawn container ------------------------------------------------
 	spec := runtime.AgentSpec{
 		ID:          agentID,
 		DisplayName: displayName,
@@ -133,22 +148,76 @@ func (h *Handlers) HandleAgentsCreate(ctx context.Context, cmd *Command, evt *ev
 	handle, err := h.runtime.Spawn(ctx, spec)
 	if err != nil {
 		h.store.UpdateAgentStatus(ctx, agentID, "error")
+		h.store.UpdateAgentProvisioningState(ctx, agentID, "error")
 		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.create", agentID, "error", nil, err.Error())
 		return "", fmt.Errorf("failed to spawn container: %w", err)
 	}
 
-	// Persist container details
+	// Persist container details immediately so the reconciler and other
+	// readers always find a valid handle even while the pipeline is running.
 	if err := h.store.UpdateAgentHandle(ctx, agentID, handle.ContainerID, handle.ControlURL, image); err != nil {
 		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.create", agentID, "error", nil, err.Error())
 		return "", fmt.Errorf("container spawned but failed to save handle: %w", err)
 	}
 
+	// --- with template registry: async pipeline -------------------------
+	if h.templates != nil {
+		pipelineArgs := provisionArgs{
+			agentID:      agentID,
+			template:     template,
+			displayName:  displayName,
+			handle:       handle,
+			controlURL:   handle.ControlURL,
+			acpToken:     acpToken,
+			roomID:       evt.RoomID.String(),
+			operatorMXID: evt.Sender.String(),
+			traceID:      traceID,
+		}
+
+		// Launch the pipeline in a background goroutine using a detached context
+		// so it is not cancelled when the Matrix event handler returns.
+		bgCtx := trace.WithTraceID(context.Background(), traceID)
+		go h.runProvisioningPipeline(bgCtx, pipelineArgs)
+
+		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.create", agentID, "success",
+			store.AuditPayload{
+				"container_id": truncateID(handle.ContainerID, 12),
+				"control_url":  handle.ControlURL,
+				"pipeline":     "async",
+			}, "")
+
+		return fmt.Sprintf(`⏳ Agent **%s** container spawned — provisioning pipeline started
+
+Template:    %s
+Image:       %s
+Container:   %s
+Control URL: %s
+
+You will receive breadcrumb updates in this room as each step completes.
+
+(trace: %s)`,
+			agentID, template, image, truncateID(handle.ContainerID, 12), handle.ControlURL, traceID,
+		), nil
+	}
+
+	// --- without template registry: legacy immediate path ---------------
+	// The container is running but no Gosuto has been applied.  Operators
+	// can push config manually with `/ruriko gosuto push <name>` later.
+	slog.Warn("provision: no template registry configured; Gosuto will not be applied to new agent",
+		"agent", agentID, "template", template)
+
 	h.store.UpdateAgentStatus(ctx, agentID, "running")
+	h.store.UpdateAgentProvisioningState(ctx, agentID, "")
 	h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.create", agentID, "success",
-		store.AuditPayload{"container_id": truncateID(handle.ContainerID, 12), "control_url": handle.ControlURL}, "")
+		store.AuditPayload{
+			"container_id": truncateID(handle.ContainerID, 12),
+			"control_url":  handle.ControlURL,
+			"note":         "no template registry; gosuto not applied",
+		}, "")
 	h.notifier.Notify(ctx, audit.Event{
 		Kind: audit.KindAgentCreated, Actor: evt.Sender.String(), Target: agentID,
-		Message: fmt.Sprintf("created and started (container: %s)", truncateID(handle.ContainerID, 12)), TraceID: traceID,
+		Message: fmt.Sprintf("created and started (container: %s; no gosuto applied)",
+			truncateID(handle.ContainerID, 12)), TraceID: traceID,
 	})
 
 	return fmt.Sprintf(`✅ Agent **%s** created and started
@@ -158,8 +227,11 @@ Image:       %s
 Container:   %s
 Control URL: %s
 
+⚠️  No template registry configured — Gosuto was not applied.
+Use /ruriko gosuto push %s after storing a config.
+
 (trace: %s)`,
-		agentID, template, image, truncateID(handle.ContainerID, 12), handle.ControlURL, traceID,
+		agentID, template, image, truncateID(handle.ContainerID, 12), handle.ControlURL, agentID, traceID,
 	), nil
 }
 

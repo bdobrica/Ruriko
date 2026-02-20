@@ -35,6 +35,16 @@ type HandlersConfig struct {
 	Approvals   *approvals.Gate           // optional — enables approval gating
 	Notifier    audit.Notifier            // optional — enables audit room notifications
 	Kuze        *kuze.Server              // optional — enables one-time secret-entry links
+	// RoomSender, when non-nil, is used by the async provisioning pipeline to
+	// post Matrix breadcrumb notices back to the room where the operator
+	// issued the create command.  The *matrix.Client satisfies this interface.
+	RoomSender RoomSender // optional — enables provisioning breadcrumbs
+}
+
+// RoomSender is the subset of the Matrix client needed for posting breadcrumb
+// notices back to the operator's Matrix room during the provisioning pipeline.
+type RoomSender interface {
+	SendNotice(roomID, message string) error
 }
 
 // Handlers holds all command handlers and dependencies.
@@ -48,6 +58,7 @@ type Handlers struct {
 	approvals   *approvals.Gate
 	notifier    audit.Notifier
 	kuze        *kuze.Server
+	roomSender  RoomSender
 	dispatch    DispatchFunc
 }
 
@@ -67,6 +78,7 @@ func NewHandlers(cfg HandlersConfig) *Handlers {
 		approvals:   cfg.Approvals,
 		notifier:    n,
 		kuze:        cfg.Kuze,
+		roomSender:  cfg.RoomSender,
 	}
 }
 
