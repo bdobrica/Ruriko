@@ -60,6 +60,15 @@ type Config struct {
 	// disabled (dev/test mode).
 	ACPToken string
 
+	// DirectSecretPushEnabled re-enables the legacy POST /secrets/apply endpoint
+	// that sends raw (base64-encoded) secret values directly in the ACP request
+	// body.  This is DISABLED by default (production safe) — secrets must flow
+	// via Kuze token redemption (POST /secrets/token).  Set to true only for
+	// local dev or one-off migration scenarios.
+	//
+	// Environment variable: FEATURE_DIRECT_SECRET_PUSH (default: false)
+	DirectSecretPushEnabled bool
+
 	// LogLevel is "debug", "info", "warn", or "error". Defaults to "info".
 	LogLevel string
 	// LogFormat is "text" or "json". Defaults to "text".
@@ -171,12 +180,13 @@ func New(cfg *Config) (*App, error) {
 		acpAddr = ":8765"
 	}
 	app.acpServer = control.New(acpAddr, control.Handlers{
-		AgentID:    cfg.AgentID,
-		Version:    version.Version,
-		StartedAt:  app.startedAt,
-		Token:      cfg.ACPToken,
-		GosutoHash: gosutoLdr.Hash,
-		MCPNames:   supv.Names,
+		AgentID:                 cfg.AgentID,
+		Version:                 version.Version,
+		StartedAt:               app.startedAt,
+		Token:                   cfg.ACPToken,
+		DirectSecretPushEnabled: cfg.DirectSecretPushEnabled,
+		GosutoHash:              gosutoLdr.Hash,
+		MCPNames:                supv.Names,
 		ApplyConfig: func(yaml, hash string) error {
 			if err := gosutoLdr.Apply([]byte(yaml)); err != nil {
 				return err

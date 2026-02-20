@@ -512,3 +512,87 @@ func TestSecretsToken_WrongMethod(t *testing.T) {
 		t.Errorf("expected 405, got %d", resp.StatusCode)
 	}
 }
+
+// --- R4.4: Deprecate Direct Secret Push ------------------------------------
+
+// TestSecretsApply_DisabledByDefault verifies that POST /secrets/apply returns
+// 410 Gone when DirectSecretPushEnabled is false (the production default).
+// Secrets must only flow via POST /secrets/token + Kuze token redemption.
+func TestSecretsApply_DisabledByDefault(t *testing.T) {
+	// DirectSecretPushEnabled defaults to false — not set in newTestServer.
+	ts := startTestServer(t, "")
+
+	body, _ := json.Marshal(control.SecretsApplyRequest{
+		Secrets: map[string]string{"openai_api_key": "c2VjcmV0"},
+	})
+	resp, err := http.Post(ts.URL+"/secrets/apply", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /secrets/apply: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusGone {
+		t.Errorf("expected 410 Gone (direct push disabled), got %d", resp.StatusCode)
+	}
+
+	var errBody map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&errBody); err == nil {
+		if msg, ok := errBody["error"]; !ok || msg == "" {
+			t.Error("expected non-empty error message in 410 response body")
+		}
+	}
+}
+
+// TestSecretsApply_EnabledWithFlag verifies that POST /secrets/apply is
+// functional when DirectSecretPushEnabled=true (dev / migration mode).
+func TestSecretsApply_EnabledWithFlag(t *testing.T) {
+	applied := make(map[string]string)
+
+	srv := control.New(":0", control.Handlers{
+		AgentID:                 "test-agent",
+		Version:                 "v0.1",
+		StartedAt:               time.Now(),
+		DirectSecretPushEnabled: true, // explicitly enable legacy path
+		ApplySecrets: func(secrets map[string]string) error {
+			for k, v := range secrets {
+				applied[k] = v
+			}
+			return nil
+		},
+	})
+	ts := httptest.NewServer(srv.TestHandler())
+	defer ts.Close()
+
+	body, _ := json.Marshal(control.SecretsApplyRequest{
+		Secrets: map[string]string{"openai_api_key": "c2VjcmV0"},
+	})
+	resp, err := http.Post(ts.URL+"/secrets/apply", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /secrets/apply: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200 OK with flag enabled, got %d: %s", resp.StatusCode, b)
+	}
+	if v, ok := applied["openai_api_key"]; !ok || v != "c2VjcmV0" {
+		t.Errorf("secret not applied correctly: got %v", applied)
+	}
+}
+
+// TestSecretsApply_DisabledIgnoresBody verifies that the 410 response is
+// returned regardless of the request body content (bad JSON, empty, etc.).
+func TestSecretsApply_DisabledIgnoresBody(t *testing.T) {
+	ts := startTestServer(t, "")
+
+	resp, err := http.Post(ts.URL+"/secrets/apply", "application/json", strings.NewReader(`{bad json`))
+	if err != nil {
+		t.Fatalf("POST /secrets/apply: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusGone {
+		t.Errorf("expected 410 Gone even with invalid body, got %d", resp.StatusCode)
+	}
+}

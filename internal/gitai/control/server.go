@@ -16,10 +16,16 @@
 //	GET  /health          → HealthResponse
 //	GET  /status          → StatusResponse
 //	POST /config/apply    → ConfigApplyRequest → 200 OK
-//	POST /secrets/apply   → SecretsApplyRequest → 200 OK
+//	POST /secrets/apply   → SecretsApplyRequest → 200 OK  [disabled by default, see R4.4]
 //	POST /secrets/token   → SecretsTokenRequest → 200 OK (redeems via Kuze)
 //	POST /process/restart → 202 Accepted (triggers shutdown via restartFn)
 //	POST /tasks/cancel    → 202 Accepted (cancels current in-flight task)
+//
+// Security hardening (Phase R4.4):
+//   - POST /secrets/apply is disabled by default (Handlers.DirectSecretPushEnabled=false).
+//     In production, secrets must flow via POST /secrets/token + Kuze redemption so that
+//     plaintext values never traverse the ACP payload.  Set DirectSecretPushEnabled=true
+//     only in dev or during migration.  A disabled endpoint returns 410 Gone.
 package control
 
 import (
@@ -143,6 +149,15 @@ type Handlers struct {
 	// Token, when non-empty, is the expected bearer token for all requests.
 	// When empty, authentication is disabled (useful in local dev/test).
 	Token string
+
+	// DirectSecretPushEnabled controls whether the legacy POST /secrets/apply
+	// endpoint (which carries raw secret values in the ACP request body) is
+	// active.  Production deployments MUST leave this false (the default) so
+	// that secrets only flow via Kuze token redemption (POST /secrets/token).
+	// Setting this to true re-enables the old path for dev/migration use only.
+	//
+	// Feature flag: FEATURE_DIRECT_SECRET_PUSH (default: false / OFF)
+	DirectSecretPushEnabled bool
 
 	// GosutoHash returns the hash of the currently applied Gosuto config.
 	GosutoHash func() string
@@ -320,6 +335,15 @@ func (s *Server) handleConfigApply(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSecretsApply(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// R4.4: Direct secret push is disabled by default (production mode).
+	// Secrets must be distributed via Kuze token redemption (POST /secrets/token).
+	// Enable FEATURE_DIRECT_SECRET_PUSH only for dev or migration scenarios.
+	if !s.handlers.DirectSecretPushEnabled {
+		writeError(w, http.StatusGone,
+			"direct secret push is disabled; use POST /secrets/token with Kuze token redemption")
 		return
 	}
 

@@ -688,16 +688,16 @@ These are **real, working subsystems** — not scaffolding. The realignment phas
 - [x] Test: Secret manager caches, respects TTL, never logs values
 
 ### R4.4 Deprecate Direct Secret Push
-- [ ] Add `FEATURE_DIRECT_SECRET_PUSH=false` flag (default OFF)
-- [ ] If flag is ON, old `/secrets/apply` still works (dev/migration use)
-- [ ] If flag is OFF (production default), `/secrets/apply` returns 410 Gone
-- [ ] Add test ensuring direct push is disabled by default
+- [x] Add `FEATURE_DIRECT_SECRET_PUSH=false` flag (default OFF)
+- [x] If flag is ON, old `/secrets/apply` still works (dev/migration use)
+- [x] If flag is OFF (production default), `/secrets/apply` returns 410 Gone
+- [x] Add test ensuring direct push is disabled by default
 - [ ] Remove old push code path in a later cleanup phase
 
 ### Definition of done
-- Agents retrieve secrets only via Kuze redemption tokens
-- Secrets never appear in ACP request/response bodies (production mode)
-- Secret manager caches and provides secrets to tool calls
+- ✅ Agents retrieve secrets only via Kuze redemption tokens (R4.1 + R4.2 complete)
+- ✅ Secrets never appear in ACP request/response bodies (production mode) (R4.4 complete — 410 Gone by default)
+- ⚠️ Secret manager caches and provides secrets to tool calls — **BLOCKED on R4.3 wiring item**: `Wire secret manager into MCP tool calls` is still pending
 
 ---
 
