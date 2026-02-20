@@ -8,8 +8,29 @@ import (
 	"time"
 
 	"github.com/bdobrica/Ruriko/common/trace"
+	"github.com/bdobrica/Ruriko/internal/ruriko/runtime/acp"
 	"github.com/bdobrica/Ruriko/internal/ruriko/store"
 )
+
+// ACPStatusChecker is the subset of the ACP client used during reconciliation.
+// It is defined here so that tests can provide lightweight mocks without
+// importing the full acp package.
+//
+// *acp.Client satisfies this interface directly.
+type ACPStatusChecker interface {
+	Health(ctx context.Context) (*acp.HealthResponse, error)
+	Status(ctx context.Context) (*acp.StatusResponse, error)
+}
+
+// ACPClientFactory constructs an ACPStatusChecker for the given agent control
+// URL and bearer token.  Pass acp.NewACPChecker as the production factory.
+// If nil, ACP health checks and drift detection are skipped.
+type ACPClientFactory func(controlURL, token string) ACPStatusChecker
+
+// NewACPChecker is the production ACPClientFactory — it wraps acp.New.
+func NewACPChecker(controlURL, token string) ACPStatusChecker {
+	return acp.New(controlURL, acp.Options{Token: token})
+}
 
 // ReconcilerConfig configures the reconciliation loop.
 type ReconcilerConfig struct {
@@ -18,6 +39,17 @@ type ReconcilerConfig struct {
 	// AlertFunc is called when an unexpected state change is detected.
 	// If nil, issues are only logged.
 	AlertFunc func(agentID, message string)
+
+	// ACPClientFactory, when non-nil, is used to create ACP clients for
+	// enabled agents whose provisioning_state is "healthy".  Used to
+	// refresh actual_gosuto_hash and last_health_check.
+	// If nil, ACP queries are skipped entirely.
+	ACPClientFactory ACPClientFactory
+
+	// HealthStaleThreshold is the maximum acceptable age of a successful
+	// ACP /health response before the reconciler raises an alert.
+	// Zero (default) disables staleness alerting.
+	HealthStaleThreshold time.Duration
 }
 
 // Reconciler periodically syncs container state into the agents table.
@@ -125,6 +157,15 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 		if status.State == StateRunning {
 			r.store.UpdateAgentLastSeen(ctx, agent.ID)
 		}
+
+		// R5.3: ACP health + drift detection for healthy, enabled agents.
+		if r.cfg.ACPClientFactory != nil &&
+			agent.Enabled &&
+			agent.ProvisioningState == "healthy" &&
+			agent.ControlURL.Valid && agent.ControlURL.String != "" {
+
+			r.reconcileACP(ctx, agent)
+		}
 	}
 
 	// Detect orphan containers: ruriko-managed containers with no DB record.
@@ -157,4 +198,72 @@ func containerStateToAgentStatus(state ContainerState) string {
 	default:
 		return "error"
 	}
+}
+
+// reconcileACP performs ACP-level drift detection and health checks for a
+// single healthy, enabled agent.  It is called for every agent whose
+// provisioning_state is "healthy" and whose control URL is known.
+//
+// On each reconcile pass it:
+//  1. Calls ACP GET /health → updates last_health_check on success; alerts on
+//     failure.  Optionally alerts when last_health_check is stale.
+//  2. Calls ACP GET /status → updates actual_gosuto_hash in the DB.  If the
+//     actual hash differs from desired_gosuto_hash, emits a drift alert.
+func (r *Reconciler) reconcileACP(ctx context.Context, agent *store.Agent) {
+	checker := r.cfg.ACPClientFactory(agent.ControlURL.String, agent.ACPToken.String)
+
+	// --- health check ---------------------------------------------------
+	if _, err := checker.Health(ctx); err != nil {
+		slog.Warn("[reconciler] ACP health check failed",
+			"agent", agent.ID, "err", err, "trace_id", trace.FromContext(ctx))
+		r.alert(agent.ID, fmt.Sprintf("ACP health check failed: %v", err))
+	} else {
+		if err := r.store.UpdateAgentHealthCheck(ctx, agent.ID); err != nil {
+			slog.Warn("[reconciler] failed to update last_health_check",
+				"agent", agent.ID, "err", err)
+		}
+	}
+
+	// Staleness check: alert if the last successful health check is too old.
+	if r.cfg.HealthStaleThreshold > 0 && agent.LastHealthCheck.Valid {
+		age := time.Since(agent.LastHealthCheck.Time)
+		if age > r.cfg.HealthStaleThreshold {
+			r.alert(agent.ID, fmt.Sprintf("health check stale: last seen %s ago (threshold: %s)",
+				age.Round(time.Second), r.cfg.HealthStaleThreshold))
+		}
+	}
+
+	// --- status / drift check -------------------------------------------
+	statusResp, err := checker.Status(ctx)
+	if err != nil {
+		slog.Warn("[reconciler] ACP status check failed",
+			"agent", agent.ID, "err", err, "trace_id", trace.FromContext(ctx))
+		// Non-fatal: we'll retry on the next pass.
+		return
+	}
+
+	if statusResp.GosutoHash != "" {
+		if err := r.store.SetAgentActualGosutoHash(ctx, agent.ID, statusResp.GosutoHash); err != nil {
+			slog.Warn("[reconciler] failed to update actual_gosuto_hash",
+				"agent", agent.ID, "err", err)
+		}
+
+		// Drift: desired is known and differs from what the agent is running.
+		if agent.DesiredGosutoHash.Valid && agent.DesiredGosutoHash.String != "" &&
+			statusResp.GosutoHash != agent.DesiredGosutoHash.String {
+			r.alert(agent.ID, fmt.Sprintf(
+				"Gosuto config drift detected: desired=%s…, actual=%s…",
+				truncate(agent.DesiredGosutoHash.String, 8),
+				truncate(statusResp.GosutoHash, 8),
+			))
+		}
+	}
+}
+
+// truncate returns the first n characters of s, or s itself if it is shorter.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
 }

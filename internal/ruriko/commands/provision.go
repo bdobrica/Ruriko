@@ -204,6 +204,12 @@ func (h *Handlers) runProvisioningPipeline(ctx context.Context, args provisionAr
 		slog.Warn("provision: failed to record applied gosuto version",
 			"agent", agentID, "version", gv.Version, "err", err)
 	}
+	// R5.3: record the pushed hash as the desired state so the reconciler
+	// can detect drift in subsequent reconciliation passes.
+	if err := h.store.SetAgentDesiredGosutoHash(ctx, agentID, hash); err != nil {
+		slog.Warn("provision: failed to record desired gosuto hash",
+			"agent", agentID, "hash", hash[:8], "err", err)
+	}
 
 	// --- step 5: verify /status reports the correct config hash ----------
 	send(fmt.Sprintf("⏳ [4/5] Verifying config hash on **%s**...", agentID))
@@ -220,6 +226,20 @@ func (h *Handlers) runProvisioningPipeline(ctx context.Context, args provisionAr
 			fmt.Errorf("config hash mismatch: agent reports %q, expected %q",
 				statusResp.GosutoHash, hash))
 		return
+	}
+	// R5.3: persist the hash the agent is actually running so the registry
+	// starts in sync (desired == actual) right after provisioning.
+	if reportedHash := statusResp.GosutoHash; reportedHash == "" {
+		reportedHash = hash // agent doesn't echo hash yet; assume it applied correctly
+		if err := h.store.SetAgentActualGosutoHash(ctx, agentID, reportedHash); err != nil {
+			slog.Warn("provision: failed to record actual gosuto hash",
+				"agent", agentID, "hash", reportedHash[:8], "err", err)
+		}
+	} else {
+		if err := h.store.SetAgentActualGosutoHash(ctx, agentID, reportedHash); err != nil {
+			slog.Warn("provision: failed to record actual gosuto hash",
+				"agent", agentID, "hash", reportedHash[:8], "err", err)
+		}
 	}
 	send(fmt.Sprintf("✅ [4/5] Config hash verified on **%s**", agentID))
 

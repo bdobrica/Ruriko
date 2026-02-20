@@ -751,13 +751,13 @@ These are **real, working subsystems** — not scaffolding. The realignment phas
 - [x] Test: Full provisioning pipeline from template to healthy agent
 
 ### R5.3 Agent Registry in Ruriko DB
-- [ ] Extend `agents` table (or create `agent_desired_state` table):
-  - [ ] assigned gosuto hash (desired vs actual)
-  - [ ] enabled/disabled flag
-  - [ ] last health check timestamp
+- [x] Extend `agents` table (or create `agent_desired_state` table):
+  - [x] assigned gosuto hash (desired vs actual)
+  - [x] enabled/disabled flag
+  - [x] last health check timestamp
   - [x] provisioning state (`migration 0008_provisioning_state.sql` — `pending | creating | configuring | healthy | error`)
-- [ ] Reconciler compares desired state vs actual state and alerts on drift
-- [ ] Test: Registry tracks desired vs actual state correctly
+- [x] Reconciler compares desired state vs actual state and alerts on drift
+- [x] Test: Registry tracks desired vs actual state correctly
 
 ### R5.4 Chat-Driven Creation
 - [ ] Handle natural language requests (stretch goal — can be command-based for MVP):
@@ -989,7 +989,7 @@ The MVP is ready when **all** of the following are true:
 - [x] Phase R2: ACP Hardening — Auth, Idempotency, Timeouts ✅
 - [x] Phase R3: Kuze — Human Secret Entry ✅
 - [x] Phase R4: Token-Based Secret Distribution to Agents ✅
-- [ ] Phase R5: Agent Provisioning UX — Saito, Kairo, Kumo 🔄 *(R5.1 partial: saito-agent ✅ + kumo-agent ✅; kairo-agent deferred; R5.2 ✅; R5.3–R5.4 pending)*
+- [ ] Phase R5: Agent Provisioning UX — Saito, Kairo, Kumo 🔄 *(R5.1 partial: saito-agent ✅ + kumo-agent ✅; kairo-agent deferred; R5.2 ✅; R5.3 ✅; R5.4 pending)*
 - [ ] Phase R6: Canonical Workflow — Saito → Kairo → Kumo
 - [ ] Phase R7: Observability, Safety, and Polish
 - [ ] Phase R8: Integration and End-to-End Testing
@@ -997,4 +997,4 @@ The MVP is ready when **all** of the following are true:
 ---
 
 **Last Updated**: 2026-02-21
-**Current Focus**: Phase R5 — Agent Provisioning UX (R5.2 automated provisioning pipeline ✅; R5.3 agent registry drift detection next)
+**Current Focus**: Phase R5 — Agent Provisioning UX (R5.2 automated provisioning pipeline ✅; R5.3 agent registry drift detection ✅; R5.4 chat-driven creation next)

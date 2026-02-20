@@ -34,6 +34,26 @@ type Agent struct {
 	ProvisioningState string
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
+
+	// R5.3 – desired/actual Gosuto hash tracking and registry fields.
+
+	// DesiredGosutoHash is the SHA-256 of the Gosuto version most recently
+	// pushed to the agent (set by HandleGosutoPush / provisioning pipeline).
+	// NULL means no config has been pushed yet.
+	DesiredGosutoHash sql.NullString
+
+	// ActualGosutoHash is the SHA-256 reported by the agent via ACP GET
+	// /status.  Updated by the reconciler on each pass.
+	// NULL means the agent has not yet responded to a status query.
+	ActualGosutoHash sql.NullString
+
+	// Enabled indicates whether the agent is administratively active.
+	// Disabled agents are skipped by the reconciler.
+	Enabled bool
+
+	// LastHealthCheck is the timestamp of the last successful ACP GET /health
+	// response.  NULL means the agent has never responded to a health check.
+	LastHealthCheck sql.NullTime
 }
 
 // CreateAgent inserts a new agent
@@ -60,7 +80,8 @@ func (s *Store) GetAgent(ctx context.Context, id string) (*Agent, error) {
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, mxid, display_name, template, status, last_seen,
 		       runtime_version, gosuto_version, container_id, control_url, image,
-		       acp_token, provisioning_state, created_at, updated_at
+		       acp_token, provisioning_state, created_at, updated_at,
+		       desired_gosuto_hash, actual_gosuto_hash, enabled, last_health_check
 		FROM agents
 		WHERE id = ?
 	`, id).Scan(
@@ -68,6 +89,7 @@ func (s *Store) GetAgent(ctx context.Context, id string) (*Agent, error) {
 		&agent.Status, &agent.LastSeen, &agent.RuntimeVersion,
 		&agent.GosutoVersion, &agent.ContainerID, &agent.ControlURL, &agent.Image,
 		&agent.ACPToken, &agent.ProvisioningState, &agent.CreatedAt, &agent.UpdatedAt,
+		&agent.DesiredGosutoHash, &agent.ActualGosutoHash, &agent.Enabled, &agent.LastHealthCheck,
 	)
 
 	if err == sql.ErrNoRows {
@@ -85,7 +107,8 @@ func (s *Store) ListAgents(ctx context.Context) ([]*Agent, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, mxid, display_name, template, status, last_seen,
 		       runtime_version, gosuto_version, container_id, control_url, image,
-		       acp_token, provisioning_state, created_at, updated_at
+		       acp_token, provisioning_state, created_at, updated_at,
+		       desired_gosuto_hash, actual_gosuto_hash, enabled, last_health_check
 		FROM agents
 		ORDER BY created_at DESC
 	`)
@@ -102,6 +125,7 @@ func (s *Store) ListAgents(ctx context.Context) ([]*Agent, error) {
 			&agent.Status, &agent.LastSeen, &agent.RuntimeVersion,
 			&agent.GosutoVersion, &agent.ContainerID, &agent.ControlURL, &agent.Image,
 			&agent.ACPToken, &agent.ProvisioningState, &agent.CreatedAt, &agent.UpdatedAt,
+			&agent.DesiredGosutoHash, &agent.ActualGosutoHash, &agent.Enabled, &agent.LastHealthCheck,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan agent: %w", err)
@@ -322,4 +346,137 @@ func (s *Store) AgentCount(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("failed to count agents: %w", err)
 	}
 	return count, nil
+}
+
+// ── R5.3: desired/actual Gosuto hash tracking and registry methods ────────────
+
+// SetAgentDesiredGosutoHash records the SHA-256 hash of the Gosuto version
+// that Ruriko most recently *pushed* to the agent.  Called by HandleGosutoPush
+// and the provisioning pipeline after a successful ACP config/apply call.
+func (s *Store) SetAgentDesiredGosutoHash(ctx context.Context, id, hash string) error {
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE agents
+		SET desired_gosuto_hash = ?, updated_at = ?
+		WHERE id = ?
+	`, hash, time.Now(), id)
+	if err != nil {
+		return fmt.Errorf("set desired gosuto hash: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("agent not found: %s", id)
+	}
+	return nil
+}
+
+// SetAgentActualGosutoHash records the SHA-256 hash that the agent reported
+// via ACP GET /status.  Called by the reconciler on each successful status
+// query.
+func (s *Store) SetAgentActualGosutoHash(ctx context.Context, id, hash string) error {
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE agents
+		SET actual_gosuto_hash = ?, updated_at = ?
+		WHERE id = ?
+	`, hash, time.Now(), id)
+	if err != nil {
+		return fmt.Errorf("set actual gosuto hash: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("agent not found: %s", id)
+	}
+	return nil
+}
+
+// UpdateAgentHealthCheck records the current timestamp as the time of the last
+// successful ACP GET /health response.  Called by the reconciler.
+func (s *Store) UpdateAgentHealthCheck(ctx context.Context, id string) error {
+	now := time.Now()
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE agents
+		SET last_health_check = ?, updated_at = ?
+		WHERE id = ?
+	`, now, now, id)
+	if err != nil {
+		return fmt.Errorf("update last health check: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("agent not found: %s", id)
+	}
+	return nil
+}
+
+// SetAgentEnabled sets the enabled flag for an agent.  Disabled agents are
+// skipped by the reconciler.
+func (s *Store) SetAgentEnabled(ctx context.Context, id string, enabled bool) error {
+	enabledInt := 0
+	if enabled {
+		enabledInt = 1
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE agents
+		SET enabled = ?, updated_at = ?
+		WHERE id = ?
+	`, enabledInt, time.Now(), id)
+	if err != nil {
+		return fmt.Errorf("set agent enabled: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("agent not found: %s", id)
+	}
+	return nil
+}
+
+// ListDriftingAgents returns all enabled agents where the desired Gosuto hash
+// is known but differs from the actual Gosuto hash reported by the agent.
+// These agents are candidates for re-push or operator attention.
+func (s *Store) ListDriftingAgents(ctx context.Context) ([]*Agent, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, mxid, display_name, template, status, last_seen,
+		       runtime_version, gosuto_version, container_id, control_url, image,
+		       acp_token, provisioning_state, created_at, updated_at,
+		       desired_gosuto_hash, actual_gosuto_hash, enabled, last_health_check
+		FROM agents
+		WHERE enabled = 1
+		  AND desired_gosuto_hash IS NOT NULL
+		  AND (actual_gosuto_hash IS NULL OR actual_gosuto_hash != desired_gosuto_hash)
+		ORDER BY updated_at DESC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("list drifting agents: %w", err)
+	}
+	defer rows.Close()
+
+	var agents []*Agent
+	for rows.Next() {
+		agent := &Agent{}
+		if err := rows.Scan(
+			&agent.ID, &agent.MXID, &agent.DisplayName, &agent.Template,
+			&agent.Status, &agent.LastSeen, &agent.RuntimeVersion,
+			&agent.GosutoVersion, &agent.ContainerID, &agent.ControlURL, &agent.Image,
+			&agent.ACPToken, &agent.ProvisioningState, &agent.CreatedAt, &agent.UpdatedAt,
+			&agent.DesiredGosutoHash, &agent.ActualGosutoHash, &agent.Enabled, &agent.LastHealthCheck,
+		); err != nil {
+			return nil, fmt.Errorf("scan drifting agent: %w", err)
+		}
+		agents = append(agents, agent)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate drifting agents: %w", err)
+	}
+	return agents, nil
 }

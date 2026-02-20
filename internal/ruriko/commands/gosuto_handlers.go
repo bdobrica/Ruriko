@@ -406,6 +406,12 @@ func (h *Handlers) HandleGosutoPush(ctx context.Context, cmd *Command, evt *even
 		return "", fmt.Errorf("failed to push Gosuto config: %w", err)
 	}
 
+	// R5.3: record the hash we just pushed as the desired state so the
+	// reconciler can detect drift if the agent later reports a different hash.
+	if err := h.store.SetAgentDesiredGosutoHash(ctx, agentID, gv.Hash); err != nil {
+		slog.Warn("failed to record desired gosuto hash", "agent", agentID, "err", err)
+	}
+
 	if err := h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "gosuto.push", agentID, "success",
 		store.AuditPayload{"version": gv.Version, "hash": gv.Hash[:16]}, ""); err != nil {
 		slog.Warn("audit write failed", "op", "gosuto.push", "err", err)
