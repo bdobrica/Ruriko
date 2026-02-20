@@ -182,4 +182,17 @@ type Persona struct {
 	// A nil pointer means "not specified" (provider default); a non-nil pointer
 	// to 0.0 means "explicitly deterministic".
 	Temperature *float64 `yaml:"temperature,omitempty" json:"temperature,omitempty"`
+
+	// APIKeySecretRef is the name of the Ruriko secret that holds the LLM
+	// provider API key. When set, the agent retrieves the API key from the
+	// secret manager (via GetSecret) at runtime rather than from the static
+	// environment config. The provider is rebuilt each time secrets are
+	// refreshed via ACP /secrets/token.
+	//
+	// Example: if the Ruriko secret is named "openai_api_key", set:
+	//   apiKeySecretRef: openai_api_key
+	//
+	// Leave empty to use the API key supplied via the environment config
+	// (LLM.APIKey / OPENAI_API_KEY env var), which is the legacy path.
+	APIKeySecretRef string `yaml:"apiKeySecretRef,omitempty" json:"apiKeySecretRef,omitempty"`
 }

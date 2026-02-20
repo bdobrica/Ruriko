@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -98,6 +100,7 @@ type App struct {
 	secretsMgr *secrets.Manager
 	policyEng  *policy.Engine
 	supv       *supervisor.Supervisor
+	llmProvMu  sync.RWMutex // guards llmProv
 	llmProv    llm.Provider
 	matrixCli  *matrix.Client
 	approvalGt *approvals.Gate
@@ -197,6 +200,10 @@ func New(cfg *Config) (*App, error) {
 			if c := gosutoLdr.Config(); c != nil {
 				supv.Reconcile(c.MCPs)
 			}
+			// Rebuild the LLM provider in case the new Gosuto specifies a
+			// different APIKeySecretRef or model, and the matching secret is
+			// already cached in the secret manager.
+			app.rebuildLLMProvider()
 			return nil
 		},
 		ApplySecrets: func(sec map[string]string) error {
@@ -209,6 +216,11 @@ func New(cfg *Config) (*App, error) {
 			if c := gosutoLdr.Config(); c != nil {
 				supv.ApplySecrets(secStore.Env(buildSecretEnvMapping(c.Secrets)))
 			}
+			// Rebuild the LLM provider with the freshly redeemed API key if the
+			// active Gosuto config specifies an APIKeySecretRef. This ensures the
+			// provider always uses the most recently redeemed credential without
+			// requiring an agent restart.
+			app.rebuildLLMProvider()
 			return nil
 		},
 		RequestRestart: func() { restartCh <- struct{}{} },
@@ -316,6 +328,23 @@ func (a *App) GetSecretBytes(ref string) ([]byte, error) {
 	return a.secretsMgr.GetSecretBytes(ref)
 }
 
+// provider returns the current LLM provider under its read lock. Callers must
+// use this rather than reading a.llmProv directly so that concurrent secret
+// refreshes (which may rebuild the provider) remain safe.
+func (a *App) provider() llm.Provider {
+	a.llmProvMu.RLock()
+	defer a.llmProvMu.RUnlock()
+	return a.llmProv
+}
+
+// setProvider atomically replaces the current LLM provider. Called by
+// rebuildLLMProvider after obtaining fresh credentials.
+func (a *App) setProvider(p llm.Provider) {
+	a.llmProvMu.Lock()
+	a.llmProv = p
+	a.llmProvMu.Unlock()
+}
+
 // handleMessage is called by the Matrix client for every incoming text message.
 func (a *App) handleMessage(ctx context.Context, evt *event.Event) {
 	msgContent := evt.Content.AsMessage()
@@ -379,7 +408,8 @@ func (a *App) runTurn(ctx context.Context, roomID, sender, userText, replyToEven
 	if cfg == nil {
 		return "", 0, fmt.Errorf("no Gosuto config loaded; cannot process messages")
 	}
-	if a.llmProv == nil {
+	prov := a.provider()
+	if prov == nil {
 		return "", 0, fmt.Errorf("LLM provider not configured")
 	}
 
@@ -405,7 +435,7 @@ func (a *App) runTurn(ctx context.Context, roomID, sender, userText, replyToEven
 	}
 
 	for round := 0; round < maxToolCallRounds; round++ {
-		resp, err := a.llmProv.Complete(ctx, llm.CompletionRequest{
+		resp, err := prov.Complete(ctx, llm.CompletionRequest{
 			Model:     "",
 			Messages:  messages,
 			Tools:     toolDefs,
@@ -494,6 +524,15 @@ func (a *App) executeToolCall(ctx context.Context, roomID, sender string, tc llm
 		return "", fmt.Errorf("MCP server %q is not running", mcpName)
 	}
 
+	// Resolve any {{secret:ref}} placeholders in tool arguments before the
+	// call reaches the MCP server. This allows Gosuto-defined capabilities to
+	// include secret references in tool argument defaults without embedding
+	// plaintext credentials in the config.
+	args, err := a.resolveSecretArgs(args)
+	if err != nil {
+		return "", fmt.Errorf("resolving secret args for %s.%s: %w", mcpName, toolName, err)
+	}
+
 	callResult, err := client.CallTool(ctx, toolName, args)
 	if err != nil {
 		return "", fmt.Errorf("tool call %s.%s: %w", mcpName, toolName, err)
@@ -503,6 +542,112 @@ func (a *App) executeToolCall(ctx context.Context, roomID, sender string, tc llm
 	}
 
 	return formatToolResult(callResult), nil
+}
+
+// resolveSecretArgs returns a copy of args where any string value matching
+// the placeholder pattern "{{secret:ref_name}}" has been replaced with the
+// plaintext value obtained from the secret manager.
+//
+// Security contract:
+//   - The method NEVER logs resolved secret values; only the ref name is logged
+//     at debug level.
+//   - The caller (executeToolCall) must also ensure values are not logged after
+//     substitution.
+//   - If a placeholder references an unknown or expired secret the entire call
+//     fails — the agent should request a fresh Kuze token before retrying.
+//
+// Non-string argument values and strings that do not follow the placeholder
+// syntax are returned unchanged.
+func (a *App) resolveSecretArgs(args map[string]interface{}) (map[string]interface{}, error) {
+	if len(args) == 0 {
+		return args, nil
+	}
+	resolved := make(map[string]interface{}, len(args))
+	for k, v := range args {
+		sv, ok := v.(string)
+		if !ok {
+			resolved[k] = v
+			continue
+		}
+		val, wasRef, err := a.interpolateSecretString(sv)
+		if err != nil {
+			return nil, fmt.Errorf("arg %q references secret that could not be resolved: %w", k, err)
+		}
+		if wasRef {
+			// Log the ref name (never the value) so operators can trace which
+			// secret was used without exposing the credential.
+			slog.Debug("secrets: resolved secret arg placeholder",
+				"arg_key", k,
+				"secret_ref", sv[len("{{secret:"):len(sv)-2],
+			)
+		}
+		resolved[k] = val
+	}
+	return resolved, nil
+}
+
+// interpolateSecretString checks whether s is a well-formed secret placeholder
+// of the form "{{secret:ref_name}}" (whole string, not embedded substring) and
+// resolves it via the secret manager.
+//
+// Returns (resolved, true, nil) when s was a placeholder and resolution
+// succeeded; (s, false, nil) when s is a plain string; ("", true, err) when s
+// was a placeholder but the secret could not be retrieved.
+//
+// The returned value MUST NOT be logged when wasRef is true.
+func (a *App) interpolateSecretString(s string) (value string, wasRef bool, err error) {
+	const prefix = "{{secret:"
+	const suffix = "}}"
+	if !strings.HasPrefix(s, prefix) || !strings.HasSuffix(s, suffix) || len(s) <= len(prefix)+len(suffix) {
+		return s, false, nil
+	}
+	ref := s[len(prefix) : len(s)-len(suffix)]
+	if ref == "" {
+		return s, false, nil
+	}
+	val, err := a.GetSecret(ref)
+	if err != nil {
+		return "", true, err
+	}
+	return val, true, nil
+}
+
+// rebuildLLMProvider rebuilds the LLM provider using the API key from the
+// secret manager when the active Gosuto config specifies an APIKeySecretRef.
+//
+// This is called after every successful secret refresh (POST /secrets/token)
+// and after a new Gosuto config is applied, so that the provider always uses
+// the most recently redeemed API key.
+//
+// If no APIKeySecretRef is configured, or the secret is not yet available,
+// the existing provider is left in place and a warning is logged.
+func (a *App) rebuildLLMProvider() {
+	cfg := a.gosutoLdr.Config()
+	if cfg == nil || cfg.Persona.APIKeySecretRef == "" {
+		return
+	}
+	ref := cfg.Persona.APIKeySecretRef
+	apiKey, err := a.GetSecret(ref)
+	if err != nil {
+		slog.Warn("secrets: cannot rebuild LLM provider — API key secret unavailable",
+			"ref", ref, "err", err)
+		return
+	}
+	llmCfg := LLMConfig{
+		Provider:  cfg.Persona.LLMProvider,
+		APIKey:    apiKey, // value is never logged
+		BaseURL:   a.cfg.LLM.BaseURL,
+		Model:     cfg.Persona.Model,
+		MaxTokens: a.cfg.LLM.MaxTokens,
+	}
+	if llmCfg.Provider == "" {
+		llmCfg.Provider = a.cfg.LLM.Provider
+	}
+	if llmCfg.Model == "" {
+		llmCfg.Model = a.cfg.LLM.Model
+	}
+	a.setProvider(buildLLMProvider(llmCfg))
+	slog.Info("secrets: LLM provider rebuilt with refreshed API key", "ref", ref)
 }
 
 // gatherTools collects ToolDefinitions from all running MCP servers and returns

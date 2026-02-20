@@ -654,7 +654,7 @@ These are **real, working subsystems** — not scaffolding. The realignment phas
 
 ---
 
-## 📋 Phase R4: Token-Based Secret Distribution to Agents (3–6 days)
+## 📋 Phase R4: Token-Based Secret Distribution to Agents ✅
 
 **Goal**: Agents fetch secrets on demand via one-time redemption tokens. Secrets never traverse ACP payloads.
 
@@ -684,8 +684,14 @@ These are **real, working subsystems** — not scaffolding. The realignment phas
   - [x] In-memory cache with TTL for redeemed secrets
   - [x] `GetSecret(ref string) (string, error)` — returns cached or redeems token
   - [x] Never logs secret values
-- [ ] Wire secret manager into MCP tool calls (tools that need API keys call `GetSecret`)
+- [x] Wire secret manager into MCP tool calls (tools that need API keys call `GetSecret`)
+  - [x] `{{secret:ref}}` placeholder syntax in tool call arguments resolved at call time via `resolveSecretArgs`
+  - [x] `APIKeySecretRef` added to Gosuto `Persona` — LLM provider rebuilt after every secret refresh
+  - [x] `rebuildLLMProvider` called from `ApplySecrets` and `ApplyConfig` ACP callbacks
+  - [x] Thread-safe provider accessor (`llmProvMu` / `provider()` / `setProvider()`)
 - [x] Test: Secret manager caches, respects TTL, never logs values
+- [x] Test: `resolveSecretArgs` resolves placeholders, propagates not-found/expired errors, leaves non-string args unchanged
+- [x] Test: `rebuildLLMProvider` is no-op with no ref, warns on missing secret, replaces provider when secret available
 
 ### R4.4 Deprecate Direct Secret Push
 - [x] Add `FEATURE_DIRECT_SECRET_PUSH=false` flag (default OFF)
@@ -697,7 +703,10 @@ These are **real, working subsystems** — not scaffolding. The realignment phas
 ### Definition of done
 - ✅ Agents retrieve secrets only via Kuze redemption tokens (R4.1 + R4.2 complete)
 - ✅ Secrets never appear in ACP request/response bodies (production mode) (R4.4 complete — 410 Gone by default)
-- ⚠️ Secret manager caches and provides secrets to tool calls — **BLOCKED on R4.3 wiring item**: `Wire secret manager into MCP tool calls` is still pending
+- ✅ Secret manager caches and provides secrets to tool calls (R4.3 complete)
+  - Tool call arguments with `{{secret:ref}}` are resolved at call time via `resolveSecretArgs`
+  - LLM provider API key can be sourced from the secret manager via `Persona.APIKeySecretRef`
+  - Provider is rebuilt automatically after every `ApplySecrets` / `ApplyConfig` ACP call
 
 ---
 
@@ -977,7 +986,7 @@ The MVP is ready when **all** of the following are true:
 - [x] Phase R1: Matrix Stack Realignment — Tuwunel Default ✅
 - [x] Phase R2: ACP Hardening — Auth, Idempotency, Timeouts ✅
 - [x] Phase R3: Kuze — Human Secret Entry ✅
-- [ ] Phase R4: Token-Based Secret Distribution to Agents
+- [x] Phase R4: Token-Based Secret Distribution to Agents ✅
 - [ ] Phase R5: Agent Provisioning UX — Tim, Warren, Brave
 - [ ] Phase R6: Canonical Workflow — Tim → Warren → Brave
 - [ ] Phase R7: Observability, Safety, and Polish
