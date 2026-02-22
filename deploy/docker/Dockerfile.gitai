@@ -33,6 +33,30 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
       ./cmd/gitai
 
 # ---------------------------------------------------------------------------
+# Gateway binaries
+#
+# Vetted gateway binaries are compiled from source in this builder stage and
+# installed into /usr/local/lib/gitai/gateways/ in the runtime image. The
+# full list of supported gateways and their configuration contracts is
+# documented in deploy/docker/gateway-manifest.yaml.
+#
+# Adding a new gateway:
+#   1. Create cmd/gateway/<name>/main.go following the ruriko-gw-imap pattern.
+#   2. Add an entry to deploy/docker/gateway-manifest.yaml.
+#   3. Copy the build+mkdir block below for the new binary.
+# ---------------------------------------------------------------------------
+
+RUN mkdir -p /build/gateways
+
+# ruriko-gw-imap: IMAP email gateway (placeholder — see gateway-manifest.yaml)
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build \
+      -trimpath \
+      -ldflags "-s -w" \
+      -o /build/gateways/ruriko-gw-imap \
+      ./cmd/gateway/ruriko-gw-imap
+
+# ---------------------------------------------------------------------------
 # Stage 2: runtime image
 # Minimal Alpine image — only the binary, CA certs, and a non-root user.
 # ---------------------------------------------------------------------------
@@ -47,6 +71,19 @@ VOLUME /data
 
 # Copy the compiled binary.
 COPY --from=builder /build/gitai /usr/local/bin/gitai
+
+# Copy vetted gateway binaries.
+# Each binary is installed at /usr/local/lib/gitai/gateways/<name> so that
+# Gosuto configs can reference them by absolute path in Gateway.command.
+# The expected paths are listed in deploy/docker/gateway-manifest.yaml.
+RUN mkdir -p /usr/local/lib/gitai/gateways
+COPY --from=builder /build/gateways/ /usr/local/lib/gitai/gateways/
+RUN chmod +x /usr/local/lib/gitai/gateways/*
+
+# Verify that every binary listed in the manifest is present at its declared
+# install path. This turns a missing/mis-named binary into a hard build failure
+# rather than a silent runtime misconfiguration.
+RUN test -x /usr/local/lib/gitai/gateways/ruriko-gw-imap
 
 # ACP server default port.
 EXPOSE 8765

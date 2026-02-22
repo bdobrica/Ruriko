@@ -110,6 +110,10 @@ docker-build-gitai: ## Build Gitai Docker image
 
 docker-build: docker-build-ruriko docker-build-gitai ## Build all Docker images
 
+test-gateway-binaries: docker-build-gitai ## Build Gitai image and verify gateway binary paths
+	@echo "Testing gateway binary paths in Gitai image..."
+	SKIP_BUILD=1 ./test/integration/test-gateway-binaries.sh gitai:latest
+
 compose-up: docker-build ## Build images and start the full stack
 	@echo "Starting Ruriko stack..."
 	cd examples/docker-compose && docker compose up -d

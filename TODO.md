@@ -1666,13 +1666,13 @@ similarity and injects the relevant context.
 - [x] Test: Provisioning a gateway-bearing Gosuto results in running gateway processes
 
 ### R13.3 Container Image Building — Gateway Binaries
-- [ ] Document the pattern for including gateway binaries in agent container images:
+- [x] Document the pattern for including gateway binaries in agent container images:
   - Same approach as MCPs: gateway binaries are baked into the Gitai Docker image at build time
   - `Dockerfile.gitai` copies vetted gateway binaries alongside MCP binaries
   - Gateway binaries are listed in a vetted manifest (same vetting process as MCPs)
-- [ ] Add example gateway binary to Docker build (e.g. `ruriko-gw-imap` placeholder)
-- [ ] Update `deploy/docker/Dockerfile.gitai` with gateway binary layer
-- [ ] Test: Built image contains gateway binaries at expected paths
+- [x] Add example gateway binary to Docker build (e.g. `ruriko-gw-imap` placeholder)
+- [x] Update `deploy/docker/Dockerfile.gitai` with gateway binary layer
+- [x] Test: Built image contains gateway binaries at expected paths
 
 ### R13.4 Documentation
 - [ ] Update `docs/architecture.md` with gateway architecture diagram

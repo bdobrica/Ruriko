@@ -1,0 +1,98 @@
+# Gateway Binary Manifest
+#
+# This file lists every gateway binary that is vetted and baked into the Gitai
+# Docker image. The vetting process mirrors the one used for MCP binaries:
+#
+#   1. Source code lives inside this repository under cmd/gateway/<name>/.
+#   2. The binary is compiled from source in the Docker builder stage — no
+#      pre-built artefacts are downloaded at build time.
+#   3. Each entry records the install path inside the container image so that
+#      operators and Gosuto config authors know exactly where to reference the
+#      binary in a Gateway.command field.
+#   4. The "placeholder" flag distinguishes production-ready binaries from stubs
+#      that are included to prove the build pipeline and document the contract.
+#
+# Adding a new gateway binary
+# ─────────────────────────────
+# 1. Create cmd/gateway/<binary-name>/main.go that implements the ACP event
+#    posting contract (see ruriko-gw-imap for the reference pattern).
+# 2. Add an entry to this manifest.
+# 3. Add a RUN+COPY step to the "gateway binaries" section of
+#    deploy/docker/Dockerfile.gitai (follow the existing ruriko-gw-imap block).
+# 4. Update deploy/docker/Dockerfile.gitai's test/verify step if present.
+#
+apiVersion: gateway-manifest/v1
+
+gateways:
+  - name: ruriko-gw-imap
+    description: >
+      IMAP email gateway. Polls a mailbox for new messages and forwards each
+      message as an imap.email event envelope to the agent's ACP endpoint
+      (POST /events/{source}). Supports TLS and configurable poll interval.
+      IMAP IDLE (push) support is planned for the production release.
+    source: cmd/gateway/ruriko-gw-imap
+    installPath: /usr/local/lib/gitai/gateways/ruriko-gw-imap
+    placeholder: true
+    env:
+      - name: ACP_URL
+        description: Base URL of the agent's ACP server (e.g. http://localhost:8765)
+        required: true
+      - name: ACP_TOKEN
+        description: Bearer token for ACP authentication. Set to the value of GITAI_ACP_TOKEN on the agent.
+        required: false
+      - name: GW_SOURCE
+        description: Gateway source name as declared in the Gosuto gateways[].name field.
+        required: true
+      - name: GW_IMAP_HOST
+        description: IMAP server hostname (e.g. imap.example.com).
+        required: true
+      - name: GW_IMAP_PORT
+        description: "IMAP server port. Default: 993 (TLS)."
+        required: false
+        default: "993"
+      - name: GW_IMAP_USER
+        description: IMAP account username.
+        required: true
+      - name: GW_IMAP_PASSWORD
+        description: IMAP account password. Reference a Ruriko secret via secretRef in your Gosuto config.
+        required: true
+      - name: GW_IMAP_MAILBOX
+        description: "Mailbox/folder to watch. Default: INBOX."
+        required: false
+        default: INBOX
+      - name: GW_POLL_INTERVAL
+        description: "Poll interval for IMAP servers that do not support IMAP IDLE. Default: 60s."
+        required: false
+        default: "60s"
+      - name: LOG_FORMAT
+        description: "Logging format: text or json. Default: text."
+        required: false
+        default: "text"
+    gosutoSnippet: |
+      gateways:
+        - name: imap
+          command: /usr/local/lib/gitai/gateways/ruriko-gw-imap
+          env:
+            ACP_URL: http://localhost:8765
+            GW_SOURCE: imap
+            GW_IMAP_HOST: "imap.example.com"
+            GW_IMAP_USER: "agent@example.com"
+            GW_IMAP_PASSWORD: "${IMAP_PASSWORD}"
+          autoRestart: true
+
+  # ── Future gateways (not yet implemented) ─────────────────────────────────
+  # The entries below document the planned gateway types for the post-MVP
+  # roadmap. They are listed here as placeholders so operators can see what
+  # is coming and can request prioritisation.
+  #
+  # - name: ruriko-gw-mqtt
+  #   description: MQTT subscription gateway. Subscribes to a topic and forwards each message as an mqtt.message event.
+  #   source: cmd/gateway/ruriko-gw-mqtt        (not yet created)
+  #   installPath: /usr/local/lib/gitai/gateways/ruriko-gw-mqtt
+  #   placeholder: true
+  #
+  # - name: ruriko-gw-rss
+  #   description: RSS/Atom feed poller. Forwards new feed entries as rss.entry events.
+  #   source: cmd/gateway/ruriko-gw-rss         (not yet created)
+  #   installPath: /usr/local/lib/gitai/gateways/ruriko-gw-rss
+  #   placeholder: true
