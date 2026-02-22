@@ -36,6 +36,14 @@ import (
 
 const maxToolCallRounds = 10
 
+// eventMatrixSender abstracts the Matrix send operations needed by
+// runEventTurn.  It is satisfied by *matrix.Client and can be replaced with
+// a lightweight recording stub in unit tests without spinning up a real
+// Matrix connection.
+type eventMatrixSender interface {
+	SendText(roomID, text string) error
+}
+
 // Config holds the Gitai application configuration. All values are typically
 // loaded from environment variables by cmd/gitai/main.go.
 type Config struct {
@@ -103,13 +111,17 @@ type App struct {
 	policyEng  *policy.Engine
 	supv       *supervisor.Supervisor
 	cronMgr    *gateway.Manager
-	llmProvMu  sync.RWMutex // guards llmProv
-	llmProv    llm.Provider
-	matrixCli  *matrix.Client
-	approvalGt *approvals.Gate
-	acpServer  *control.Server
-	startedAt  time.Time
-	restartCh  chan struct{}
+	extGWSupv  *supervisor.ExternalGatewaySupervisor
+	// eventSender is used by runEventTurn to post gateway-event responses to
+	// Matrix.  It defaults to matrixCli in New() and can be overridden in tests.
+	eventSender eventMatrixSender
+	llmProvMu   sync.RWMutex // guards llmProv
+	llmProv     llm.Provider
+	matrixCli   *matrix.Client
+	approvalGt  *approvals.Gate
+	acpServer   *control.Server
+	startedAt   time.Time
+	restartCh   chan struct{}
 	// cancelCh is signalled when Ruriko sends a POST /tasks/cancel request.
 	// The currently running turn should watch this channel and abort early.
 	cancelCh chan struct{}
@@ -163,18 +175,19 @@ func New(cfg *Config) (*App, error) {
 	cancelCh := make(chan struct{}, 1)
 
 	app := &App{
-		cfg:        cfg,
-		db:         db,
-		gosutoLdr:  gosutoLdr,
-		secretsStr: secStore,
-		secretsMgr: secMgr,
-		policyEng:  policyEng,
-		supv:       supv,
-		llmProv:    llmProv,
-		matrixCli:  matrixCli,
-		startedAt:  time.Now(),
-		restartCh:  restartCh,
-		cancelCh:   cancelCh,
+		cfg:         cfg,
+		db:          db,
+		gosutoLdr:   gosutoLdr,
+		secretsStr:  secStore,
+		secretsMgr:  secMgr,
+		policyEng:   policyEng,
+		supv:        supv,
+		llmProv:     llmProv,
+		matrixCli:   matrixCli,
+		eventSender: matrixCli,
+		startedAt:   time.Now(),
+		restartCh:   restartCh,
+		cancelCh:    cancelCh,
 	}
 
 	// Approval gate (needs matrix sender for posting to approvals room).
@@ -188,6 +201,9 @@ func New(cfg *Config) (*App, error) {
 	// Cron gateway manager: connects to the ACP event ingress on localhost.
 	cronMgr := gateway.NewManager(gateway.ACPBaseURL(acpAddr))
 	app.cronMgr = cronMgr
+	// External gateway supervisor: manages external gateway binaries (Command set in Gosuto).
+	extGWSupv := supervisor.NewExternalGatewaySupervisor(gateway.ACPBaseURL(acpAddr))
+	app.extGWSupv = extGWSupv
 	app.acpServer = control.New(acpAddr, control.Handlers{
 		AgentID:                 cfg.AgentID,
 		Version:                 version.Version,
@@ -208,10 +224,11 @@ func New(cfg *Config) (*App, error) {
 			}
 			// Persist to DB for restart recovery.
 			_ = db.SaveAppliedConfig(hash, yaml)
-			// Reconcile MCP servers and cron gateways with new config.
+			// Reconcile MCP servers, cron gateways, and external gateway processes.
 			if c := gosutoLdr.Config(); c != nil {
 				supv.Reconcile(c.MCPs)
 				cronMgr.Reconcile(c.Gateways)
+				extGWSupv.Reconcile(c.Gateways)
 			}
 			// Rebuild the LLM provider in case the new Gosuto specifies a
 			// different APIKeySecretRef or model, and the matching secret is
@@ -225,9 +242,11 @@ func New(cfg *Config) (*App, error) {
 			if err := secMgr.Apply(sec, 0); err != nil {
 				return err
 			}
-			// Re-inject secret env into supervisor (new processes will pick it up).
+			// Re-inject secret env into MCP supervisor and external gateway supervisor
+			// (new processes will pick up the updated credentials).
 			if c := gosutoLdr.Config(); c != nil {
 				supv.ApplySecrets(secStore.Env(buildSecretEnvMapping(c.Secrets)))
+				extGWSupv.ApplySecrets(secStore.Env(buildSecretEnvMapping(c.Secrets)))
 			}
 			// Rebuild the LLM provider with the freshly redeemed API key if the
 			// active Gosuto config specifies an APIKeySecretRef. This ensures the
@@ -265,10 +284,11 @@ func (a *App) Run() error {
 		return fmt.Errorf("start acp server: %w", err)
 	}
 
-	// Start MCP supervisor and cron gateways if config is available.
+	// Start MCP supervisor, cron gateways, and external gateway processes.
 	if c := a.gosutoLdr.Config(); c != nil {
 		a.supv.Reconcile(c.MCPs)
 		a.cronMgr.Reconcile(c.Gateways)
+		a.extGWSupv.Reconcile(c.Gateways)
 	}
 
 	// Start Matrix sync.
@@ -326,6 +346,7 @@ func (a *App) Stop() {
 	a.matrixCli.Stop()
 	a.supv.Stop()
 	a.cronMgr.Stop()
+	a.extGWSupv.Stop()
 	a.acpServer.Stop()
 	a.db.Close()
 }
@@ -807,8 +828,8 @@ func (a *App) runEventTurn(ctx context.Context, evt *envelope.Event) {
 			"event_type", evt.Type,
 			"err", err,
 		)
-		if a.matrixCli != nil {
-			_ = a.matrixCli.SendText(adminRoom,
+		if a.eventSender != nil {
+			_ = a.eventSender.SendText(adminRoom,
 				fmt.Sprintf("⚡ Event: %s/%s\n❌ %s", evt.Source, evt.Type, err))
 		}
 		if turnID > 0 {
@@ -817,10 +838,12 @@ func (a *App) runEventTurn(ctx context.Context, evt *envelope.Event) {
 		return
 	}
 
-	// Post the formatted response to the admin room.
-	if result != "" && a.matrixCli != nil {
+	// Post the formatted response to the admin room.  The raw event payload
+	// is intentionally NOT forwarded — only the LLM-processed response is
+	// sent to Matrix (R12.6 safety requirement).
+	if result != "" && a.eventSender != nil {
 		header := fmt.Sprintf("⚡ Event: %s/%s", evt.Source, evt.Type)
-		_ = a.matrixCli.SendText(adminRoom, header+"\n"+result)
+		_ = a.eventSender.SendText(adminRoom, header+"\n"+result)
 	}
 
 	if turnID > 0 {

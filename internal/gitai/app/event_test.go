@@ -14,6 +14,7 @@ import (
 	"context"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -351,5 +352,148 @@ func TestHandleEvent_DropsEventWhenNoAdminRoom(t *testing.T) {
 		t.Error("LLM was called even though no admin room is configured")
 	case <-time.After(200 * time.Millisecond):
 		// Correct: no call made.
+	}
+}
+
+// ── R12.6 Event-to-Matrix Bridging tests ────────────────────────────────────
+
+// recordingMatrixSender is a lightweight stub that implements eventMatrixSender
+// and records every SendText call so tests can assert on what was posted to
+// Matrix without spinning up a live Matrix connection.
+type recordingMatrixSender struct {
+	mu    sync.Mutex
+	sends []matrixSend
+}
+
+type matrixSend struct {
+	roomID string
+	text   string
+}
+
+func (r *recordingMatrixSender) SendText(roomID, text string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sends = append(r.sends, matrixSend{roomID: roomID, text: text})
+	return nil
+}
+
+// waitForSend blocks until at least one send has been captured or the timeout
+// elapses.  It returns the collected sends and whether the deadline was met.
+func (r *recordingMatrixSender) waitForSend(timeout time.Duration) ([]matrixSend, bool) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		r.mu.Lock()
+		n := len(r.sends)
+		r.mu.Unlock()
+		if n > 0 {
+			r.mu.Lock()
+			out := make([]matrixSend, len(r.sends))
+			copy(out, r.sends)
+			r.mu.Unlock()
+			return out, true
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return nil, false
+}
+
+// TestRunEventTurn_PostsResponseToAdminRoom is the primary R12.6 test.
+// It verifies that after a successful LLM turn triggered by a gateway event:
+//  1. A Matrix message is posted to the admin room (not any other room).
+//  2. The message includes the breadcrumb header "⚡ Event: {source}/{type}".
+//  3. The message body contains the LLM-produced response text.
+func TestRunEventTurn_PostsResponseToAdminRoom(t *testing.T) {
+	const llmResponse = "Market overview: all indices are stable."
+	prov := newCapturingLLM(llmResponse)
+	a := newEventApp(t, eventTestGosutoYAML, prov)
+
+	// Wire the recording sender so we can observe Matrix sends.
+	sender := &recordingMatrixSender{}
+	a.eventSender = sender
+
+	evt := makeTestEvent("scheduler", "cron.tick", "Run the scheduled market check.")
+	a.handleEvent(context.Background(), evt)
+
+	// Wait for the LLM call (turn has started).
+	if _, ok := prov.waitForCall(3 * time.Second); !ok {
+		t.Fatal("timed out waiting for LLM call from event turn")
+	}
+
+	// Wait for the Matrix send (turn has posted the response).
+	sends, ok := sender.waitForSend(3 * time.Second)
+	if !ok {
+		t.Fatal("timed out waiting for Matrix send from event turn")
+	}
+	if len(sends) == 0 {
+		t.Fatal("expected at least one Matrix send; got none")
+	}
+
+	s := sends[len(sends)-1]
+
+	// 1. Must target the admin room.
+	if s.roomID != "!admin-room:example.com" {
+		t.Errorf("send target room = %q, want %q", s.roomID, "!admin-room:example.com")
+	}
+
+	// 2. Must include the breadcrumb header.
+	expectedHeader := "⚡ Event: scheduler/cron.tick"
+	if !strings.Contains(s.text, expectedHeader) {
+		t.Errorf("Matrix message %q does not contain breadcrumb header %q", s.text, expectedHeader)
+	}
+
+	// 3. Must contain the LLM response.
+	if !strings.Contains(s.text, llmResponse) {
+		t.Errorf("Matrix message %q does not contain LLM response %q", s.text, llmResponse)
+	}
+}
+
+// TestRunEventTurn_DoesNotLeakRawPayloadDataToMatrix is the R12.6 safety test.
+// It verifies that raw Payload.Data values (which may contain sensitive
+// information such as API keys or PII embedded in webhook bodies) are NOT
+// forwarded verbatim to Matrix.  Only the LLM-processed response is sent.
+//
+// The event's payload data is fed to the LLM as context (via buildEventMessage)
+// so the LLM can reason about it, but that raw JSON must never appear in the
+// Matrix message that other room members can see.
+func TestRunEventTurn_DoesNotLeakRawPayloadDataToMatrix(t *testing.T) {
+	const sensitiveValue = "sk-super-secret-api-key-must-not-appear-in-matrix"
+	const llmResponse = "Processed: new entry detected."
+	prov := newCapturingLLM(llmResponse)
+	a := newEventApp(t, eventTestGosutoYAML, prov)
+
+	sender := &recordingMatrixSender{}
+	a.eventSender = sender
+
+	// Event carrying sensitive-looking structured data in Payload.Data.
+	evt := makeTestEventWithData("webhook", "webhook.delivery", map[string]interface{}{
+		"api_key": sensitiveValue,
+		"ticker":  "AAPL",
+	})
+	a.handleEvent(context.Background(), evt)
+
+	// Wait for the LLM to be called; the raw data was sent to the LLM (that is
+	// intentional — the LLM may need context) but must not reach Matrix.
+	if _, ok := prov.waitForCall(3 * time.Second); !ok {
+		t.Fatal("timed out waiting for LLM call")
+	}
+
+	// Wait for the Matrix send.
+	sends, ok := sender.waitForSend(3 * time.Second)
+	if !ok {
+		t.Fatal("timed out waiting for Matrix send")
+	}
+
+	// Verify that the sensitive value from Payload.Data is absent from every
+	// Matrix message sent during this turn.
+	for _, s := range sends {
+		if strings.Contains(s.text, sensitiveValue) {
+			t.Errorf("Matrix send to room %q leaks raw payload value: %q", s.roomID, s.text)
+		}
+	}
+
+	// Sanity-check: the LLM response IS present.
+	last := sends[len(sends)-1]
+	if !strings.Contains(last.text, llmResponse) {
+		t.Errorf("Matrix message %q does not contain LLM response %q", last.text, llmResponse)
 	}
 }

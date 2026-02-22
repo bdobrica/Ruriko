@@ -1592,29 +1592,29 @@ similarity and injects the relevant context.
 - [x] Test: Webhook without valid auth is rejected
 
 ### R12.5 External Gateway Supervisor
-- [ ] Extend `internal/gitai/supervisor/supervisor.go` (or create `internal/gitai/gateway/supervisor.go`) to also manage gateway processes:
-  - Start gateway binaries with: command, args, env (from Gosuto + injected secrets)
-  - Inject `GATEWAY_TARGET_URL=http://localhost:{acp_port}/events/{name}` environment variable
-  - Inject `GATEWAY_*` prefixed config entries as environment variables
-  - Monitor process health, restart on crash (when `autoRestart` is true)
-  - Stop all gateways on agent shutdown
-- [ ] Reconcile gateway processes on Gosuto config change (same pattern as MCP reconciliation):
-  - Stop gateways no longer in config
-  - Start newly added gateways
-  - Restart gateways whose config changed
-- [ ] Test: External gateway process starts and receives correct environment
-- [ ] Test: Gateway process restarts on crash (when autoRestart=true)
-- [ ] Test: Gateway processes are stopped on shutdown
-- [ ] Test: Reconcile adds/removes gateway processes correctly
+- [x] Extend `internal/gitai/supervisor/supervisor.go` to also manage gateway processes:
+  - [x] Start gateway binaries with: command, args, env (from Gosuto + injected secrets)
+  - [x] Inject `GATEWAY_TARGET_URL=http://localhost:{acp_port}/events/{name}` environment variable
+  - [x] Inject `GATEWAY_*` prefixed config entries as environment variables
+  - [x] Monitor process health, restart on crash (when `autoRestart` is true)
+  - [x] Stop all gateways on agent shutdown
+- [x] Reconcile gateway processes on Gosuto config change (same pattern as MCP reconciliation):
+  - [x] Stop gateways no longer in config
+  - [x] Start newly added gateways
+  - [x] Restart gateways whose config changed
+- [x] Test: External gateway process starts and receives correct environment
+- [x] Test: Gateway process restarts on crash (when autoRestart=true)
+- [x] Test: Gateway processes are stopped on shutdown
+- [x] Test: Reconcile adds/removes gateway processes correctly
 
 ### R12.6 Event-to-Matrix Bridging
-- [ ] When an event triggers a turn, post the response to Matrix for observability:
+- [x] When an event triggers a turn, post the response to Matrix for observability:
   - Use the agent's admin room (from `trust.adminRoom`) by default
   - Format: breadcrumb header ("⚡ Event: {source}/{type}") + LLM response
   - Never include raw event payloads that might contain sensitive data — only the LLM's processed response
-- [ ] If the event references other agents (e.g. a coordination trigger), the agent sends messages to those agents' Matrix rooms as it normally would
-- [ ] Test: Event-triggered responses appear in the admin room
-- [ ] Test: Sensitive event data is not leaked to Matrix
+- [x] If the event references other agents (e.g. a coordination trigger), the agent sends messages to those agents' Matrix rooms as it normally would
+- [x] Test: Event-triggered responses appear in the admin room
+- [x] Test: Sensitive event data is not leaked to Matrix
 
 ### R12.7 Observability and Auditing
 - [ ] Log all gateway events at INFO level:
