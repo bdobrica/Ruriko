@@ -940,12 +940,419 @@ These are **real, working subsystems** — not scaffolding. The realignment phas
 The MVP is ready when **all** of the following are true:
 
 ✅ **Deployment**: `docker compose up -d` boots Tuwunel + Ruriko on a single host
-✅ **Conversation**: User can chat with Ruriko over Matrix
+✅ **Conversation**: User can chat with Ruriko over Matrix — naturally (R9) or via commands
 ✅ **Secrets**: User stores secrets via Kuze one-time links; secrets never in chat
 ✅ **Agents**: Ruriko provisions Saito/Kairo/Kumo via ACP with Gosuto config
 ✅ **ACP**: Authenticated, idempotent, private to Docker network
 ✅ **Workflow**: Saito triggers Kairo → Kairo analyzes → Kumo searches → report delivered
+✅ **Memory**: Ruriko remembers active conversations; recalls relevant past context (R10)
 ✅ **Security**: No secrets in Matrix history, ACP payloads, or logs
+
+---
+
+## 📋 Phase R9: Natural Language Interface — LLM-Powered Command Translation (3–6 days)
+
+**Goal**: Let users talk to Ruriko naturally instead of memorising `/ruriko` commands. The LLM translates intent into structured commands; all existing security guardrails remain intact.
+
+> Depends on: R0–R5 (command infrastructure, guardrails, approval workflow).
+> Independent of: R6 (canonical workflow), R7/R8 (observability, integration).
+>
+> **Core invariant**: The LLM **proposes** commands; it never **executes** them
+> directly. Every mutation flows through the same deterministic pipeline
+> (validation → approval gate → audit) as a hand-typed `/ruriko` command.
+
+### R9.0 Design Decisions
+
+The natural-language layer sits between the Matrix message and the command
+router. Its sole job is **translation**: convert a free-form sentence into a
+structured `Command` (action key + args + flags) that the existing `Router.Dispatch`
+can process.
+
+**Security architecture** (why this does not weaken the threat model):
+
+| Existing control                       | Status with NL layer         |
+|----------------------------------------|------------------------------|
+| Sender allowlist                       | Unchanged — checked *before* NL |
+| Secret-in-chat guardrail              | Unchanged — checked *before* NL |
+| Internal flag stripping (`--_*`)      | Unchanged — runs on every `Parse` |
+| Approval gate (6 gated actions)       | Unchanged — fires on dispatch    |
+| Self-approval prevention              | Unchanged                        |
+| Agent ID / input validation           | Unchanged — runs inside handlers |
+| Audit logging + trace IDs             | Extended — `source: nl` annotation |
+| Kuze-only secret entry                | Unchanged — NL never sees values |
+
+**What the LLM sees**: the command catalogue (help text), the list of known
+agents, and the list of available templates. It **never** sees secret values,
+approval tokens, or internal state.
+
+**What the LLM produces**: a JSON-schema-constrained response:
+```json
+{
+  "intent": "command",
+  "action": "agents.create",
+  "args": ["saito"],
+  "flags": {"template": "saito-agent"},
+  "explanation": "Create a new agent named Saito using the saito-agent template.",
+  "confidence": 0.95
+}
+```
+or
+```json
+{
+  "intent": "conversational",
+  "response": "You currently have 3 agents running. Would you like details on any of them?",
+  "read_queries": ["agents.list"]
+}
+```
+
+### R9.1 LLM Provider Integration for Ruriko
+
+- [ ] Create `internal/ruriko/nlp/provider.go` — LLM provider interface:
+  ```go
+  type Provider interface {
+      Classify(ctx context.Context, req ClassifyRequest) (*ClassifyResponse, error)
+  }
+  ```
+- [ ] Create `internal/ruriko/nlp/openai.go` — OpenAI-compatible implementation
+  - Reuse patterns from `internal/gitai/llm/openai.go` (HTTP client, retry, error handling)
+  - Support configurable model (default: `gpt-4o-mini` for cost efficiency)
+  - Support configurable endpoint (OpenAI, Azure, local ollama, etc.)
+- [ ] Add config fields to `app.Config`:
+  - `NLPProvider` (optional — when nil, NL falls back to keyword matching)
+  - `NLPModel`, `NLPEndpoint`, `NLPAPIKeySecretRef`
+- [ ] API key loaded from environment (`RURIKO_NLP_API_KEY`), never from chat
+- [ ] Add per-sender rate limiting on NL classification calls:
+  - Configurable: `NLP_RATE_LIMIT` (default: 20 calls/minute per sender)
+  - When exceeded: "I'm processing too many requests. Try again in a moment."
+- [ ] Test: Provider interface is mockable; OpenAI client handles errors
+- [ ] Test: Rate limiting rejects excessive calls
+
+### R9.2 System Prompt and Command Catalogue
+
+- [ ] Create `internal/ruriko/nlp/prompt.go` — system prompt builder:
+  - Enumerate all registered command handlers with descriptions and argument specs
+  - Include list of available templates (from `templates.Registry.List()`)
+  - Include list of existing agents (from `store.ListAgents()`) for context
+  - Explicit instructions:
+    - "You translate user requests into Ruriko commands. You never execute anything."
+    - "For mutations (create, delete, stop, config changes), always show the command and ask for confirmation."
+    - "For read-only queries (list, show, status, audit), answer directly using query results."
+    - "Never generate flags starting with `--_` (these are internal)."
+    - "Never include secret values in commands or responses."
+    - "If unsure, ask a clarifying question. Do not guess."
+- [ ] Refresh agent/template context on each call (lightweight — just names and statuses)
+- [ ] Test: System prompt includes all registered commands
+- [ ] Test: Prompt explicitly forbids internal flags and secret values
+
+### R9.3 NL Classifier and Intent Router
+
+- [ ] Create `internal/ruriko/nlp/classifier.go` — intent classification:
+  ```go
+  type ClassifyResponse struct {
+      Intent       string            // "command" | "conversational" | "unclear"
+      Action       string            // handler key, e.g. "agents.create"
+      Args         []string
+      Flags        map[string]string
+      Explanation  string            // human-readable description of what will happen
+      Confidence   float64           // 0.0–1.0
+      ReadQueries  []string          // for conversational: which read-only handlers to call
+      Response     string            // for conversational/unclear: direct text response
+  }
+  ```
+- [ ] JSON schema enforcement on LLM output (structured output / function calling)
+- [ ] Confidence thresholds:
+  - `≥ 0.8` → proceed with confirmation (mutations) or direct answer (reads)
+  - `0.5–0.8` → "I think you want to [X]. Is that right?"
+  - `< 0.5` → "I'm not sure what you'd like. Here are some things I can help with: …"
+- [ ] Sanitise LLM output: strip any `--_*` flags (defense in depth)
+- [ ] Validate produced action key exists in `Router` handler map
+- [ ] Test: Classifier handles all intent types
+- [ ] Test: Low-confidence responses surface clarification prompts
+- [ ] Test: Invalid/malicious LLM output is rejected gracefully
+
+### R9.4 Conversation-Aware Dispatch
+
+- [ ] Extend `HandleNaturalLanguage` to call LLM classifier when `NLPProvider` is configured:
+  - If provider is nil → fall back to existing keyword-based `ParseIntent` (R5.4)
+  - If provider is available → call `Classify()` with conversation context
+- [ ] **Read-only path** (no confirmation needed):
+  - Classifier returns `intent: conversational` + `read_queries: ["agents.list"]`
+  - NL handler calls `Router.Dispatch` for each read query, collects results
+  - LLM summarises results in natural language (second call, or single-shot with function results)
+  - Reply sent to Matrix
+- [ ] **Mutation path** (confirmation required):
+  - Classifier returns `intent: command` + structured command
+  - NL handler shows user: "I'll run: `/ruriko agents create --name saito --template saito-agent`. Proceed?"
+  - Store pending command in `conversationStore` (reuse existing session infra)
+  - On "yes" → `Router.Dispatch(ctx, action, cmd, evt)` (same path as approval re-exec)
+  - On "no" → cancel session
+- [ ] **Multi-step mutations** (e.g., "set up Saito and Kumo"):
+  - Classifier decomposes into ordered steps
+  - Each step requires individual confirmation
+  - Steps are NOT batched — user sees and approves each one
+- [ ] **Approval integration**: if a confirmed mutation hits the approval gate, the
+  approval flow proceeds normally — the NL layer does not bypass it
+- [ ] Audit annotation: all NL-mediated commands include `source: nl` and `llm_intent: <raw>`
+  in the audit log payload so the reasoning chain is traceable
+- [ ] Test: Mutation commands require confirmation before dispatch
+- [ ] Test: Read-only queries are answered directly
+- [ ] Test: Multi-step requests are decomposed into individual confirmations
+- [ ] Test: Approval-gated operations still require approval after NL confirmation
+- [ ] Test: Audit log records NL source and raw LLM output
+
+### R9.5 Graceful Degradation and Fallbacks
+
+- [ ] If LLM provider is unreachable → fall back to keyword-based matching (R5.4)
+- [ ] If LLM returns malformed output → reply "I didn't quite understand that. You can also use `/ruriko help` for available commands."
+- [ ] If LLM rate limit is exceeded → reply with rate-limit message + command hint
+- [ ] `/ruriko` commands always work regardless of NL layer status (additive, not replacing)
+- [ ] Health endpoint reports NL provider status (`nlp_provider: ok | degraded | unavailable`)
+- [ ] Test: NL layer degrades gracefully when LLM is down
+- [ ] Test: Raw commands bypass NL entirely
+
+### R9.6 LLM Cost Controls
+
+- [ ] Track token usage per sender per day (in-memory counter, reset at midnight UTC)
+- [ ] Configurable daily token budget per sender (`NLP_TOKEN_BUDGET`, default: 50k tokens/day)
+- [ ] When budget exceeded: "I've reached my daily conversation limit. You can still use `/ruriko` commands directly."
+- [ ] Log token usage in audit trail (input tokens, output tokens, model, latency)
+- [ ] Test: Token budget enforcement works
+- [ ] Test: Usage is logged accurately
+
+### Definition of done
+- User can say "show me my agents" and get a natural-language answer
+- User can say "create a news agent called kumo2" and Ruriko confirms before creating
+- User can say "delete saito" and the approval gate still fires
+- `/ruriko` commands still work unchanged
+- All NL-mediated actions appear in the audit log with `source: nl`
+- LLM is down → keyword matching still works, commands always work
+
+---
+
+## 📋 Phase R10: Conversation Memory — Short-Term / Long-Term Architecture (2–5 days)
+
+**Goal**: Give Ruriko the ability to remember conversations naturally. Short-term memory keeps active discussions coherent; long-term memory lets Ruriko recall relevant past context on demand.
+
+> Depends on: R9 (NL interface — memory feeds context to the LLM classifier).
+> The memory layer is **pluggable**: R10 defines the interface and wires stubs
+> so that persistence and embedding backends can be swapped in later.
+
+### R10.0 Design Decisions
+
+Humans expect conversation partners to remember what was said. LLMs don't —
+they only see what's in the context window. This phase introduces a two-tier
+memory model:
+
+**Sharp short-term memory** — the current "contiguous" conversation is kept
+whole in the LLM context window. As long as messages flow without significant
+delay, Ruriko maintains full conversational fidelity.
+
+**Fuzzy long-term memory** — when a conversation cools down (no message for a
+configurable cooldown period), the session is *sealed*, summarised, and stored
+with an embedding vector. When a future conversation seems to reference
+something from the past, Ruriko searches long-term memory by embedding
+similarity and injects the relevant context.
+
+```
+┌──────────────────────────────────────────────────────┐
+│  Matrix message arrives                               │
+│                                                       │
+│  1. Resolve active conversation (room + sender)       │
+│  2. Is it contiguous? (last msg < cooldown)           │
+│     YES → append to short-term buffer                 │
+│     NO  → seal previous conversation → store LTM      │
+│           start new short-term buffer                 │
+│  3. Assemble LLM context:                             │
+│     [system prompt]                                   │
+│     [retrieved LTM snippets, if relevant]             │
+│     [full short-term buffer]                          │
+│     [current message]                                 │
+│  4. Send to NL classifier (R9)                        │
+└──────────────────────────────────────────────────────┘
+```
+
+**Why this split matters**:
+- Short-term: high fidelity, low cost (only the current exchange)
+- Long-term: lossy but cheap (embeddings + summaries, not raw transcripts)
+- Context window stays bounded regardless of total conversation history
+- Cost scales with *active* conversation length, not *total* history
+
+### R10.1 Conversation Lifecycle and Contiguity Detection
+
+- [ ] Create `internal/ruriko/memory/conversation.go`:
+  ```go
+  type Conversation struct {
+      ID        string           // unique conversation ID (UUID)
+      RoomID    string
+      SenderID  string
+      Messages  []Message        // ordered message buffer
+      StartedAt time.Time
+      LastMsgAt time.Time
+      Sealed    bool             // true once cooldown expires
+  }
+
+  type Message struct {
+      Role      string           // "user" | "assistant"
+      Content   string
+      Timestamp time.Time
+  }
+  ```
+- [ ] Create `internal/ruriko/memory/tracker.go` — conversation lifecycle manager:
+  - `RecordMessage(roomID, senderID, role, content)` — append or start new conversation
+  - `GetActiveConversation(roomID, senderID) *Conversation` — returns current buffer
+  - `SealExpired(now time.Time)` — seals conversations past cooldown
+- [ ] Contiguity detection:
+  - Configurable cooldown period (`MEMORY_COOLDOWN`, default: 15 minutes)
+  - If `now - lastMsgAt > cooldown` → seal previous conversation, start fresh
+  - Sealed conversations are handed to the long-term memory pipeline
+- [ ] Short-term buffer size limit:
+  - Configurable max messages per conversation (`MEMORY_STM_MAX_MESSAGES`, default: 50)
+  - Configurable max token estimate (`MEMORY_STM_MAX_TOKENS`, default: 8000)
+  - When exceeded: oldest messages are dropped from the buffer (sliding window),
+    and a summary of dropped messages is prepended (when LTM summariser is available)
+- [ ] In-memory storage initially (same pattern as `conversationStore` from R5.4)
+- [ ] Test: Contiguous messages accumulate in the same conversation
+- [ ] Test: Cooldown gap triggers seal + new conversation
+- [ ] Test: Buffer size limits are enforced
+
+### R10.2 Long-Term Memory Interface (Pluggable)
+
+- [ ] Create `internal/ruriko/memory/ltm.go` — long-term memory interface:
+  ```go
+  type LongTermMemory interface {
+      // Store persists a sealed conversation with its embedding and summary.
+      Store(ctx context.Context, entry MemoryEntry) error
+      // Search finds the top-k most relevant past conversations for the query.
+      Search(ctx context.Context, query string, roomID string, senderID string, topK int) ([]MemoryEntry, error)
+  }
+
+  type MemoryEntry struct {
+      ConversationID string
+      RoomID         string
+      SenderID       string
+      Summary        string    // human-readable summary of the conversation
+      Embedding      []float32 // vector embedding of the summary
+      Messages       []Message // optional: full transcript for high-fidelity recall
+      SealedAt       time.Time
+      Metadata       map[string]string // template used, agents mentioned, etc.
+  }
+  ```
+- [ ] Create `internal/ruriko/memory/ltm_noop.go` — no-op stub implementation:
+  - `Store()` → logs and discards (conversation summary logged at DEBUG)
+  - `Search()` → returns empty slice
+  - This is the **default** until an embedding backend is wired
+- [ ] Test: Noop implementation satisfies interface
+- [ ] Test: Interface is mockable for downstream tests
+
+### R10.3 Embedding and Summarisation Interface (Pluggable)
+
+- [ ] Create `internal/ruriko/memory/embedder.go`:
+  ```go
+  type Embedder interface {
+      // Embed produces a vector embedding for the given text.
+      Embed(ctx context.Context, text string) ([]float32, error)
+  }
+
+  type Summariser interface {
+      // Summarise produces a concise summary of a conversation transcript.
+      Summarise(ctx context.Context, messages []Message) (string, error)
+  }
+  ```
+- [ ] Create `internal/ruriko/memory/embedder_noop.go` — stub implementations:
+  - `Embed()` → returns nil vector (disables similarity search)
+  - `Summarise()` → returns concatenation of last 3 messages (crude but functional)
+- [ ] Future implementations (not in this phase, but the interface supports them):
+  - `embedder_openai.go` — OpenAI `text-embedding-3-small` (cheap, 1536-dim)
+  - `summariser_llm.go` — LLM-based summarisation via same provider as R9
+  - `ltm_sqlite.go` — SQLite-backed storage with cosine similarity via an extension
+  - `ltm_pgvector.go` — PostgreSQL + pgvector for production-scale deployments
+- [ ] Test: Noop embedder and summariser satisfy interfaces
+- [ ] Test: Summariser stub produces reasonable output from sample messages
+
+### R10.4 Memory-Aware Context Assembly
+
+- [ ] Create `internal/ruriko/memory/context.go` — context assembler:
+  ```go
+  type ContextAssembler struct {
+      STM       *ConversationTracker
+      LTM       LongTermMemory
+      Embedder  Embedder
+      MaxTokens int // total budget for memory in the LLM context window
+  }
+
+  // Assemble produces the memory block to inject into the LLM prompt.
+  func (a *ContextAssembler) Assemble(ctx context.Context, roomID, senderID, currentMsg string) ([]Message, error)
+  ```
+- [ ] Assembly strategy:
+  1. Get active short-term conversation → include all messages (sharp recall)
+  2. If `Embedder` is available and non-noop:
+     - Embed `currentMsg`
+     - Search LTM for top-3 relevant past conversations (same room+sender)
+     - Inject retrieved summaries as `[system]` context: "Previous relevant conversation (from [date]): [summary]"
+  3. If `Embedder` is noop → skip LTM retrieval (no embedding = no search)
+  4. Respect `MaxTokens` budget: short-term has priority, LTM fills remaining space
+- [ ] Wire `ContextAssembler` into R9's `HandleNaturalLanguage`:
+  - Before calling `Classify()`, call `Assemble()` to get conversation history
+  - Pass assembled messages as context to the LLM provider
+  - After getting the LLM response, call `RecordMessage(role: "assistant", content: response)`
+- [ ] Test: Context includes full STM buffer
+- [ ] Test: Context includes LTM results when embedder is available
+- [ ] Test: Token budget is respected (STM prioritised over LTM)
+- [ ] Test: Noop embedder means no LTM retrieval (graceful)
+
+### R10.5 Conversation Seal and Archive Pipeline
+
+- [ ] On conversation seal (cooldown expired):
+  1. Call `Summariser.Summarise(messages)` → summary text
+  2. Call `Embedder.Embed(summary)` → embedding vector
+  3. Call `LTM.Store(MemoryEntry{...})` → persist
+  4. Clear the short-term buffer for that room+sender
+- [ ] Run seal check on a timer (every 60 seconds) or lazily on next message arrival
+- [ ] Log sealed conversations at INFO: "Conversation sealed (room=…, sender=…, messages=N, duration=…)"
+- [ ] Never log message *content* at INFO — only at DEBUG and only when redacted
+- [ ] Test: Sealed conversation flows through summarise → embed → store pipeline
+- [ ] Test: Noop backends handle the pipeline without errors
+
+### R10.6 Configuration and Wiring
+
+- [ ] Add config fields to `app.Config`:
+  - `MemoryCooldown` (duration, default: 15 min)
+  - `MemorySTMMaxMessages` (int, default: 50)
+  - `MemorySTMMaxTokens` (int, default: 8000)
+  - `MemoryLTMTopK` (int, default: 3)
+  - `MemoryEnabled` (bool, default: true when NLP provider is configured)
+- [ ] Wire in `app.New()`:
+  - Create `ConversationTracker` (always, when NLP is enabled)
+  - Create `LongTermMemory` (noop stub by default)
+  - Create `Embedder` + `Summariser` (noop stubs by default)
+  - Create `ContextAssembler` → inject into `HandlersConfig`
+- [ ] Add `HandlersConfig.Memory *memory.ContextAssembler` field
+- [ ] Test: App starts cleanly with noop memory backends
+- [ ] Test: App starts cleanly with memory disabled (nil assembler)
+
+### R10.7 Future: Persistent Backends (stubs only in this phase)
+
+> These items are **documented but not implemented** in R10. The interfaces
+> from R10.2 and R10.3 are designed to accommodate them.
+
+- [ ] `ltm_sqlite.go` — SQLite with JSON1 and a custom cosine-similarity function
+  - Conversations table: id, room_id, sender_id, summary, embedding (BLOB), sealed_at, metadata
+  - Search: brute-force cosine similarity (fine for hundreds of conversations)
+- [ ] `embedder_openai.go` — calls OpenAI Embeddings API (`text-embedding-3-small`)
+  - Same API key as R9 NLP provider (or separate `RURIKO_EMBEDDING_API_KEY`)
+  - 1536-dimensional vectors, ~$0.02 per 1M tokens
+- [ ] `summariser_llm.go` — uses R9's LLM provider to summarise sealed conversations
+  - System prompt: "Summarise this conversation in 2–3 sentences, focusing on decisions made and actions taken."
+- [ ] `ltm_pgvector.go` — PostgreSQL + pgvector (for larger deployments)
+
+### Definition of done
+- Active conversations are tracked per room+sender with contiguity detection
+- Short-term memory is included in every NL classifier call (full buffer)
+- Long-term memory interface exists with a noop stub
+- Cooldown triggers conversation seal → summarise → embed → store pipeline (noop endpoints)
+- All interfaces are pluggable — swapping SQLite/pgvector/OpenAI embeddings requires no structural changes
+- System works end-to-end with noop backends (no external dependencies required)
+- Memory is disabled gracefully when NLP provider is not configured
 
 ---
 
@@ -961,6 +1368,11 @@ The MVP is ready when **all** of the following are true:
 - [ ] Codex integration (template generation)
 - [ ] Advanced MCP tool ecosystem
 - [ ] Enhanced observability (distributed tracing, Prometheus)
+- [ ] Persistent LTM backends (SQLite cosine similarity, pgvector)
+- [ ] OpenAI Embeddings integration for long-term memory search
+- [ ] LLM-powered conversation summarisation for memory archival
+- [ ] Multi-user memory isolation and per-room memory scoping
+- [ ] Voice-to-text Matrix messages → NL pipeline
 
 ---
 
@@ -972,6 +1384,9 @@ The MVP is ready when **all** of the following are true:
 - **Non-technical friendly**: Setup must not require engineering expertise
 - **Boring control plane**: ACP is reliable, authenticated, idempotent
 - **Fail safely**: Better to refuse an action than execute it incorrectly
+- **LLM translates, code decides**: The NL layer proposes commands; the deterministic pipeline executes them
+- **Memory is bounded**: Short-term is sharp; long-term is fuzzy; context window stays predictable
+- **Graceful degradation**: LLM down → keyword matching; memory down → no recall; commands always work
 - **Document as you go**: Keep preamble and architecture docs up to date
 
 ---
@@ -998,12 +1413,14 @@ The MVP is ready when **all** of the following are true:
 - [x] Phase R2: ACP Hardening — Auth, Idempotency, Timeouts ✅
 - [x] Phase R3: Kuze — Human Secret Entry ✅
 - [x] Phase R4: Token-Based Secret Distribution to Agents ✅
-- [ ] Phase R5: Agent Provisioning UX — Saito, Kairo, Kumo 🔄 *(R5.1 partial: saito-agent ✅ + kumo-agent ✅; kairo-agent deferred; R5.2 ✅; R5.3 ✅; R5.4 pending)*
+- [ ] Phase R5: Agent Provisioning UX — Saito, Kairo, Kumo 🔄 *(R5.1 partial: saito-agent ✅ + kumo-agent ✅; kairo-agent deferred; R5.2 ✅; R5.3 ✅; R5.4 ✅)*
 - [ ] Phase R6: Canonical Workflow — Saito → Kairo → Kumo
 - [ ] Phase R7: Observability, Safety, and Polish
 - [ ] Phase R8: Integration and End-to-End Testing
+- [ ] Phase R9: Natural Language Interface — LLM-Powered Command Translation
+- [ ] Phase R10: Conversation Memory — Short-Term / Long-Term Architecture
 
 ---
 
-**Last Updated**: 2026-02-21
-**Current Focus**: Phase R5 — Agent Provisioning UX (R5.2 automated provisioning pipeline ✅; R5.3 agent registry drift detection ✅; R5.4 chat-driven creation next)
+**Last Updated**: 2026-02-22
+**Current Focus**: Phase R9 — Natural Language Interface (design complete; R5.4 keyword-based NL ✅; LLM-powered translation next)
