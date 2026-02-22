@@ -497,3 +497,49 @@ func TestRunEventTurn_DoesNotLeakRawPayloadDataToMatrix(t *testing.T) {
 		t.Errorf("Matrix message %q does not contain LLM response %q", last.text, llmResponse)
 	}
 }
+
+// TestHandleEvent_AuditRecordsIncludeGatewayMetadata is the R12.7 test.
+// It verifies that a gateway-triggered turn stores the structured audit
+// metadata columns (trigger, gateway_name, event_type, duration_ms) in
+// turn_log so that operational queries can identify and analyse gateway turns
+// without parsing the sender_mxid string.
+func TestHandleEvent_AuditRecordsIncludeGatewayMetadata(t *testing.T) {
+	prov := newCapturingLLM("Scheduled analysis complete.")
+	a := newEventApp(t, eventTestGosutoYAML, prov)
+
+	evt := makeTestEvent("scheduler", "cron.tick", "Run the daily analysis.")
+	a.handleEvent(context.Background(), evt)
+
+	// Wait for the LLM call so the goroutine has had a chance to complete LogGatewayTurn.
+	if _, ok := prov.waitForCall(3 * time.Second); !ok {
+		t.Fatal("timed out waiting for LLM call")
+	}
+	// Allow time for FinishTurnWithDuration to execute after runTurn returns.
+	time.Sleep(100 * time.Millisecond)
+
+	// Query the new audit columns from turn_log.
+	row := a.db.DB().QueryRowContext(context.Background(), `
+		SELECT trigger, gateway_name, event_type, duration_ms
+		FROM turn_log
+		ORDER BY id DESC
+		LIMIT 1`,
+	)
+	var trigger, gatewayName, eventType string
+	var durationMS int64
+	if err := row.Scan(&trigger, &gatewayName, &eventType, &durationMS); err != nil {
+		t.Fatalf("scan turn_log audit row: %v", err)
+	}
+
+	if trigger != "gateway" {
+		t.Errorf("trigger = %q, want %q", trigger, "gateway")
+	}
+	if gatewayName != "scheduler" {
+		t.Errorf("gateway_name = %q, want %q", gatewayName, "scheduler")
+	}
+	if eventType != "cron.tick" {
+		t.Errorf("event_type = %q, want %q", eventType, "cron.tick")
+	}
+	if durationMS < 0 {
+		t.Errorf("duration_ms = %d, want >= 0", durationMS)
+	}
+}

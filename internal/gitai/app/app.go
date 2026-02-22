@@ -785,15 +785,15 @@ func (a *App) handleEvent(ctx context.Context, evt *envelope.Event) {
 func (a *App) runEventTurn(ctx context.Context, evt *envelope.Event) {
 	cfg := a.gosutoLdr.Config()
 	if cfg == nil {
-		slog.Warn("event turn dropped: no Gosuto config loaded",
-			"source", evt.Source, "type", evt.Type)
+		slog.Warn("event dropped: no Gosuto config loaded",
+			"source", evt.Source, "type", evt.Type, "reason", "no_config")
 		return
 	}
 
 	adminRoom := cfg.Trust.AdminRoom
 	if adminRoom == "" {
-		slog.Warn("event turn dropped: no adminRoom configured in Gosuto trust block",
-			"source", evt.Source, "type", evt.Type)
+		slog.Warn("event dropped: no adminRoom configured in Gosuto trust block",
+			"source", evt.Source, "type", evt.Type, "reason", "no_admin_room")
 		return
 	}
 
@@ -806,26 +806,36 @@ func (a *App) runEventTurn(ctx context.Context, evt *envelope.Event) {
 	ctx = trace.WithTraceID(ctx, traceID)
 	log := observability.WithTrace(ctx)
 
-	// Log the turn in the DB. The sender label "gateway:<source>" distinguishes
-	// gateway-triggered turns from Matrix-message-triggered turns in the store.
+	// Log the turn in the DB. LogGatewayTurn stores trigger="gateway",
+	// gateway_name, and event_type so that gateway turns are distinguishable
+	// from Matrix-message turns without parsing the sender_mxid string.
 	senderLabel := "gateway:" + evt.Source
-	turnID, err := a.db.LogTurn(traceID, adminRoom, senderLabel, userText)
+	turnID, err := a.db.LogGatewayTurn(traceID, adminRoom, senderLabel, userText, evt.Source, evt.Type)
 	if err != nil {
 		log.Warn("could not log event turn", "err", err)
 	}
 
-	log.Info("event turn started",
+	// "event received" — source, type, timestamp (payload content never logged at INFO).
+	log.Info("event received",
 		"trigger", "gateway",
 		"gateway_name", evt.Source,
 		"event_type", evt.Type,
+		"ts", evt.TS,
 	)
 
+	startedAt := time.Now()
 	result, toolCalls, err := a.runTurn(ctx, adminRoom, senderLabel, userText, "")
+	durationMS := time.Since(startedAt).Milliseconds()
+
 	if err != nil {
-		log.Error("event turn failed",
+		// "event processed" with status=error.
+		log.Error("event processed",
 			"trigger", "gateway",
 			"gateway_name", evt.Source,
 			"event_type", evt.Type,
+			"status", "error",
+			"duration_ms", durationMS,
+			"tool_calls", toolCalls,
 			"err", err,
 		)
 		if a.eventSender != nil {
@@ -833,7 +843,7 @@ func (a *App) runEventTurn(ctx context.Context, evt *envelope.Event) {
 				fmt.Sprintf("⚡ Event: %s/%s\n❌ %s", evt.Source, evt.Type, err))
 		}
 		if turnID > 0 {
-			_ = a.db.FinishTurn(turnID, toolCalls, "error", err.Error())
+			_ = a.db.FinishTurnWithDuration(turnID, toolCalls, durationMS, "error", err.Error())
 		}
 		return
 	}
@@ -847,13 +857,16 @@ func (a *App) runEventTurn(ctx context.Context, evt *envelope.Event) {
 	}
 
 	if turnID > 0 {
-		_ = a.db.FinishTurn(turnID, toolCalls, "success", "")
+		_ = a.db.FinishTurnWithDuration(turnID, toolCalls, durationMS, "success", "")
 	}
 
-	log.Info("event turn completed",
+	// "event processed" — source, type, duration, tool_calls, status.
+	log.Info("event processed",
 		"trigger", "gateway",
 		"gateway_name", evt.Source,
 		"event_type", evt.Type,
+		"status", "success",
+		"duration_ms", durationMS,
 		"tool_calls", toolCalls,
 	)
 }

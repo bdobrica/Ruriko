@@ -1617,14 +1617,14 @@ similarity and injects the relevant context.
 - [x] Test: Sensitive event data is not leaked to Matrix
 
 ### R12.7 Observability and Auditing
-- [ ] Log all gateway events at INFO level:
+- [x] Log all gateway events at INFO level:
   - `"event received"` — source, type, timestamp (never log payload content at INFO)
   - `"event processed"` — source, type, duration, tool_calls, status
   - `"event dropped"` — source, type, reason (rate limit, unknown source, etc.)
-- [ ] Include gateway metadata in turn audit records:
+- [x] Include gateway metadata in turn audit records:
   - `trigger: "gateway"`, `gateway_name: "..."`, `event_type: "..."`
-- [ ] Distinguish gateway turns from Matrix turns in the store's turn log
-- [ ] Test: Audit records include gateway metadata
+- [x] Distinguish gateway turns from Matrix turns in the store's turn log
+- [x] Test: Audit records include gateway metadata
 
 ### Definition of done
 - Agents can receive events via `POST /events/{source}` and process them through the LLM turn engine
@@ -1759,7 +1759,7 @@ similarity and injects the relevant context.
 - [ ] Phase R9: Natural Language Interface — LLM-Powered Command Translation
 - [ ] Phase R10: Conversation Memory — Short-Term / Long-Term Architecture
 - [x] Phase R11: Event Gateways — Gosuto Schema, Types, and Validation ✅
-- [ ] Phase R12: Event Gateways — Gitai Runtime Integration
+- [x] Phase R12: Event Gateways — Gitai Runtime Integration ✅
 - [ ] Phase R13: Ruriko-Side Gateway Wiring
 
 ---

@@ -721,6 +721,7 @@ func (s *Server) handleEventIngress(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			if foundGW == nil {
+				slog.Warn("event dropped", "source", source, "reason", "unknown_source")
 				writeError(w, http.StatusNotFound,
 					fmt.Sprintf("unknown gateway source %q", source))
 				return
@@ -776,7 +777,7 @@ func (s *Server) handleEventIngress(w http.ResponseWriter, r *http.Request) {
 
 	// Rate limiting: token-bucket per source + global (maxEventsPerMinute).
 	if !s.eventLimiter.allow(source, maxEventsPerMinute) {
-		slog.Warn("ACP: event rate limit exceeded", "source", source, "limit", maxEventsPerMinute)
+		slog.Warn("event dropped", "source", source, "reason", "rate_limit", "limit", maxEventsPerMinute)
 		writeError(w, http.StatusTooManyRequests,
 			fmt.Sprintf("rate limit exceeded for gateway %q (%d events/min)", source, maxEventsPerMinute))
 		return
@@ -788,7 +789,8 @@ func (s *Server) handleEventIngress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.handlers.HandleEvent(r.Context(), &evt)
-	slog.Info("ACP: event queued", "source", source, "type", evt.Type)
+	// "event received" — source, type, timestamp (payload content never logged at INFO).
+	slog.Info("event received", "source", source, "type", evt.Type, "ts", evt.TS)
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "queued"})
 }
 
@@ -885,7 +887,7 @@ func (s *Server) handleWebhookEvent(
 
 	// Rate limiting.
 	if !s.eventLimiter.allow(source, maxEventsPerMinute) {
-		slog.Warn("ACP: webhook rate limit exceeded", "source", source, "limit", maxEventsPerMinute)
+		slog.Warn("event dropped", "source", source, "reason", "rate_limit", "limit", maxEventsPerMinute)
 		writeError(w, http.StatusTooManyRequests,
 			fmt.Sprintf("rate limit exceeded for gateway %q (%d events/min)", source, maxEventsPerMinute))
 		return
@@ -900,7 +902,8 @@ func (s *Server) handleWebhookEvent(
 		return
 	}
 	s.handlers.HandleEvent(r.Context(), evt)
-	slog.Info("ACP: webhook event queued", "source", source, "type", evt.Type)
+	// "event received" — source, type, timestamp (payload content never logged at INFO).
+	slog.Info("event received", "source", source, "type", evt.Type, "ts", evt.TS)
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "queued"})
 }
 

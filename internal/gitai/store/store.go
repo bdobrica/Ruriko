@@ -170,6 +170,35 @@ func (s *Store) FinishTurn(id int64, toolCalls int, result, errMsg string) error
 	return err
 }
 
+// LogGatewayTurn inserts a gateway-triggered turn into turn_log.
+// The trigger, gatewayName, and eventType columns are set so that gateway
+// turns are clearly distinguishable from Matrix-message turns in audit queries.
+// Returns the inserted row ID.
+func (s *Store) LogGatewayTurn(traceID, roomID, senderMXID, message, gatewayName, eventType string) (int64, error) {
+	res, err := s.db.Exec(`
+		INSERT INTO turn_log (trace_id, room_id, sender_mxid, message, trigger, gateway_name, event_type)
+		VALUES (?, ?, ?, ?, 'gateway', ?, ?)`,
+		traceID, roomID, senderMXID, message, gatewayName, eventType,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// FinishTurnWithDuration updates an existing turn_log row with the outcome and
+// the wall-clock duration of the turn in milliseconds. Use instead of FinishTurn
+// when the caller has timing information available (e.g. gateway event turns).
+func (s *Store) FinishTurnWithDuration(id int64, toolCalls int, durationMS int64, result, errMsg string) error {
+	_, err := s.db.Exec(`
+		UPDATE turn_log
+		SET tool_calls = ?, result = ?, error_msg = ?, duration_ms = ?, finished_at = CURRENT_TIMESTAMP
+		WHERE id = ?`,
+		toolCalls, result, nullableString(errMsg), durationMS, id,
+	)
+	return err
+}
+
 // SaveApproval persists a new approval request.
 func (s *Store) SaveApproval(approvalID, traceID, roomID, action, target, paramsJSON, requestorMXID string, expiresAt time.Time) error {
 	_, err := s.db.Exec(`
