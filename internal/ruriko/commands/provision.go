@@ -24,7 +24,10 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/bdobrica/Ruriko/common/trace"
 	"github.com/bdobrica/Ruriko/internal/ruriko/audit"
@@ -241,11 +244,47 @@ func (h *Handlers) runProvisioningPipeline(ctx context.Context, args provisionAr
 				"agent", agentID, "hash", reportedHash[:8], "err", err)
 		}
 	}
-	send(fmt.Sprintf("✅ [4/5] Config hash verified on **%s**", agentID))
+
+	// R13.2: check gateway processes reported by /status against those declared
+	// in the applied Gosuto config. Build the run-set from statusResp.Gateways.
+	expectedGWs, gwSecretRefs := gosutoGatewaySummary(renderedYAML)
+	runningSet := make(map[string]struct{}, len(statusResp.Gateways))
+	for _, gw := range statusResp.Gateways {
+		runningSet[gw] = struct{}{}
+	}
+	var gwLines []string
+	for _, name := range expectedGWs {
+		if _, ok := runningSet[name]; ok {
+			gwLines = append(gwLines, fmt.Sprintf("  ✅ %s (running)", name))
+		} else {
+			// Non-fatal: gateway may still be starting.
+			slog.Warn("provision: expected gateway not yet listed in /status",
+				"agent", agentID, "gateway", name)
+			gwLines = append(gwLines, fmt.Sprintf("  ⚠️  %s (not yet running)", name))
+		}
+	}
+	if len(gwLines) > 0 {
+		send(fmt.Sprintf("✅ [4/5] Config hash verified on **%s** — gateways:\n"+strings.Join(gwLines, "\n"), agentID))
+	} else {
+		send(fmt.Sprintf("✅ [4/5] Config hash verified on **%s** (no gateways configured)", agentID))
+	}
+	slog.Info("provision: gateway summary",
+		"agent", agentID,
+		"expected", len(expectedGWs),
+		"running", len(statusResp.Gateways),
+		"gateway_secrets", len(gwSecretRefs))
 
 	// --- step 6: push secrets via distributor ----------------------------
+	// gwSecretRefs contains any gateway-referenced secret names (e.g. HMAC keys)
+	// discovered in the rendered Gosuto config; they are included in the
+	// distributor's PushToAgent call below alongside all other bound secrets.
+	var gwSecretNote string
+	if len(gwSecretRefs) > 0 {
+		gwSecretNote = fmt.Sprintf(" (includes %d gateway secret(s): %s)",
+			len(gwSecretRefs), strings.Join(gwSecretRefs, ", "))
+	}
 	if h.distributor != nil {
-		send(fmt.Sprintf("⏳ [5/5] Pushing secrets to **%s**...", agentID))
+		send(fmt.Sprintf("⏳ [5/5] Pushing secrets to **%s**%s...", agentID, gwSecretNote))
 		n, err := h.distributor.PushToAgent(ctx, agentID)
 		if err != nil {
 			// Non-fatal: the agent is healthy, but it may not yet have secrets.
@@ -258,7 +297,11 @@ func (h *Handlers) runProvisioningPipeline(ctx context.Context, args provisionAr
 			send(fmt.Sprintf("✅ [5/5] No secrets bound to **%s** yet", agentID))
 		}
 	} else {
-		send(fmt.Sprintf("ℹ️  [5/5] No secrets distributor — skipping secret push for **%s**", agentID))
+		if gwSecretNote != "" {
+			send(fmt.Sprintf("⚠️  [5/5] No secrets distributor — gateway secrets will not be pushed to **%s**%s", agentID, gwSecretNote))
+		} else {
+			send(fmt.Sprintf("ℹ️  [5/5] No secrets distributor — skipping secret push for **%s**", agentID))
+		}
 	}
 
 	// --- done: mark healthy ----------------------------------------------
@@ -305,6 +348,41 @@ func pollContainerRunning(ctx context.Context, rt runtime.Runtime, handle runtim
 			// created/paused/unknown — keep polling
 		}
 	}
+}
+
+// gosutoGatewaySummary parses the rendered Gosuto YAML and returns two slices:
+//   - names: the Name of each gateway declared in the config
+//   - secretRefs: any secret references used by gateways (e.g. hmacSecretRef
+//     values in gateway Config maps), deduplicated and sorted
+//
+// The function is intentionally lenient: parse errors silently return empty
+// slices so that the provisioning pipeline is not broken by an unexpected
+// template format (R13.2).
+func gosutoGatewaySummary(data []byte) (names []string, secretRefs []string) {
+	var partial struct {
+		Gateways []struct {
+			Name   string            `yaml:"name"`
+			Config map[string]string `yaml:"config"`
+		} `yaml:"gateways"`
+	}
+	_ = yaml.Unmarshal(data, &partial)
+
+	seen := make(map[string]struct{})
+	for _, gw := range partial.Gateways {
+		if gw.Name != "" {
+			names = append(names, gw.Name)
+		}
+		// Gateway secret references live in the config map under known keys.
+		for _, key := range []string{"hmacSecretRef", "passwordSecretRef", "tokenSecretRef"} {
+			if ref, ok := gw.Config[key]; ok && ref != "" {
+				if _, dup := seen[ref]; !dup {
+					secretRefs = append(secretRefs, ref)
+					seen[ref] = struct{}{}
+				}
+			}
+		}
+	}
+	return names, secretRefs
 }
 
 // pollACPHealth polls GET /health at provisionPollInterval intervals until the

@@ -1,4 +1,3 @@
-package nlp
 package nlp_test
 
 import (

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"time"
 
 	"maunium.net/go/mautrix/event"
 
@@ -516,7 +517,7 @@ func (h *Handlers) HandleAgentsStatus(ctx context.Context, cmd *Command, evt *ev
 		}
 	}
 
-	// ACP health check
+	// ACP health + live process summary
 	if agent.ControlURL.Valid && agent.ControlURL.String != "" {
 		acpClient := acp.New(agent.ControlURL.String, acp.Options{Token: agent.ACPToken.String})
 		health, err := acpClient.Health(ctx)
@@ -524,6 +525,23 @@ func (h *Handlers) HandleAgentsStatus(ctx context.Context, cmd *Command, evt *ev
 			sb.WriteString("ACP Health:   ❌ unreachable\n")
 		} else {
 			sb.WriteString(fmt.Sprintf("ACP Health:   ✅ %s\n", health.Status))
+
+			// R13.2: pull live process summary (MCPs + Gateways) from /status.
+			statusCtx, statusCancel := context.WithTimeout(ctx, 5*time.Second)
+			statusResp, statusErr := acpClient.Status(statusCtx)
+			statusCancel()
+			if statusErr == nil {
+				if len(statusResp.MCPs) == 0 {
+					sb.WriteString("MCPs:         (none)\n")
+				} else {
+					sb.WriteString(fmt.Sprintf("MCPs:         %s\n", strings.Join(statusResp.MCPs, ", ")))
+				}
+				if len(statusResp.Gateways) == 0 {
+					sb.WriteString("Gateways:     (none)\n")
+				} else {
+					sb.WriteString(fmt.Sprintf("Gateways:     %s\n", strings.Join(statusResp.Gateways, ", ")))
+				}
+			}
 		}
 	}
 

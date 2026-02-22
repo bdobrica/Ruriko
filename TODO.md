@@ -1658,12 +1658,12 @@ similarity and injects the relevant context.
 - [x] Test: Invalid HMAC signature is rejected
 
 ### R13.2 Provisioning Pipeline — Gateway Awareness
-- [ ] Update provisioning pipeline (R5.2) to handle gateway-bearing Gosuto configs:
+- [x] Update provisioning pipeline (R5.2) to handle gateway-bearing Gosuto configs:
   - After applying Gosuto via ACP, verify that gateway processes are running via `/status`
   - Include gateway process status in the health/status reporting
   - If a gateway references secrets (e.g. IMAP credentials, webhook HMAC secret), push those secret tokens alongside other secrets during provisioning
-- [ ] Update `agents status` command to show active gateways alongside MCPs
-- [ ] Test: Provisioning a gateway-bearing Gosuto results in running gateway processes
+- [x] Update `agents status` command to show active gateways alongside MCPs
+- [x] Test: Provisioning a gateway-bearing Gosuto results in running gateway processes
 
 ### R13.3 Container Image Building — Gateway Binaries
 - [ ] Document the pattern for including gateway binaries in agent container images:

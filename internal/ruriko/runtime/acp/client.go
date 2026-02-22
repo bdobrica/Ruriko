@@ -77,6 +77,10 @@ type StatusResponse struct {
 	Uptime     float64   `json:"uptime_seconds"`
 	StartedAt  time.Time `json:"started_at"`
 	MCPs       []string  `json:"mcps"`
+	// Gateways lists the names of gateway processes currently supervised by the
+	// agent runtime (R13.2). Populated by Gitai once the Gosuto config has been
+	// applied and the gateway supervisor has started the processes.
+	Gateways []string `json:"gateways,omitempty"`
 }
 
 // ConfigApplyRequest is the body for POST /config/apply.

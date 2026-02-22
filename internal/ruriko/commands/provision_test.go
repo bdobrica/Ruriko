@@ -83,11 +83,19 @@ func (c *capturingSender) messages() []string {
 
 // mockACPServer provides minimal /health, /config/apply, and /status
 // endpoints. It captures the hash from /config/apply so that /status can
-// return it, simulating a real Gitai agent.
+// return it, simulating a real Gitai agent. The gateways field may be
+// pre-seeded (via setGateways) to simulate a running gateway supervisor.
 type mockACPServer struct {
 	mu          sync.Mutex
 	appliedHash string
+	gateways    []string
 	srv         *httptest.Server
+}
+
+func (m *mockACPServer) setGateways(names []string) {
+	m.mu.Lock()
+	m.gateways = names
+	m.mu.Unlock()
 }
 
 func newMockACPServer() *mockACPServer {
@@ -115,6 +123,7 @@ func newMockACPServer() *mockACPServer {
 	mux.HandleFunc("/status", func(w http.ResponseWriter, _ *http.Request) {
 		m.mu.Lock()
 		h := m.appliedHash
+		gwCopy := append([]string{}, m.gateways...)
 		m.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -124,6 +133,7 @@ func newMockACPServer() *mockACPServer {
 			"uptime_seconds": 1.0,
 			"started_at":     time.Now(),
 			"mcps":           []string{},
+			"gateways":       gwCopy,
 		})
 	})
 
@@ -147,6 +157,23 @@ trust:
 limits:
   max_tokens_per_day: 1000
 capabilities: []
+`
+
+// gatewayGosutoYAML is a Gosuto config that declares a webhook gateway with an
+// HMAC secret reference.  Used by TestProvisioningPipeline_GatewayBearing to
+// verify that gateway awareness is handled correctly during provisioning (R13.2).
+const gatewayGosutoYAML = `apiVersion: gosuto/v1
+metadata:
+  name: "{{.AgentName}}"
+trust:
+  allowedRooms: ["!admin:example.com"]
+  allowedSenders: ["{{.OperatorMXID}}"]
+gateways:
+  - name: my-webhook
+    type: webhook
+    config:
+      authType: hmac-sha256
+      hmacSecretRef: "{{.AgentName}}.webhook-secret"
 `
 
 func newTestTemplateRegistry(t *testing.T) *templates.Registry {
@@ -394,5 +421,108 @@ func TestHandleAgentsCreate_NoTemplateRegistry_LegacyPath(t *testing.T) {
 	// Should NOT say "pipeline started".
 	if strings.Contains(resp, "pipeline started") {
 		t.Errorf("unexpected 'pipeline started' in legacy response: %q", resp)
+	}
+}
+
+// --- test: gateway-bearing Gosuto config is handled correctly (R13.2) ------
+
+// TestProvisioningPipeline_GatewayBearing verifies that when the applied Gosuto
+// config declares a gateway process and the mock agent's /status already lists
+// that gateway as running, the provisioning pipeline:
+//
+//  1. Completes successfully (reaches "healthy").
+//  2. Posts a breadcrumb that names the gateway.
+//  3. Posts a breadcrumb that names the gateway secret reference discovered in
+//     the Gosuto config (hmacSecretRef).
+func TestProvisioningPipeline_GatewayBearing(t *testing.T) {
+	acpSrv := newMockACPServer()
+	defer acpSrv.srv.Close()
+
+	// Pre-seed the running gateway list so /status always includes it from the
+	// moment config is applied (simulates an agent that starts gateways quickly).
+	acpSrv.setGateways([]string{"my-webhook"})
+
+	f, err := os.CreateTemp(t.TempDir(), "ruriko-gw-test-*.db")
+	if err != nil {
+		t.Fatalf("temp db: %v", err)
+	}
+	f.Close()
+
+	s, err := appstore.New(f.Name())
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	masterKey := make([]byte, 32)
+	for i := range masterKey {
+		masterKey[i] = byte(i + 1)
+	}
+	sec, err := secrets.New(s, masterKey)
+	if err != nil {
+		t.Fatalf("secrets.New: %v", err)
+	}
+
+	// Build a template registry that carries the gateway-bearing Gosuto template.
+	gwFS := fstest.MapFS{
+		"gw-template/gosuto.yaml": &fstest.MapFile{Data: []byte(gatewayGosutoYAML)},
+	}
+	tmplReg := templates.NewRegistry(gwFS)
+
+	sender := &capturingSender{}
+	rt := &stubRuntime{controlURL: acpSrv.srv.URL}
+
+	h := commands.NewHandlers(commands.HandlersConfig{
+		Store:      s,
+		Secrets:    sec,
+		Runtime:    rt,
+		Templates:  tmplReg,
+		RoomSender: sender,
+	})
+
+	router := commands.NewRouter("/ruriko")
+	cmd, err := router.Parse("/ruriko agents create --name gwbot --template gw-template --image gitai:test")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	resp, createErr := h.HandleAgentsCreate(context.Background(), cmd, fakeEvent("@admin:example.com"))
+	if createErr != nil {
+		t.Fatalf("HandleAgentsCreate: %v", createErr)
+	}
+	if !strings.Contains(resp, "gwbot") {
+		t.Errorf("expected agent name in response, got %q", resp)
+	}
+
+	// Wait for the provisioning pipeline to reach "healthy".
+	waitFor(t, 10*time.Second, func() bool {
+		agent, err := s.GetAgent(context.Background(), "gwbot")
+		if err != nil {
+			return false
+		}
+		return agent.ProvisioningState == "healthy"
+	})
+
+	agent, err := s.GetAgent(context.Background(), "gwbot")
+	if err != nil {
+		t.Fatalf("GetAgent after pipeline: %v", err)
+	}
+	if agent.Status != "running" {
+		t.Errorf("expected status=running, got %q", agent.Status)
+	}
+	if agent.ProvisioningState != "healthy" {
+		t.Errorf("expected provisioning_state=healthy, got %q", agent.ProvisioningState)
+	}
+
+	// Breadcrumbs must mention the gateway name and the gateway secret ref.
+	msgs := sender.messages()
+	joined := strings.Join(msgs, "\n")
+
+	if !strings.Contains(joined, "my-webhook") {
+		t.Errorf("expected gateway name 'my-webhook' in breadcrumbs:\n%s", joined)
+	}
+	// The hmacSecretRef is "gwbot.webhook-secret" after template rendering.
+	if !strings.Contains(joined, "gwbot.webhook-secret") {
+		t.Errorf("expected gateway secret ref 'gwbot.webhook-secret' in breadcrumbs:\n%s", joined)
 	}
 }

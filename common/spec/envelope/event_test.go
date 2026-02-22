@@ -1,4 +1,3 @@
-package envelope
 package envelope_test
 
 import (
