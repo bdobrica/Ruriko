@@ -1458,7 +1458,7 @@ similarity and injects the relevant context.
 > See [docs/gosuto-spec.md](docs/gosuto-spec.md) for the full specification.
 
 ### R11.1 Gosuto Types Extension
-- [ ] Add `Gateway` struct to `common/spec/gosuto/types.go`:
+- [x] Add `Gateway` struct to `common/spec/gosuto/types.go`:
   ```go
   type Gateway struct {
       Name        string            `yaml:"name" json:"name"`
@@ -1470,12 +1470,12 @@ similarity and injects the relevant context.
       AutoRestart bool              `yaml:"autoRestart,omitempty" json:"autoRestart,omitempty"`
   }
   ```
-- [ ] Add `Gateways []Gateway` field to `Config` struct (between `MCPs` and `Secrets`)
-- [ ] Add `MaxEventsPerMinute int` field to `Limits` struct
-- [ ] Test: YAML round-trip — gateway configs marshal and unmarshal correctly
+- [x] Add `Gateways []Gateway` field to `Config` struct (between `MCPs` and `Secrets`)
+- [x] Add `MaxEventsPerMinute int` field to `Limits` struct
+- [x] Test: YAML round-trip — gateway configs marshal and unmarshal correctly
 
 ### R11.2 Gosuto Validation Extension
-- [ ] Add `validateGateway(g Gateway) error` to `common/spec/gosuto/validate.go`:
+- [x] Add `validateGateway(g Gateway) error` to `common/spec/gosuto/validate.go`:
   - Name must not be empty
   - Exactly one of `type` or `command` must be set (not both, not neither)
   - If `type` is set: must be `"cron"` or `"webhook"` (known built-in types)
@@ -1484,10 +1484,10 @@ similarity and injects the relevant context.
   - If `command` is set: must not be empty string
   - Names must be unique across all gateways (no duplicates)
   - Names must not collide with MCP server names (they share the supervisor namespace)
-- [ ] Wire `validateGateway` into `Validate()` loop (same pattern as MCPs)
-- [ ] Validate `MaxEventsPerMinute >= 0` in `validateLimits`
-- [ ] Test: Valid gateway configs pass validation (cron, webhook, external)
-- [ ] Test: Invalid configs fail — missing name, both type+command, unknown type, missing cron expression, duplicate names, MCP name collision
+- [x] Wire `validateGateway` into `Validate()` loop (same pattern as MCPs)
+- [x] Validate `MaxEventsPerMinute >= 0` in `validateLimits`
+- [x] Test: Valid gateway configs pass validation (cron, webhook, external)
+- [x] Test: Invalid configs fail — missing name, both type+command, unknown type, missing cron expression, duplicate names, MCP name collision
 
 ### R11.3 Event Envelope Types
 - [ ] Create `common/spec/envelope/event.go` (or extend existing envelope package):

@@ -424,6 +424,295 @@ mcps:
     autoRestart: true
 `
 
+// ── Gateway round-trip tests ──────────────────────────────────────────────────
+
+const gatewayValid = `
+apiVersion: gosuto/v1
+metadata:
+  name: gateway-agent
+trust:
+  allowedRooms:
+    - "*"
+  allowedSenders:
+    - "*"
+limits:
+  maxEventsPerMinute: 30
+gateways:
+  - name: scheduler
+    type: cron
+    config:
+      expression: "*/15 * * * *"
+      payload: "Trigger scheduled check"
+  - name: inbound
+    type: webhook
+    config:
+      authType: hmac-sha256
+      hmacSecretRef: gateway-agent.webhook-secret
+  - name: external-gw
+    command: /usr/local/bin/my-gateway
+    args:
+      - "--verbose"
+    env:
+      CUSTOM_VAR: "value"
+    config:
+      key: val
+    autoRestart: true
+`
+
+func TestParse_GatewayRoundTrip(t *testing.T) {
+	cfg, err := gosuto.Parse([]byte(gatewayValid))
+	if err != nil {
+		t.Fatalf("Parse gateway config: unexpected error: %v", err)
+	}
+
+	if cfg.Limits.MaxEventsPerMinute != 30 {
+		t.Errorf("maxEventsPerMinute: got %d, want 30", cfg.Limits.MaxEventsPerMinute)
+	}
+
+	if len(cfg.Gateways) != 3 {
+		t.Fatalf("gateways count: got %d, want 3", len(cfg.Gateways))
+	}
+
+	// cron gateway
+	cron := cfg.Gateways[0]
+	if cron.Name != "scheduler" {
+		t.Errorf("gateway[0].name: got %q, want %q", cron.Name, "scheduler")
+	}
+	if cron.Type != "cron" {
+		t.Errorf("gateway[0].type: got %q, want %q", cron.Type, "cron")
+	}
+	if cron.Command != "" {
+		t.Errorf("gateway[0].command: got %q, want empty", cron.Command)
+	}
+	if cron.Config["expression"] != "*/15 * * * *" {
+		t.Errorf("gateway[0].config.expression: got %q, want %q", cron.Config["expression"], "*/15 * * * *")
+	}
+	if cron.Config["payload"] != "Trigger scheduled check" {
+		t.Errorf("gateway[0].config.payload: got %q, want %q", cron.Config["payload"], "Trigger scheduled check")
+	}
+
+	// webhook gateway
+	webhook := cfg.Gateways[1]
+	if webhook.Name != "inbound" {
+		t.Errorf("gateway[1].name: got %q, want %q", webhook.Name, "inbound")
+	}
+	if webhook.Type != "webhook" {
+		t.Errorf("gateway[1].type: got %q, want %q", webhook.Type, "webhook")
+	}
+	if webhook.Config["authType"] != "hmac-sha256" {
+		t.Errorf("gateway[1].config.authType: got %q, want %q", webhook.Config["authType"], "hmac-sha256")
+	}
+	if webhook.Config["hmacSecretRef"] != "gateway-agent.webhook-secret" {
+		t.Errorf("gateway[1].config.hmacSecretRef: got %q, want %q", webhook.Config["hmacSecretRef"], "gateway-agent.webhook-secret")
+	}
+
+	// external gateway
+	ext := cfg.Gateways[2]
+	if ext.Name != "external-gw" {
+		t.Errorf("gateway[2].name: got %q, want %q", ext.Name, "external-gw")
+	}
+	if ext.Type != "" {
+		t.Errorf("gateway[2].type: got %q, want empty", ext.Type)
+	}
+	if ext.Command != "/usr/local/bin/my-gateway" {
+		t.Errorf("gateway[2].command: got %q, want %q", ext.Command, "/usr/local/bin/my-gateway")
+	}
+	if len(ext.Args) != 1 || ext.Args[0] != "--verbose" {
+		t.Errorf("gateway[2].args: got %v, want [--verbose]", ext.Args)
+	}
+	if ext.Env["CUSTOM_VAR"] != "value" {
+		t.Errorf("gateway[2].env.CUSTOM_VAR: got %q, want %q", ext.Env["CUSTOM_VAR"], "value")
+	}
+	if ext.Config["key"] != "val" {
+		t.Errorf("gateway[2].config.key: got %q, want %q", ext.Config["key"], "val")
+	}
+	if !ext.AutoRestart {
+		t.Error("gateway[2].autoRestart: got false, want true")
+	}
+}
+
+func TestParse_GatewayMaxEventsPerMinuteZero(t *testing.T) {
+	// MaxEventsPerMinute omitted (zero/unlimited) should still parse cleanly.
+	cfg, err := gosuto.Parse([]byte(minimalValid))
+	if err != nil {
+		t.Fatalf("Parse: unexpected error: %v", err)
+	}
+	if cfg.Limits.MaxEventsPerMinute != 0 {
+		t.Errorf("maxEventsPerMinute default: got %d, want 0", cfg.Limits.MaxEventsPerMinute)
+	}
+	if len(cfg.Gateways) != 0 {
+		t.Errorf("gateways default: got %d, want 0", len(cfg.Gateways))
+	}
+}
+
+// ── R11.2 gateway validation tests ───────────────────────────────────────────
+
+func gatewayBase() string {
+	return `
+apiVersion: gosuto/v1
+metadata:
+  name: x
+trust:
+  allowedRooms: ["*"]
+  allowedSenders: ["*"]
+`
+}
+
+func TestValidate_Gateway_MissingName(t *testing.T) {
+	_, err := gosuto.Parse([]byte(gatewayBase() + `
+gateways:
+  - type: cron
+    config:
+      expression: "* * * * *"
+`))
+	if err == nil {
+		t.Fatal("expected error for gateway with empty name, got nil")
+	}
+}
+
+func TestValidate_Gateway_BothTypeAndCommand(t *testing.T) {
+	_, err := gosuto.Parse([]byte(gatewayBase() + `
+gateways:
+  - name: both
+    type: cron
+    command: /bin/gw
+    config:
+      expression: "* * * * *"
+`))
+	if err == nil {
+		t.Fatal("expected error when both type and command are set, got nil")
+	}
+}
+
+func TestValidate_Gateway_NeitherTypeNorCommand(t *testing.T) {
+	_, err := gosuto.Parse([]byte(gatewayBase() + `
+gateways:
+  - name: neither
+`))
+	if err == nil {
+		t.Fatal("expected error when neither type nor command is set, got nil")
+	}
+}
+
+func TestValidate_Gateway_UnknownType(t *testing.T) {
+	_, err := gosuto.Parse([]byte(gatewayBase() + `
+gateways:
+  - name: bad-type
+    type: imap
+`))
+	if err == nil {
+		t.Fatal("expected error for unknown gateway type, got nil")
+	}
+}
+
+func TestValidate_Gateway_CronMissingExpression(t *testing.T) {
+	_, err := gosuto.Parse([]byte(gatewayBase() + `
+gateways:
+  - name: no-expr
+    type: cron
+`))
+	if err == nil {
+		t.Fatal("expected error for cron gateway without expression, got nil")
+	}
+}
+
+func TestValidate_Gateway_WebhookHMACMissingSecretRef(t *testing.T) {
+	_, err := gosuto.Parse([]byte(gatewayBase() + `
+gateways:
+  - name: no-ref
+    type: webhook
+    config:
+      authType: hmac-sha256
+`))
+	if err == nil {
+		t.Fatal("expected error for hmac-sha256 webhook without hmacSecretRef, got nil")
+	}
+}
+
+func TestValidate_Gateway_WebhookHMACValid(t *testing.T) {
+	_, err := gosuto.Parse([]byte(gatewayBase() + `
+gateways:
+  - name: sig-hook
+    type: webhook
+    config:
+      authType: hmac-sha256
+      hmacSecretRef: x.webhook-secret
+`))
+	if err != nil {
+		t.Fatalf("valid hmac webhook should pass: %v", err)
+	}
+}
+
+func TestValidate_Gateway_WebhookBearerNoRef(t *testing.T) {
+	// webhook with bearer (or no authType) needs no hmacSecretRef
+	_, err := gosuto.Parse([]byte(gatewayBase() + `
+gateways:
+  - name: bearer-hook
+    type: webhook
+    config:
+      authType: bearer
+`))
+	if err != nil {
+		t.Fatalf("webhook with bearer auth should be valid: %v", err)
+	}
+}
+
+func TestValidate_Gateway_ExternalCommandValid(t *testing.T) {
+	_, err := gosuto.Parse([]byte(gatewayBase() + `
+gateways:
+  - name: ext-gw
+    command: /usr/local/bin/my-gateway
+    args: ["--verbose"]
+    autoRestart: true
+`))
+	if err != nil {
+		t.Fatalf("external gateway with command should be valid: %v", err)
+	}
+}
+
+func TestValidate_Gateway_DuplicateGatewayName(t *testing.T) {
+	_, err := gosuto.Parse([]byte(gatewayBase() + `
+gateways:
+  - name: dup
+    type: cron
+    config:
+      expression: "* * * * *"
+  - name: dup
+    type: cron
+    config:
+      expression: "*/5 * * * *"
+`))
+	if err == nil {
+		t.Fatal("expected error for duplicate gateway names, got nil")
+	}
+}
+
+func TestValidate_Gateway_NameCollidesWithMCP(t *testing.T) {
+	_, err := gosuto.Parse([]byte(gatewayBase() + `
+mcps:
+  - name: scheduler
+    command: /bin/my-mcp
+gateways:
+  - name: scheduler
+    type: cron
+    config:
+      expression: "* * * * *"
+`))
+	if err == nil {
+		t.Fatal("expected error when gateway name collides with MCP name, got nil")
+	}
+}
+
+func TestValidate_Limits_NegativeMaxEventsPerMinute(t *testing.T) {
+	_, err := gosuto.Parse([]byte(gatewayBase() + `
+limits:
+  maxEventsPerMinute: -1
+`))
+	if err == nil {
+		t.Fatal("expected error for negative maxEventsPerMinute, got nil")
+	}
+}
+
 func TestParse_KumoAgentTemplate(t *testing.T) {
 	cfg, err := gosuto.Parse([]byte(kumoRendered))
 	if err != nil {

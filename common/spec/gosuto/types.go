@@ -30,6 +30,9 @@ type Config struct {
 	// MCPs defines the MCP server processes to wire to this agent.
 	MCPs []MCPServer `yaml:"mcps,omitempty" json:"mcps,omitempty"`
 
+	// Gateways defines the inbound event gateway processes for this agent.
+	Gateways []Gateway `yaml:"gateways,omitempty" json:"gateways,omitempty"`
+
 	// Secrets lists the secret references the agent expects from Ruriko.
 	Secrets []SecretRef `yaml:"secrets,omitempty" json:"secrets,omitempty"`
 
@@ -83,6 +86,10 @@ type Limits struct {
 
 	// MaxMonthlyCostUSD caps monthly LLM spend in USD. 0 means unlimited.
 	MaxMonthlyCostUSD float64 `yaml:"maxMonthlyCostUSD,omitempty" json:"maxMonthlyCostUSD,omitempty"`
+
+	// MaxEventsPerMinute is the maximum number of inbound gateway events
+	// processed per minute across all gateways. 0 means unlimited.
+	MaxEventsPerMinute int `yaml:"maxEventsPerMinute,omitempty" json:"maxEventsPerMinute,omitempty"`
 }
 
 // Capability defines a single allow/deny rule for tool invocation.
@@ -146,6 +153,40 @@ type MCPServer struct {
 
 	// AutoRestart specifies whether Gitai should restart this MCP if it exits
 	// unexpectedly.
+	AutoRestart bool `yaml:"autoRestart,omitempty" json:"autoRestart,omitempty"`
+}
+
+// Gateway describes an inbound event gateway process to be supervised by the
+// Gitai runtime. Gateways POST normalised event envelopes to the agent's local
+// ACP endpoint (POST /events/{source}), allowing external triggers (cron ticks,
+// webhooks, etc.) to initiate agent turns.
+type Gateway struct {
+	// Name is a unique identifier for this gateway within the agent.
+	// Must not collide with MCP server names (they share the supervisor namespace).
+	Name string `yaml:"name" json:"name"`
+
+	// Type is the built-in gateway type. Currently "cron" and "webhook" are
+	// supported. Mutually exclusive with Command.
+	Type string `yaml:"type,omitempty" json:"type,omitempty"`
+
+	// Command is the path or binary name of an external gateway process.
+	// Mutually exclusive with Type.
+	Command string `yaml:"command,omitempty" json:"command,omitempty"`
+
+	// Args are the command-line arguments for an external gateway binary.
+	Args []string `yaml:"args,omitempty" json:"args,omitempty"`
+
+	// Env holds additional environment variables passed to the gateway process.
+	Env map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
+
+	// Config holds gateway-specific configuration key-value pairs.
+	// For cron gateways: "expression" (cron schedule) and "payload" (trigger message).
+	// For webhook gateways: "authType" ("bearer" or "hmac-sha256"),
+	// "hmacSecretRef" (Ruriko secret ref for HMAC key), "path" (custom route).
+	Config map[string]string `yaml:"config,omitempty" json:"config,omitempty"`
+
+	// AutoRestart specifies whether Gitai should restart this gateway process
+	// if it exits unexpectedly. Applies to external gateway processes only.
 	AutoRestart bool `yaml:"autoRestart,omitempty" json:"autoRestart,omitempty"`
 }
 

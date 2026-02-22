@@ -55,15 +55,28 @@ func Validate(cfg *Config) error {
 	}
 
 	// ── MCP servers ──────────────────────────────────────────────────────────
-	seen := make(map[string]struct{}, len(cfg.MCPs))
+	// supervisorNames tracks all names in the shared supervisor namespace
+	// (MCPs + gateways) to detect cross-type collisions.
+	supervisorNames := make(map[string]struct{}, len(cfg.MCPs)+len(cfg.Gateways))
 	for i, mcp := range cfg.MCPs {
 		if err := validateMCPServer(mcp); err != nil {
 			return fmt.Errorf("mcps[%d] (%q): %w", i, mcp.Name, err)
 		}
-		if _, dup := seen[mcp.Name]; dup {
+		if _, dup := supervisorNames[mcp.Name]; dup {
 			return fmt.Errorf("mcps[%d]: duplicate name %q", i, mcp.Name)
 		}
-		seen[mcp.Name] = struct{}{}
+		supervisorNames[mcp.Name] = struct{}{}
+	}
+
+	// ── Gateways ─────────────────────────────────────────────────────────────
+	for i, gw := range cfg.Gateways {
+		if err := validateGateway(gw); err != nil {
+			return fmt.Errorf("gateways[%d] (%q): %w", i, gw.Name, err)
+		}
+		if _, dup := supervisorNames[gw.Name]; dup {
+			return fmt.Errorf("gateways[%d]: name %q already used by an MCP server or another gateway", i, gw.Name)
+		}
+		supervisorNames[gw.Name] = struct{}{}
 	}
 
 	// ── Secret refs ──────────────────────────────────────────────────────────
@@ -117,6 +130,9 @@ func validateLimits(l Limits) error {
 	if l.MaxMonthlyCostUSD < 0 {
 		return fmt.Errorf("maxMonthlyCostUSD must be >= 0")
 	}
+	if l.MaxEventsPerMinute < 0 {
+		return fmt.Errorf("maxEventsPerMinute must be >= 0")
+	}
 	return nil
 }
 
@@ -134,6 +150,41 @@ func validateMCPServer(m MCPServer) error {
 	if strings.TrimSpace(m.Command) == "" {
 		return fmt.Errorf("command must not be empty")
 	}
+	return nil
+}
+
+func validateGateway(g Gateway) error {
+	if strings.TrimSpace(g.Name) == "" {
+		return fmt.Errorf("name must not be empty")
+	}
+
+	hasType := strings.TrimSpace(g.Type) != ""
+	hasCommand := strings.TrimSpace(g.Command) != ""
+
+	switch {
+	case hasType && hasCommand:
+		return fmt.Errorf("type and command are mutually exclusive; set exactly one")
+	case !hasType && !hasCommand:
+		return fmt.Errorf("exactly one of type or command must be set")
+	}
+
+	if hasType {
+		switch g.Type {
+		case "cron":
+			if strings.TrimSpace(g.Config["expression"]) == "" {
+				return fmt.Errorf("type %q requires config.expression to be set", g.Type)
+			}
+		case "webhook":
+			if g.Config["authType"] == "hmac-sha256" {
+				if strings.TrimSpace(g.Config["hmacSecretRef"]) == "" {
+					return fmt.Errorf("type %q with authType hmac-sha256 requires config.hmacSecretRef to be set", g.Type)
+				}
+			}
+		default:
+			return fmt.Errorf("unknown built-in type %q; valid values are \"cron\" and \"webhook\"", g.Type)
+		}
+	}
+
 	return nil
 }
 
