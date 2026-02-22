@@ -92,6 +92,27 @@ type ClassifyResponse struct {
 	// ReadQueries are read-only Ruriko action keys the LLM needs to call
 	// to compose a conversational answer (e.g. ["agents.list"]).
 	ReadQueries []string `json:"read_queries,omitempty"`
+
+	// Steps contains an ordered list of command steps for multi-step mutation
+	// requests (e.g. "set up Saito and Kumo"). When non-empty, the NL handler
+	// presents each step for individual confirmation in sequence rather than
+	// using the top-level Action/Args/Flags fields.
+	// Only populated when Intent == IntentCommand.
+	Steps []CommandStep `json:"steps,omitempty"`
+}
+
+// CommandStep is one ordered step within a multi-step mutation response.
+// The LLM returns a slice of these when the user's request requires
+// more than one Ruriko command to fulfil (e.g. "set up Saito and Kumo").
+type CommandStep struct {
+	// Action is the Ruriko command action key, e.g. "agents.create".
+	Action string `json:"action"`
+	// Args are positional arguments for the command.
+	Args []string `json:"args,omitempty"`
+	// Flags are key=value flag pairs for the command.
+	Flags map[string]string `json:"flags,omitempty"`
+	// Explanation is a short human-readable summary of this specific step.
+	Explanation string `json:"explanation,omitempty"`
 }
 
 // RateLimitMessage is the response sent to senders who exceed the per-minute

@@ -1054,7 +1054,7 @@ or
 
 ### R9.3 NL Classifier and Intent Router
 
-- [ ] Create `internal/ruriko/nlp/classifier.go` — intent classification:
+- [x] Create `internal/ruriko/nlp/classifier.go` — intent classification:
   ```go
   type ClassifyResponse struct {
       Intent       string            // "command" | "conversational" | "unclear"
@@ -1067,46 +1067,46 @@ or
       Response     string            // for conversational/unclear: direct text response
   }
   ```
-- [ ] JSON schema enforcement on LLM output (structured output / function calling)
-- [ ] Confidence thresholds:
+- [x] JSON schema enforcement on LLM output (structured output / function calling)
+- [x] Confidence thresholds:
   - `≥ 0.8` → proceed with confirmation (mutations) or direct answer (reads)
   - `0.5–0.8` → "I think you want to [X]. Is that right?"
   - `< 0.5` → "I'm not sure what you'd like. Here are some things I can help with: …"
-- [ ] Sanitise LLM output: strip any `--_*` flags (defense in depth)
-- [ ] Validate produced action key exists in `Router` handler map
-- [ ] Test: Classifier handles all intent types
-- [ ] Test: Low-confidence responses surface clarification prompts
-- [ ] Test: Invalid/malicious LLM output is rejected gracefully
+- [x] Sanitise LLM output: strip any `--_*` flags (defense in depth)
+- [x] Validate produced action key exists in `Router` handler map
+- [x] Test: Classifier handles all intent types
+- [x] Test: Low-confidence responses surface clarification prompts
+- [x] Test: Invalid/malicious LLM output is rejected gracefully
 
 ### R9.4 Conversation-Aware Dispatch
 
-- [ ] Extend `HandleNaturalLanguage` to call LLM classifier when `NLPProvider` is configured:
+- [x] Extend `HandleNaturalLanguage` to call LLM classifier when `NLPProvider` is configured:
   - If provider is nil → fall back to existing keyword-based `ParseIntent` (R5.4)
   - If provider is available → call `Classify()` with conversation context
-- [ ] **Read-only path** (no confirmation needed):
+- [x] **Read-only path** (no confirmation needed):
   - Classifier returns `intent: conversational` + `read_queries: ["agents.list"]`
   - NL handler calls `Router.Dispatch` for each read query, collects results
   - LLM summarises results in natural language (second call, or single-shot with function results)
   - Reply sent to Matrix
-- [ ] **Mutation path** (confirmation required):
+- [x] **Mutation path** (confirmation required):
   - Classifier returns `intent: command` + structured command
   - NL handler shows user: "I'll run: `/ruriko agents create --name saito --template saito-agent`. Proceed?"
   - Store pending command in `conversationStore` (reuse existing session infra)
   - On "yes" → `Router.Dispatch(ctx, action, cmd, evt)` (same path as approval re-exec)
   - On "no" → cancel session
-- [ ] **Multi-step mutations** (e.g., "set up Saito and Kumo"):
+- [x] **Multi-step mutations** (e.g., "set up Saito and Kumo"):
   - Classifier decomposes into ordered steps
   - Each step requires individual confirmation
   - Steps are NOT batched — user sees and approves each one
-- [ ] **Approval integration**: if a confirmed mutation hits the approval gate, the
+- [x] **Approval integration**: if a confirmed mutation hits the approval gate, the
   approval flow proceeds normally — the NL layer does not bypass it
-- [ ] Audit annotation: all NL-mediated commands include `source: nl` and `llm_intent: <raw>`
+- [x] Audit annotation: all NL-mediated commands include `source: nl` and `llm_intent: <raw>`
   in the audit log payload so the reasoning chain is traceable
-- [ ] Test: Mutation commands require confirmation before dispatch
-- [ ] Test: Read-only queries are answered directly
-- [ ] Test: Multi-step requests are decomposed into individual confirmations
-- [ ] Test: Approval-gated operations still require approval after NL confirmation
-- [ ] Test: Audit log records NL source and raw LLM output
+- [x] Test: Mutation commands require confirmation before dispatch
+- [x] Test: Read-only queries are answered directly
+- [x] Test: Multi-step requests are decomposed into individual confirmations
+- [x] Test: Approval-gated operations still require approval after NL confirmation
+- [x] Test: Audit log records NL source and raw LLM output
 
 ### R9.5 Graceful Degradation and Fallbacks
 

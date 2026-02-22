@@ -24,6 +24,8 @@ package commands
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +34,8 @@ import (
 	"maunium.net/go/mautrix/event"
 
 	"github.com/bdobrica/Ruriko/common/trace"
+	"github.com/bdobrica/Ruriko/internal/ruriko/nlp"
+	"github.com/bdobrica/Ruriko/internal/ruriko/store"
 )
 
 // ---------------------------------------------------------------------------
@@ -256,10 +260,22 @@ type conversationStep string
 
 const (
 	stepAwaitingConfirmation conversationStep = "awaiting_confirmation"
+	// stepNLAwaitingConfirmation is the step used by the LLM-backed NL
+	// dispatch path (R9.4).  Sessions in this state hold one or more pending
+	// command steps that are awaiting the operator's yes/no confirmation.
+	stepNLAwaitingConfirmation conversationStep = "nl_awaiting_confirmation"
 )
 
 // sessionTTL is how long a pending confirmation is kept without a user response.
 const sessionTTL = 5 * time.Minute
+
+// nlStep is one pending command in the NL dispatch queue.
+// It is stored in conversationSession.nlPendingSteps.
+type nlStep struct {
+	action      string   // Ruriko action key, e.g. "agents.create"
+	command     *Command // pre-built Command ready for Dispatch
+	explanation string   // human-readable description used in confirmation prompt
+}
 
 // conversationSession holds the pending state for one room+sender pair.
 type conversationSession struct {
@@ -268,6 +284,11 @@ type conversationSession struct {
 	missingSecrets []string // required secret names not yet present in the store
 	image          string
 	expiresAt      time.Time
+
+	// NL dispatch fields (populated when step == stepNLAwaitingConfirmation).
+	nlPendingSteps []nlStep // remaining command steps awaiting confirmation
+	nlTotalSteps   int      // total number of steps (for display)
+	nlRawIntent    string   // LLM explanation string, included in audit logs
 }
 
 // conversationStore manages in-memory per-room conversation sessions.
@@ -332,31 +353,47 @@ var confirmationNegativeWords = []string{
 }
 
 // HandleNaturalLanguage processes a free-form Matrix message for natural-language
-// agent-creation intent.
+// command or agent-creation intent.
+//
+// Routing logic:
+//  1. If there is an active LLM session (stepNLAwaitingConfirmation), delegate
+//     to handleNLConfirmationResponse.
+//  2. If there is an active keyword session (stepAwaitingConfirmation), delegate
+//     to handleConfirmationResponse.
+//  3. If h.nlpProvider is configured, call the LLM classifier (R9.4).
+//  4. Otherwise, fall back to the deterministic keyword-based ParseIntent (R5.4).
 //
 // Returns ("", nil) when no intent was detected or the message is not a
-// response to a pending confirmation — the caller should treat it as ordinary
-// chat. Returns a non-empty string to be sent back to the user when an intent
-// is recognised or a confirmation flow is in progress.
-//
-// This method is only meaningful when a template registry has been wired into
-// the Handlers.  Callers should guard:
-//
-//	if h.templates == nil { return "", nil }
+// response to a pending confirmation.
 func (h *Handlers) HandleNaturalLanguage(ctx context.Context, text string, evt *event.Event) (string, error) {
-	if h.templates == nil {
-		return "", nil
-	}
-
 	roomID := evt.RoomID.String()
 	senderMXID := evt.Sender.String()
 
 	// --- Check for an active confirmation session ---------------------------
 	if session, ok := h.conversations.get(roomID, senderMXID); ok {
+		if session.step == stepNLAwaitingConfirmation {
+			return h.handleNLConfirmationResponse(ctx, text, session, roomID, senderMXID, evt)
+		}
 		return h.handleConfirmationResponse(ctx, text, session, roomID, senderMXID, evt)
 	}
 
-	// --- Parse intent -------------------------------------------------------
+	// --- LLM path (R9.4) — takes precedence when provider is configured ----
+	if h.nlpProvider != nil {
+		return h.handleNLClassify(ctx, text, roomID, senderMXID, evt)
+	}
+
+	// --- Keyword path (R5.4) — requires template registry ------------------
+	if h.templates == nil {
+		return "", nil
+	}
+	return h.handleKeywordIntent(ctx, text, evt)
+}
+
+// handleKeywordIntent runs the R5.4 deterministic keyword-matching flow.
+func (h *Handlers) handleKeywordIntent(ctx context.Context, text string, evt *event.Event) (string, error) {
+	roomID := evt.RoomID.String()
+	senderMXID := evt.Sender.String()
+
 	intent := ParseIntent(text)
 	if intent == nil {
 		return "", nil
@@ -537,4 +574,323 @@ func buildConfirmationPrompt(intent ParsedIntent, missingSecrets []string, image
 	}
 	sb.WriteString("\nStore the missing secrets above, then reply **yes** to create the agent or **no** to cancel.")
 	return sb.String()
+}
+
+// ---------------------------------------------------------------------------
+// R9.4 LLM-backed NL dispatch
+// ---------------------------------------------------------------------------
+
+// handleNLClassify is called when h.nlpProvider is configured.  It enforces
+// the rate limit, builds the ClassifyRequest from live context, calls the LLM,
+// and routes the response to the appropriate sub-handler.
+func (h *Handlers) handleNLClassify(ctx context.Context, text, roomID, senderMXID string, evt *event.Event) (string, error) {
+	// Rate-limit check.
+	if h.nlpRateLimiter != nil && !h.nlpRateLimiter.Allow(senderMXID) {
+		return nlp.RateLimitMessage, nil
+	}
+
+	// Collect live context for the classifier.
+	var knownAgents []string
+	if h.store != nil {
+		if agents, err := h.store.ListAgents(ctx); err == nil {
+			for _, a := range agents {
+				knownAgents = append(knownAgents, a.ID)
+			}
+		}
+	}
+
+	var knownTemplates []string
+	if h.templates != nil {
+		if ts, err := h.templates.List(); err == nil {
+			knownTemplates = ts
+		}
+	}
+
+	req := nlp.ClassifyRequest{
+		Message:          text,
+		CommandCatalogue: h.buildCommandCatalogue(ctx, evt),
+		KnownAgents:      knownAgents,
+		KnownTemplates:   knownTemplates,
+		SenderMXID:       senderMXID,
+	}
+
+	resp, err := h.nlpProvider.Classify(ctx, req)
+	if err != nil {
+		slog.Warn("nlp.classify failed; falling back to keyword path", "err", err)
+		if h.templates != nil {
+			return h.handleKeywordIntent(ctx, text, evt)
+		}
+		return "", nil
+	}
+
+	switch resp.Intent {
+	case nlp.IntentConversational:
+		if len(resp.ReadQueries) > 0 {
+			return h.handleNLReadQueries(ctx, resp, senderMXID, evt)
+		}
+		// Pure conversational answer — return the LLM response directly.
+		return resp.Response, nil
+
+	case nlp.IntentCommand:
+		return h.handleNLCommandIntent(ctx, resp, roomID, senderMXID)
+
+	default:
+		// IntentUnknown or low-confidence — surface the clarification prompt.
+		return resp.Response, nil
+	}
+}
+
+// handleNLReadQueries dispatches a set of read-only action keys that the LLM
+// needs to compose a conversational answer.  Results are concatenated and
+// returned to the caller.  A single "nl.read" audit entry is written.
+func (h *Handlers) handleNLReadQueries(ctx context.Context, resp *nlp.ClassifyResponse, senderMXID string, evt *event.Event) (string, error) {
+	if h.dispatch == nil {
+		// No dispatch wired — return whatever the LLM produced as-is.
+		return resp.Response, nil
+	}
+
+	var sb strings.Builder
+	if resp.Response != "" {
+		sb.WriteString(resp.Response)
+		sb.WriteString("\n\n")
+	}
+
+	for _, query := range resp.ReadQueries {
+		cmd := actionKeyToCommand(query, nil, nil)
+		result, err := h.dispatch(ctx, query, cmd, evt)
+		if err != nil {
+			slog.Warn("nl read-query dispatch failed", "action", query, "err", err)
+			continue
+		}
+		if result != "" {
+			sb.WriteString(result)
+			sb.WriteString("\n\n")
+		}
+	}
+
+	// Audit annotation.
+	if h.store != nil {
+		traceID := trace.GenerateID()
+		ctx = trace.WithTraceID(ctx, traceID)
+		if err := h.store.WriteAudit(ctx, traceID, senderMXID, "nl.read",
+			strings.Join(resp.ReadQueries, ","), "success",
+			store.AuditPayload{
+				"source":       "nl",
+				"llm_intent":   resp.Explanation,
+				"read_queries": resp.ReadQueries,
+			}, ""); err != nil {
+			slog.Warn("audit write failed", "op", "nl.read", "err", err)
+		}
+	}
+
+	return strings.TrimRight(sb.String(), "\n"), nil
+}
+
+// handleNLCommandIntent builds the pending-step session for a mutation command
+// and returns the first step's confirmation prompt.
+func (h *Handlers) handleNLCommandIntent(ctx context.Context, resp *nlp.ClassifyResponse, roomID, senderMXID string) (string, error) {
+	if h.dispatch == nil {
+		return "", nil
+	}
+
+	var steps []nlStep
+	if len(resp.Steps) > 0 {
+		// Multi-step mutation — decompose into individual confirmations.
+		for _, s := range resp.Steps {
+			cmd := actionKeyToCommand(s.Action, s.Args, s.Flags)
+			steps = append(steps, nlStep{
+				action:      s.Action,
+				command:     cmd,
+				explanation: s.Explanation,
+			})
+		}
+	} else {
+		// Single command.
+		cmd := actionKeyToCommand(resp.Action, resp.Args, resp.Flags)
+		steps = []nlStep{{
+			action:      resp.Action,
+			command:     cmd,
+			explanation: resp.Explanation,
+		}}
+	}
+
+	session := &conversationSession{
+		step:           stepNLAwaitingConfirmation,
+		nlPendingSteps: steps,
+		nlTotalSteps:   len(steps),
+		nlRawIntent:    resp.Explanation,
+		expiresAt:      time.Now().Add(sessionTTL),
+	}
+	h.conversations.set(roomID, senderMXID, session)
+
+	return buildNLStepPrompt(steps[0], 1, len(steps)), nil
+}
+
+// handleNLConfirmationResponse handles the operator's yes/no reply to a
+// pending NL command step.
+func (h *Handlers) handleNLConfirmationResponse(
+	ctx context.Context,
+	text string,
+	session *conversationSession,
+	roomID, senderMXID string,
+	evt *event.Event,
+) (string, error) {
+	lower := strings.ToLower(strings.TrimSpace(text))
+
+	isYes := false
+	for _, w := range confirmationPositiveWords {
+		if lower == w || strings.HasPrefix(lower, w+" ") {
+			isYes = true
+			break
+		}
+	}
+
+	isNo := false
+	for _, w := range confirmationNegativeWords {
+		if lower == w || strings.HasPrefix(lower, w+" ") {
+			isNo = true
+			break
+		}
+	}
+
+	if isNo {
+		h.conversations.delete(roomID, senderMXID)
+		return "❌ Cancelled. No changes were made.", nil
+	}
+
+	if !isYes {
+		// Not a recognised response — leave the session active.
+		return "", nil
+	}
+
+	if len(session.nlPendingSteps) == 0 {
+		h.conversations.delete(roomID, senderMXID)
+		return "", nil
+	}
+
+	step := session.nlPendingSteps[0]
+	remaining := session.nlPendingSteps[1:]
+	doneIndex := session.nlTotalSteps - len(session.nlPendingSteps)
+
+	// Write NL dispatch audit before executing so the reasoning chain is
+	// captured even if the command subsequently fails or is denied.
+	traceID := trace.GenerateID()
+	ctx = trace.WithTraceID(ctx, traceID)
+	if h.store != nil {
+		if err := h.store.WriteAudit(ctx, traceID, senderMXID,
+			"nl.dispatch", step.action, "dispatching",
+			store.AuditPayload{
+				"source":     "nl",
+				"llm_intent": session.nlRawIntent,
+				"action":     step.action,
+				"step":       doneIndex + 1,
+				"total":      session.nlTotalSteps,
+			}, ""); err != nil {
+			slog.Warn("audit write failed", "op", "nl.dispatch", "err", err)
+		}
+	}
+
+	result, err := h.dispatch(ctx, step.action, step.command, evt)
+	if err != nil {
+		// Leave the session active so the operator can retry.
+		return fmt.Sprintf("❌ Failed to run `%s`: %v\n\nReply **yes** to retry or **no** to cancel.", step.action, err), nil
+	}
+
+	if len(remaining) > 0 {
+		// Advance to the next step.
+		session.nlPendingSteps = remaining
+		session.expiresAt = time.Now().Add(sessionTTL)
+		h.conversations.set(roomID, senderMXID, session)
+
+		nextStep := remaining[0]
+		var sb strings.Builder
+		if result != "" {
+			sb.WriteString(result)
+			sb.WriteString("\n\n")
+		}
+		sb.WriteString(buildNLStepPrompt(nextStep, doneIndex+2, session.nlTotalSteps))
+		return sb.String(), nil
+	}
+
+	// All steps complete — tidy up and return the final result.
+	h.conversations.delete(roomID, senderMXID)
+	return result, nil
+}
+
+// ---------------------------------------------------------------------------
+// R9.4 helpers
+// ---------------------------------------------------------------------------
+
+// actionKeyToCommand builds a synthetic *Command from a dot-separated action
+// key (e.g. "agents.list"), positional args, and a flag map.  The resulting
+// Command is safe to pass directly to a DispatchFunc.
+func actionKeyToCommand(action string, args []string, flags map[string]string) *Command {
+	parts := strings.SplitN(action, ".", 2)
+	cmd := &Command{
+		Name:    parts[0],
+		Args:    args,
+		Flags:   flags,
+		RawText: buildNLRawText(action, args, flags),
+	}
+	if len(parts) == 2 {
+		cmd.Subcommand = parts[1]
+	}
+	if cmd.Args == nil {
+		cmd.Args = []string{}
+	}
+	if cmd.Flags == nil {
+		cmd.Flags = map[string]string{}
+	}
+	return cmd
+}
+
+// buildNLRawText produces the human-readable command string used in prompts
+// and Command.RawText.
+func buildNLRawText(action string, args []string, flags map[string]string) string {
+	var sb strings.Builder
+	sb.WriteString("/ruriko ")
+	sb.WriteString(strings.ReplaceAll(action, ".", " "))
+	for _, a := range args {
+		sb.WriteString(" ")
+		sb.WriteString(a)
+	}
+	// Deterministic flag ordering.
+	keys := make([]string, 0, len(flags))
+	for k := range flags {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		sb.WriteString(fmt.Sprintf(" --%s %s", k, flags[k]))
+	}
+	return sb.String()
+}
+
+// buildNLStepPrompt returns the Matrix message shown when a NL command step
+// is pending confirmation.
+func buildNLStepPrompt(step nlStep, stepNum, totalSteps int) string {
+	var sb strings.Builder
+	if totalSteps > 1 {
+		sb.WriteString(fmt.Sprintf("**Step %d of %d**\n\n", stepNum, totalSteps))
+	}
+	if step.explanation != "" {
+		sb.WriteString(step.explanation)
+		sb.WriteString("\n\n")
+	}
+	sb.WriteString(fmt.Sprintf("I'll run:\n```\n%s\n```\n\n",
+		buildNLRawText(step.action, step.command.Args, step.command.Flags)))
+	sb.WriteString("Reply **yes** to proceed or **no** to cancel.")
+	return sb.String()
+}
+
+// buildCommandCatalogue returns the help text used as the LLM's command
+// catalogue.  Returns an empty string on error (non-fatal — the LLM will
+// still attempt to classify using its training data).
+func (h *Handlers) buildCommandCatalogue(ctx context.Context, evt *event.Event) string {
+	helpCmd := &Command{Name: "help", Args: []string{}, Flags: map[string]string{}}
+	text, err := h.HandleHelp(ctx, helpCmd, evt)
+	if err != nil {
+		return ""
+	}
+	return text
 }
