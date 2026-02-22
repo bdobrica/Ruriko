@@ -273,6 +273,13 @@ capabilities:
     tool: "*"
     allow: false
 
+gateways:
+  - name: scheduler
+    type: cron
+    config:
+      expression: "*/15 * * * *"
+      payload: "Trigger scheduled check for all coordinated agents"
+
 persona:
   systemPrompt: |
     You are Saito, a scheduling and trigger agent. Your sole responsibility is
@@ -314,6 +321,21 @@ func TestParse_SaitoAgentTemplate(t *testing.T) {
 	}
 	if len(cfg.MCPs) != 0 {
 		t.Errorf("mcps count: got %d, want 0 (Saito has no MCP tools)", len(cfg.MCPs))
+	}
+	if len(cfg.Gateways) != 1 {
+		t.Fatalf("gateways count: got %d, want 1", len(cfg.Gateways))
+	}
+	if cfg.Gateways[0].Name != "scheduler" {
+		t.Errorf("gateway name: got %q, want %q", cfg.Gateways[0].Name, "scheduler")
+	}
+	if cfg.Gateways[0].Type != "cron" {
+		t.Errorf("gateway type: got %q, want %q", cfg.Gateways[0].Type, "cron")
+	}
+	if cfg.Gateways[0].Config["expression"] != "*/15 * * * *" {
+		t.Errorf("gateway expression: got %q, want %q", cfg.Gateways[0].Config["expression"], "*/15 * * * *")
+	}
+	if cfg.Gateways[0].Config["payload"] != "Trigger scheduled check for all coordinated agents" {
+		t.Errorf("gateway payload: got %q, want %q", cfg.Gateways[0].Config["payload"], "Trigger scheduled check for all coordinated agents")
 	}
 	if len(cfg.Secrets) != 1 {
 		t.Errorf("secrets count: got %d, want 1", len(cfg.Secrets))

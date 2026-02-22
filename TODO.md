@@ -1489,8 +1489,8 @@ similarity and injects the relevant context.
 - [x] Test: Valid gateway configs pass validation (cron, webhook, external)
 - [x] Test: Invalid configs fail — missing name, both type+command, unknown type, missing cron expression, duplicate names, MCP name collision
 
-### R11.3 Event Envelope Types
-- [ ] Create `common/spec/envelope/event.go` (or extend existing envelope package):
+### R11.3 Event Envelope Types ✅
+- [x] Create `common/spec/envelope/event.go` (or extend existing envelope package):
   ```go
   type Event struct {
       Source   string          `json:"source"`
@@ -1504,12 +1504,12 @@ similarity and injects the relevant context.
       Data    map[string]interface{} `json:"data,omitempty"`    // structured metadata
   }
   ```
-- [ ] Add validation: `Source` must not be empty, `Type` must not be empty, `TS` must not be zero
-- [ ] Test: Event envelope marshals/unmarshals correctly
-- [ ] Test: Invalid envelopes (missing source, missing type) are rejected
+- [x] Add validation: `Source` must not be empty, `Type` must not be empty, `TS` must not be zero
+- [x] Test: Event envelope marshals/unmarshals correctly
+- [x] Test: Invalid envelopes (missing source, missing type) are rejected
 
-### R11.4 Update Existing Templates
-- [ ] Update `templates/saito-agent/gosuto.yaml` to use a built-in cron gateway instead of relying on LLM-based periodic messaging:
+### R11.4 Update Existing Templates ✅
+- [x] Update `templates/saito-agent/gosuto.yaml` to use a built-in cron gateway instead of relying on LLM-based periodic messaging:
   ```yaml
   gateways:
     - name: scheduler
@@ -1519,8 +1519,8 @@ similarity and injects the relevant context.
         payload: "Trigger scheduled check for all coordinated agents"
   ```
   - Saito keeps its LLM persona (for coordination reasoning) but is now *woken* by the cron gateway rather than running its own timer
-- [ ] Verify all existing templates still pass validation after schema changes
-- [ ] Test: Updated Saito template validates correctly
+- [x] Verify all existing templates still pass validation after schema changes
+- [x] Test: Updated Saito template validates correctly
 
 ### Definition of done
 - Gosuto types include `Gateway` struct and `Gateways` field
@@ -1758,7 +1758,7 @@ similarity and injects the relevant context.
 - [ ] Phase R8: Integration and End-to-End Testing
 - [ ] Phase R9: Natural Language Interface — LLM-Powered Command Translation
 - [ ] Phase R10: Conversation Memory — Short-Term / Long-Term Architecture
-- [ ] Phase R11: Event Gateways — Gosuto Schema, Types, and Validation
+- [x] Phase R11: Event Gateways — Gosuto Schema, Types, and Validation ✅
 - [ ] Phase R12: Event Gateways — Gitai Runtime Integration
 - [ ] Phase R13: Ruriko-Side Gateway Wiring
 

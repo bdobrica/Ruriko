@@ -27,6 +27,13 @@ capabilities:
     tool: "*"
     allow: false
 
+gateways:
+  - name: scheduler
+    type: cron
+    config:
+      expression: "*/15 * * * *"
+      payload: "Trigger scheduled check for all coordinated agents"
+
 persona:
   systemPrompt: |
     You are Saito, a scheduling and trigger agent. Your sole responsibility is

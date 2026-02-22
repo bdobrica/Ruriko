@@ -163,6 +163,9 @@ func TestRegistry_Render_SaitoAgent(t *testing.T) {
 		{"openai secret present", "test-agent.openai-api-key"},
 		{"gpt-4o-mini model", "gpt-4o-mini"},
 		{"no MCP servers", "mcps:"},
+		{"cron gateway block present", "gateways:"},
+		{"scheduler gateway name", "scheduler"},
+		{"cron expression", "*/15 * * * *"},
 	}
 
 	for _, c := range checks {
