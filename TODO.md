@@ -1553,7 +1553,7 @@ similarity and injects the relevant context.
 - [x] Test: Unauthenticated requests are rejected
 
 ### R12.2 Event-to-Turn Bridge in App
-- [ ] Add `handleEvent(ctx context.Context, evt Event)` method to `internal/gitai/app/app.go`:
+- [x] Add `handleEvent(ctx context.Context, evt Event)` method to `internal/gitai/app/app.go`:
   - Generates trace ID for the event turn
   - Constructs LLM messages:
     - System prompt (from Gosuto persona, unchanged)
@@ -1561,13 +1561,13 @@ similarity and injects the relevant context.
   - Calls the same `runTurn` pipeline as `handleMessage`
   - Posts the response to the agent's admin room (Matrix) or a configured output room
   - Logs the turn (source=gateway, gateway_name, event_type)
-- [ ] If `Payload.Message` is empty, auto-generate a prompt from structured data:
+- [x] If `Payload.Message` is empty, auto-generate a prompt from structured data:
   - `"Event received from {source} (type: {type}). Data: {json(data)}"`
-- [ ] Wire `handleEvent` into the ACP server's `/events/{source}` handler
-- [ ] Test: Cron event triggers a full LLM turn
-- [ ] Test: Event response is posted to the admin room
-- [ ] Test: Event turn is logged with gateway metadata
-- [ ] Test: Event without message field auto-generates a prompt
+- [x] Wire `handleEvent` into the ACP server's `/events/{source}` handler
+- [x] Test: Cron event triggers a full LLM turn
+- [x] Test: Event response is posted to the admin room
+- [x] Test: Event turn is logged with gateway metadata
+- [x] Test: Event without message field auto-generates a prompt
 
 ### R12.3 Built-in Cron Gateway
 - [ ] Create `internal/gitai/gateway/cron.go`:

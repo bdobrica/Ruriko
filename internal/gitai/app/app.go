@@ -16,6 +16,7 @@ import (
 
 	"maunium.net/go/mautrix/event"
 
+	"github.com/bdobrica/Ruriko/common/spec/envelope"
 	gosutospec "github.com/bdobrica/Ruriko/common/spec/gosuto"
 	"github.com/bdobrica/Ruriko/common/trace"
 	"github.com/bdobrica/Ruriko/common/version"
@@ -232,6 +233,11 @@ func New(cfg *Config) (*App, error) {
 			case cancelCh <- struct{}{}:
 			default:
 			}
+		},
+		// HandleEvent dispatches inbound gateway events to the turn engine.
+		// The method must be non-blocking; the actual work runs in a goroutine.
+		HandleEvent: func(ctx context.Context, evt *envelope.Event) {
+			app.handleEvent(ctx, evt)
 		},
 	})
 
@@ -730,6 +736,109 @@ func buildLLMProvider(cfg LLMConfig) llm.Provider {
 			Model:   cfg.Model,
 		})
 	}
+}
+
+// handleEvent is the HandleEvent callback wired into the ACP server (R12.2).
+// It MUST return quickly — the full turn runs in a background goroutine so that
+// the HTTP 202 is returned to the gateway before the LLM call completes.
+func (a *App) handleEvent(ctx context.Context, evt *envelope.Event) {
+	go a.runEventTurn(ctx, evt)
+}
+
+// runEventTurn executes the full turn pipeline for an inbound gateway event.
+// It mirrors handleMessage but uses the admin room as the output destination
+// and a "gateway:<source>" label as the sender identifier.
+func (a *App) runEventTurn(ctx context.Context, evt *envelope.Event) {
+	cfg := a.gosutoLdr.Config()
+	if cfg == nil {
+		slog.Warn("event turn dropped: no Gosuto config loaded",
+			"source", evt.Source, "type", evt.Type)
+		return
+	}
+
+	adminRoom := cfg.Trust.AdminRoom
+	if adminRoom == "" {
+		slog.Warn("event turn dropped: no adminRoom configured in Gosuto trust block",
+			"source", evt.Source, "type", evt.Type)
+		return
+	}
+
+	// Build the user-facing text for this event turn.
+	userText := buildEventMessage(evt)
+
+	// Assign a stable trace ID for the turn so every log line and DB record
+	// can be correlated back to this specific event.
+	traceID := trace.GenerateID()
+	ctx = trace.WithTraceID(ctx, traceID)
+	log := observability.WithTrace(ctx)
+
+	// Log the turn in the DB. The sender label "gateway:<source>" distinguishes
+	// gateway-triggered turns from Matrix-message-triggered turns in the store.
+	senderLabel := "gateway:" + evt.Source
+	turnID, err := a.db.LogTurn(traceID, adminRoom, senderLabel, userText)
+	if err != nil {
+		log.Warn("could not log event turn", "err", err)
+	}
+
+	log.Info("event turn started",
+		"trigger", "gateway",
+		"gateway_name", evt.Source,
+		"event_type", evt.Type,
+	)
+
+	result, toolCalls, err := a.runTurn(ctx, adminRoom, senderLabel, userText, "")
+	if err != nil {
+		log.Error("event turn failed",
+			"trigger", "gateway",
+			"gateway_name", evt.Source,
+			"event_type", evt.Type,
+			"err", err,
+		)
+		if a.matrixCli != nil {
+			_ = a.matrixCli.SendText(adminRoom,
+				fmt.Sprintf("⚡ Event: %s/%s\n❌ %s", evt.Source, evt.Type, err))
+		}
+		if turnID > 0 {
+			_ = a.db.FinishTurn(turnID, toolCalls, "error", err.Error())
+		}
+		return
+	}
+
+	// Post the formatted response to the admin room.
+	if result != "" && a.matrixCli != nil {
+		header := fmt.Sprintf("⚡ Event: %s/%s", evt.Source, evt.Type)
+		_ = a.matrixCli.SendText(adminRoom, header+"\n"+result)
+	}
+
+	if turnID > 0 {
+		_ = a.db.FinishTurn(turnID, toolCalls, "success", "")
+	}
+
+	log.Info("event turn completed",
+		"trigger", "gateway",
+		"gateway_name", evt.Source,
+		"event_type", evt.Type,
+		"tool_calls", toolCalls,
+	)
+}
+
+// buildEventMessage returns the user-facing text for an event turn.
+// When the event's Payload.Message is non-empty it is returned verbatim.
+// When it is empty a descriptive prompt is auto-generated from the event
+// metadata and any structured data in the payload — matching the pattern
+// described in R12.2: "Event received from {source} (type: {type}). Data: {json}"
+func buildEventMessage(evt *envelope.Event) string {
+	if evt.Payload.Message != "" {
+		return evt.Payload.Message
+	}
+	if len(evt.Payload.Data) == 0 {
+		return fmt.Sprintf("Event received from %s (type: %s).", evt.Source, evt.Type)
+	}
+	dataJSON, err := json.Marshal(evt.Payload.Data)
+	if err != nil {
+		return fmt.Sprintf("Event received from %s (type: %s).", evt.Source, evt.Type)
+	}
+	return fmt.Sprintf("Event received from %s (type: %s). Data: %s", evt.Source, evt.Type, dataJSON)
 }
 
 // buildSecretEnvMapping creates an envVar → secretName mapping from the Gosuto
