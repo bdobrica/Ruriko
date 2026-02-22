@@ -18,6 +18,7 @@ import (
 	"github.com/bdobrica/Ruriko/internal/ruriko/approvals"
 	"github.com/bdobrica/Ruriko/internal/ruriko/audit"
 	"github.com/bdobrica/Ruriko/internal/ruriko/commands"
+	rurikoconfig "github.com/bdobrica/Ruriko/internal/ruriko/config"
 	"github.com/bdobrica/Ruriko/internal/ruriko/kuze"
 	"github.com/bdobrica/Ruriko/internal/ruriko/matrix"
 	"github.com/bdobrica/Ruriko/internal/ruriko/nlp"
@@ -110,6 +111,7 @@ type App struct {
 	config       *Config
 	store        *store.Store
 	secrets      *secrets.Store
+	configStore  rurikoconfig.Store
 	matrix       *matrix.Client
 	router       *commands.Router
 	handlers     *commands.Handlers
@@ -164,6 +166,11 @@ func New(config *Config) (*App, error) {
 		return nil, fmt.Errorf("failed to initialize secrets store: %w", err)
 	}
 
+	// Initialize runtime config store (non-secret key/value knobs such as
+	// nlp.model and nlp.endpoint, managed via /ruriko config).
+	configStore := rurikoconfig.New(store)
+	slog.Info("runtime config store ready")
+
 	// Initialize command router
 	router := commands.NewRouter("/ruriko")
 
@@ -172,6 +179,7 @@ func New(config *Config) (*App, error) {
 	handlersCfg := commands.HandlersConfig{
 		Store:            store,
 		Secrets:          secretsStore,
+		ConfigStore:      configStore,
 		MatrixHomeserver: config.Matrix.Homeserver,
 	}
 
@@ -404,6 +412,7 @@ func New(config *Config) (*App, error) {
 		config:       config,
 		store:        store,
 		secrets:      secretsStore,
+		configStore:  configStore,
 		matrix:       matrixClient,
 		router:       router,
 		handlers:     handlers,

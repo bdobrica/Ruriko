@@ -14,6 +14,7 @@ import (
 	"github.com/bdobrica/Ruriko/common/version"
 	"github.com/bdobrica/Ruriko/internal/ruriko/approvals"
 	"github.com/bdobrica/Ruriko/internal/ruriko/audit"
+	"github.com/bdobrica/Ruriko/internal/ruriko/config"
 	"github.com/bdobrica/Ruriko/internal/ruriko/kuze"
 	"github.com/bdobrica/Ruriko/internal/ruriko/nlp"
 	"github.com/bdobrica/Ruriko/internal/ruriko/provisioning"
@@ -65,6 +66,11 @@ type HandlersConfig struct {
 	// call; when the budget is exhausted the handler replies with the
 	// TokenBudgetExceededMessage without invoking the provider.
 	NLPTokenBudget *nlp.TokenBudget // optional — token budget per sender per day
+
+	// ConfigStore, when non-nil, is the runtime key/value configuration store.
+	// It holds non-secret operator-tunable knobs (e.g. nlp.model, nlp.endpoint,
+	// nlp.rate-limit) that take effect without a container restart.
+	ConfigStore config.Store // optional — enables /ruriko config commands
 }
 
 // RoomSender is the subset of the Matrix client needed for posting breadcrumb
@@ -96,6 +102,10 @@ type Handlers struct {
 	// call outcomes.  Written by handleNLClassify; read by NLPProviderStatus.
 	// Values: 0 = ok, 1 = degraded, 2 = unavailable.
 	nlpHealthState atomic.Int32
+
+	// configStore is the runtime key/value configuration store for non-secret
+	// operator-tunable knobs (e.g. nlp.model, nlp.endpoint, nlp.rate-limit).
+	configStore config.Store
 }
 
 // nlp health-state constants (stored in Handlers.nlpHealthState).
@@ -128,6 +138,7 @@ func NewHandlers(cfg HandlersConfig) *Handlers {
 		nlpProvider:       cfg.NLPProvider,
 		nlpRateLimiter:    cfg.NLPRateLimiter,
 		nlpTokenBudget:    cfg.NLPTokenBudget,
+		configStore:       cfg.ConfigStore,
 	}
 }
 

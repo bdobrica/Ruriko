@@ -1152,7 +1152,7 @@ via `/ruriko config get` and auditable.
 
 #### Key/value config store
 
-- [ ] Create `internal/ruriko/config/` package:
+- [x] Create `internal/ruriko/config/` package:
   ```go
   type Store interface {
       Get(ctx context.Context, key string) (string, error)  // ErrNotFound when absent
@@ -1161,10 +1161,10 @@ via `/ruriko config get` and auditable.
       List(ctx context.Context) (map[string]string, error)
   }
   ```
-- [ ] SQLite-backed implementation — new `config` table (key TEXT PRIMARY KEY, value TEXT, updated_at DATETIME)
-- [ ] Migration: `migrations/ruriko/NNNN_config_store.sql`
-- [ ] Wire `config.Store` into `app.Config` and `HandlersConfig`
-- [ ] Test: CRUD operations, concurrent access
+- [x] SQLite-backed implementation — new `config` table (key TEXT PRIMARY KEY, value TEXT, updated_at DATETIME)
+- [x] Migration: `migrations/ruriko/NNNN_config_store.sql`
+- [x] Wire `config.Store` into `app.Config` and `HandlersConfig`
+- [x] Test: CRUD operations, concurrent access
 
 #### `/ruriko config` command namespace
 
