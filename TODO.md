@@ -1009,25 +1009,31 @@ or
 
 ### R9.1 LLM Provider Integration for Ruriko
 
-- [ ] Create `internal/ruriko/nlp/provider.go` — LLM provider interface:
+- [x] Create `internal/ruriko/nlp/provider.go` — LLM provider interface:
   ```go
   type Provider interface {
       Classify(ctx context.Context, req ClassifyRequest) (*ClassifyResponse, error)
   }
   ```
-- [ ] Create `internal/ruriko/nlp/openai.go` — OpenAI-compatible implementation
+- [x] Create `internal/ruriko/nlp/openai.go` — OpenAI-compatible implementation
   - Reuse patterns from `internal/gitai/llm/openai.go` (HTTP client, retry, error handling)
   - Support configurable model (default: `gpt-4o-mini` for cost efficiency)
   - Support configurable endpoint (OpenAI, Azure, local ollama, etc.)
-- [ ] Add config fields to `app.Config`:
+- [x] Add config fields to `app.Config`:
   - `NLPProvider` (optional — when nil, NL falls back to keyword matching)
   - `NLPModel`, `NLPEndpoint`, `NLPAPIKeySecretRef`
-- [ ] API key loaded from environment (`RURIKO_NLP_API_KEY`), never from chat
-- [ ] Add per-sender rate limiting on NL classification calls:
+- [x] API key loaded from environment (`RURIKO_NLP_API_KEY`), never from chat
+- [x] Add per-sender rate limiting on NL classification calls:
   - Configurable: `NLP_RATE_LIMIT` (default: 20 calls/minute per sender)
   - When exceeded: "I'm processing too many requests. Try again in a moment."
-- [ ] Test: Provider interface is mockable; OpenAI client handles errors
-- [ ] Test: Rate limiting rejects excessive calls
+- [x] Test: Provider interface is mockable; OpenAI client handles errors
+- [x] Test: Rate limiting rejects excessive calls
+
+> **Follow-up (tracked in R9.7):** environment variables are the bootstrap-only
+> fallback. Once the stack is running the API key should be stored as the Kuze
+> secret `ruriko.nlp-api-key` and loaded at classify-call time (no restart
+> required). Model, endpoint, and rate-limit are non-secret configuration values
+> managed through `/ruriko config set/get` (also R9.7).
 
 ### R9.2 System Prompt and Command Catalogue
 
@@ -1121,6 +1127,85 @@ or
 - [ ] Test: Token budget enforcement works
 - [ ] Test: Usage is logged accurately
 
+### R9.7 Runtime Configuration Store — NLP Key, Model, and Tuning Knobs
+
+The env-var approach (R9.1) is a necessary bootstrap mechanism, but it requires
+a container restart to rotate a key or switch models. This section replaces it
+with a two-tier model:
+
+- **API key** → stored as the Kuze secret `ruriko.nlp-api-key`, loaded lazily
+  on each classify call. The env var `RURIKO_NLP_API_KEY` remains as a
+  bootstrap-only fallback (useful on first boot before Kuze is set up).
+  If both are present the Kuze secret takes precedence and a warning is logged.
+- **Non-secret tuning knobs** (model, endpoint, rate-limit) → stored in a new
+  lightweight `config` key-value table in SQLite, managed via `/ruriko config`.
+  No restart needed; changes take effect on the next classify call via a lazy
+  provider rebuild.
+
+**Why not all in Kuze?** Kuze's invariant is "everything stored here is
+sensitive". Model names and endpoint URLs are not credentials — mixing them in
+blurs that boundary and makes the security audit harder.
+
+**Why not all in env vars?** Env vars require a container restart and are
+invisible to the operator at runtime. A DB-backed config table is inspectable
+via `/ruriko config get` and auditable.
+
+#### Key/value config store
+
+- [ ] Create `internal/ruriko/config/` package:
+  ```go
+  type Store interface {
+      Get(ctx context.Context, key string) (string, error)  // ErrNotFound when absent
+      Set(ctx context.Context, key string, value string) error
+      Delete(ctx context.Context, key string) error
+      List(ctx context.Context) (map[string]string, error)
+  }
+  ```
+- [ ] SQLite-backed implementation — new `config` table (key TEXT PRIMARY KEY, value TEXT, updated_at DATETIME)
+- [ ] Migration: `migrations/ruriko/NNNN_config_store.sql`
+- [ ] Wire `config.Store` into `app.Config` and `HandlersConfig`
+- [ ] Test: CRUD operations, concurrent access
+
+#### `/ruriko config` command namespace
+
+- [ ] `config.set <key> <value>` — store a config value
+  - Allowlist of permitted keys (reject unknown keys to prevent misuse):
+    `nlp.model`, `nlp.endpoint`, `nlp.rate-limit`
+  - On success: "✓ `nlp.model` set to `gpt-4o`."
+- [ ] `config.get <key>` — retrieve a config value (or "(not set — using default)")
+- [ ] `config.list` — show all non-default config values
+- [ ] `config.unset <key>` — delete a value, reverting to default
+- [ ] Test: Set/get/unset round-trip; unknown key returns an error
+
+#### NLP API key via Kuze
+
+- [ ] Operator runs `/ruriko secrets set ruriko.nlp-api-key` to store the key
+  - Follows the standard Kuze flow: one-time browser link, value never in chat
+- [ ] Provider lookup order on each `Classify` call:
+  1. `ruriko.nlp-api-key` secret from the encrypted secrets store (preferred)
+  2. `RURIKO_NLP_API_KEY` env var (bootstrap fallback)
+  3. Neither present → NL layer stays in keyword-matching mode, no error
+- [ ] Log a `warn` if both sources are present (helps operators spot stale config)
+- [ ] Test: Secret takes precedence over env var
+- [ ] Test: Absent key degrades gracefully to keyword matching
+
+#### Lazy provider rebuild
+
+- [ ] `Handlers` holds a `providerCache` (current provider + the config snapshot
+  it was built from)
+- [ ] On each `HandleNaturalLanguage` call, compare current config (key + model +
+  endpoint) to the cached snapshot; rebuild the provider if anything changed
+- [ ] Rebuild is cheap (~zero overhead: just constructs a new `http.Client` wrapper)
+- [ ] Thread-safe: use a `sync.RWMutex` around the cache
+- [ ] Test: Provider is rebuilt when model changes; not rebuilt when config is unchanged
+- [ ] Test: Concurrent calls during a rebuild do not race (run with `-race`)
+
+#### Definition of done (R9.7)
+- `/ruriko config set nlp.model gpt-4o` takes effect on the next NL message, no restart
+- `/ruriko secrets set ruriko.nlp-api-key` rotates the key without restarting
+- Env var `RURIKO_NLP_API_KEY` still works on a fresh deployment before Kuze is configured
+- Secret value never appears in audit logs, Matrix history, or command output
+
 ### Definition of done
 - User can say "show me my agents" and get a natural-language answer
 - User can say "create a news agent called kumo2" and Ruriko confirms before creating
@@ -1128,6 +1213,7 @@ or
 - `/ruriko` commands still work unchanged
 - All NL-mediated actions appear in the audit log with `source: nl`
 - LLM is down → keyword matching still works, commands always work
+- Operator can rotate the NLP key and change the model without restarting Ruriko
 
 ---
 

@@ -85,6 +85,14 @@ services:
       TUWUNEL_REGISTRATION_TOKEN:      ${TUWUNEL_REGISTRATION_TOKEN:-}
       MATRIX_AGENT_USERNAME_SUFFIX:    ${MATRIX_AGENT_USERNAME_SUFFIX:-}
 
+      # --- Natural Language Interface (R9, optional) ---
+      # Set RURIKO_NLP_API_KEY to enable LLM-backed intent classification.
+      # When unset, Ruriko falls back to keyword matching.
+      RURIKO_NLP_API_KEY:     ${RURIKO_NLP_API_KEY:-}
+      NLP_MODEL:              ${NLP_MODEL:-}
+      NLP_ENDPOINT:           ${NLP_ENDPOINT:-}
+      NLP_RATE_LIMIT:         ${NLP_RATE_LIMIT:-}
+
       # --- Docker runtime (optional) ---
       DOCKER_ENABLE:          ${DOCKER_ENABLE:-false}
       DOCKER_NETWORK:         ${DOCKER_NETWORK:-ruriko-net}

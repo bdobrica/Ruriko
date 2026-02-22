@@ -20,6 +20,7 @@ import (
 	"github.com/bdobrica/Ruriko/internal/ruriko/commands"
 	"github.com/bdobrica/Ruriko/internal/ruriko/kuze"
 	"github.com/bdobrica/Ruriko/internal/ruriko/matrix"
+	"github.com/bdobrica/Ruriko/internal/ruriko/nlp"
 	"github.com/bdobrica/Ruriko/internal/ruriko/provisioning"
 	"github.com/bdobrica/Ruriko/internal/ruriko/runtime"
 	"github.com/bdobrica/Ruriko/internal/ruriko/runtime/docker"
@@ -66,6 +67,37 @@ type Config struct {
 	// the natural-language provisioning wizard (R5.4 stretch goal).
 	// When empty, "ghcr.io/bdobrica/gitai:latest" is used as a fallback.
 	DefaultAgentImage string
+
+	// --- R9: Natural Language Interface ---
+
+	// NLPProvider is an optional pre-constructed LLM provider for natural-
+	// language command classification.  When non-nil it is used directly and
+	// the NLPModel/NLPEndpoint/NLPAPIKeySecretRef fields are ignored.
+	// When nil the app auto-constructs an OpenAI-compatible provider from the
+	// fields below, provided an API key is present in the environment.
+	// Setting this to nil when no key is configured leaves the NL layer in the
+	// deterministic keyword-matching mode introduced in R5.4.
+	NLPProvider nlp.Provider
+
+	// NLPModel is the chat model used for intent classification.
+	// Defaults to "gpt-4o-mini" (cost-efficient) when empty.
+	NLPModel string
+
+	// NLPEndpoint is the base URL of the LLM API endpoint, e.g.:
+	//   https://api.openai.com/v1  (default)
+	//   http://localhost:11434/v1  (Ollama)
+	//   https://<resource>.openai.azure.com/openai/deployments/<deployment>
+	// Empty defaults to the public OpenAI endpoint.
+	NLPEndpoint string
+
+	// NLPAPIKeySecretRef is the name of the environment variable that holds
+	// the API key for the NLP provider.  Defaults to "RURIKO_NLP_API_KEY".
+	// The key is always read from the environment — never from Matrix chat.
+	NLPAPIKeySecretRef string
+
+	// NLPRateLimit is the maximum number of NLP classification calls allowed
+	// per sender per minute.  Defaults to nlp.DefaultRateLimit (20) when zero.
+	NLPRateLimit int
 }
 
 // App is the main Ruriko application
@@ -236,6 +268,53 @@ func New(config *Config) (*App, error) {
 		reg := templates.NewRegistry(config.TemplatesFS)
 		handlersCfg.Templates = reg
 		slog.Info("Gosuto template registry ready")
+	}
+
+	// Initialise NLP provider for natural-language command classification (R9).
+	// Priority:
+	//   1. A pre-constructed provider injected directly via Config.NLPProvider.
+	//   2. Auto-constructed OpenAI-compatible provider when an API key is found
+	//      in the environment variable named by Config.NLPAPIKeySecretRef
+	//      (or the default RURIKO_NLP_API_KEY).
+	//   3. No provider → NL layer uses the deterministic keyword matcher (R5.4).
+	{
+		var resolvedProvider nlp.Provider
+		if config.NLPProvider != nil {
+			resolvedProvider = config.NLPProvider
+			slog.Info("NLP: using pre-configured provider")
+		} else {
+			envVar := config.NLPAPIKeySecretRef
+			if envVar == "" {
+				envVar = "RURIKO_NLP_API_KEY"
+			}
+			if apiKey := os.Getenv(envVar); apiKey != "" {
+				resolvedProvider = nlp.New(nlp.Config{
+					APIKey:  apiKey,
+					BaseURL: config.NLPEndpoint,
+					Model:   config.NLPModel,
+				})
+				model := config.NLPModel
+				if model == "" {
+					model = "gpt-4o-mini"
+				}
+				endpoint := config.NLPEndpoint
+				if endpoint == "" {
+					endpoint = "https://api.openai.com/v1"
+				}
+				slog.Info("NLP: OpenAI-compatible provider ready",
+					"model", model, "endpoint", endpoint, "key_env", envVar)
+			} else {
+				slog.Info("NLP: no API key found; natural-language layer will use keyword matching",
+					"key_env", envVar)
+			}
+		}
+
+		if resolvedProvider != nil {
+			rateLimit := config.NLPRateLimit
+			rateLimiter := nlp.NewRateLimiter(rateLimit, time.Minute)
+			handlersCfg.NLPProvider = resolvedProvider
+			handlersCfg.NLPRateLimiter = rateLimiter
+		}
 	}
 
 	// Initialise approval gate.

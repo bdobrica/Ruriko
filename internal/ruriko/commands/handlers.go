@@ -14,6 +14,7 @@ import (
 	"github.com/bdobrica/Ruriko/internal/ruriko/approvals"
 	"github.com/bdobrica/Ruriko/internal/ruriko/audit"
 	"github.com/bdobrica/Ruriko/internal/ruriko/kuze"
+	"github.com/bdobrica/Ruriko/internal/ruriko/nlp"
 	"github.com/bdobrica/Ruriko/internal/ruriko/provisioning"
 	"github.com/bdobrica/Ruriko/internal/ruriko/runtime"
 	"github.com/bdobrica/Ruriko/internal/ruriko/secrets"
@@ -46,6 +47,16 @@ type HandlersConfig struct {
 	// MatrixHomeserver is the Matrix homeserver URL injected into agent
 	// container environments as MATRIX_HOMESERVER so gitai can connect.
 	MatrixHomeserver string // optional — injected into spawned agent containers
+
+	// NLPProvider, when non-nil, is used by HandleNaturalLanguage to
+	// classify free-form user messages via an LLM instead of the built-in
+	// keyword matcher.  When nil, the deterministic keyword-based fallback
+	// from R5.4 is used.
+	NLPProvider nlp.Provider // optional — enables LLM-backed intent classification
+
+	// NLPRateLimiter, when non-nil, enforces per-sender call limits on LLM
+	// classification requests.  Should always be set alongside NLPProvider.
+	NLPRateLimiter *nlp.RateLimiter // optional — rate limits NLP calls per sender
 }
 
 // RoomSender is the subset of the Matrix client needed for posting breadcrumb
@@ -70,6 +81,8 @@ type Handlers struct {
 	conversations     *conversationStore
 	defaultAgentImage string
 	matrixHomeserver  string
+	nlpProvider       nlp.Provider
+	nlpRateLimiter    *nlp.RateLimiter
 }
 
 // NewHandlers creates a new Handlers instance from the given config.
@@ -92,6 +105,8 @@ func NewHandlers(cfg HandlersConfig) *Handlers {
 		conversations:     newConversationStore(),
 		defaultAgentImage: cfg.DefaultAgentImage,
 		matrixHomeserver:  cfg.MatrixHomeserver,
+		nlpProvider:       cfg.NLPProvider,
+		nlpRateLimiter:    cfg.NLPRateLimiter,
 	}
 }
 

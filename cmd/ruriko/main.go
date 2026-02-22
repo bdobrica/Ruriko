@@ -122,6 +122,13 @@ func loadConfig() (*app.Config, error) {
 			AccessToken: accessToken,
 			AdminRooms:  adminRooms,
 		},
+		// --- R9: Natural Language Interface ---
+		// NLPProvider is left nil so that app.New auto-constructs one from
+		// the env vars below (or stays in keyword-matching mode).
+		NLPModel:           environment.StringOr("NLP_MODEL", ""),
+		NLPEndpoint:        environment.StringOr("NLP_ENDPOINT", ""),
+		NLPAPIKeySecretRef: environment.StringOr("NLP_API_KEY_ENV", ""),
+		NLPRateLimit:       environment.IntOr("NLP_RATE_LIMIT", 0),
 	}, nil
 }
 
