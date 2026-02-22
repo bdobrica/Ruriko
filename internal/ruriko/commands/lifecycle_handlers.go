@@ -134,15 +134,57 @@ func (h *Handlers) HandleAgentsCreate(ctx context.Context, cmd *Command, evt *ev
 		return fmt.Sprintf("✅ Agent **%s** created (no runtime configured, status: stopped)\n\n(trace: %s)", agentID, traceID), nil
 	}
 
+	// --- Matrix account provisioning ------------------------------------
+	// Register a Matrix account for the agent so it can connect to the
+	// homeserver.  This must happen before the container is spawned so the
+	// credentials are available as environment variables at start-up.
+	var agentMXID, agentAccessToken string
+	if h.provisioner != nil {
+		account, err := h.provisioner.Register(ctx, agentID, displayName)
+		if err != nil {
+			h.store.UpdateAgentStatus(ctx, agentID, "error")
+			h.store.UpdateAgentProvisioningState(ctx, agentID, "error")
+			h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.create", agentID, "error", nil, err.Error())
+			return "", fmt.Errorf("failed to provision Matrix account for agent %s: %w", agentID, err)
+		}
+		agentMXID = account.UserID.String()
+		agentAccessToken = account.AccessToken
+		// Persist the MXID immediately.
+		if err := h.store.UpdateAgentMXID(ctx, agentID, agentMXID); err != nil {
+			slog.Warn("failed to persist agent MXID", "agent", agentID, "mxid", agentMXID, "err", err)
+		}
+		// Invite agent to admin rooms so Ruriko can communicate with it.
+		if inviteErrs := h.provisioner.InviteToRooms(ctx, account.UserID); len(inviteErrs) > 0 {
+			for _, invErr := range inviteErrs {
+				slog.Warn("provision: failed to invite agent to room", "agent", agentID, "err", invErr)
+			}
+		}
+	} else {
+		slog.Warn("provision: no Matrix provisioner configured; agent container will lack MATRIX_USER_ID and MATRIX_ACCESS_TOKEN",
+			"agent", agentID)
+	}
+
 	// --- spawn container ------------------------------------------------
+	agentEnv := map[string]string{
+		"GITAI_AGENT_ID":  agentID,
+		"GITAI_ACP_TOKEN": acpToken,
+	}
+	if h.matrixHomeserver != "" {
+		agentEnv["MATRIX_HOMESERVER"] = h.matrixHomeserver
+	}
+	if agentMXID != "" {
+		agentEnv["MATRIX_USER_ID"] = agentMXID
+	}
+	if agentAccessToken != "" {
+		agentEnv["MATRIX_ACCESS_TOKEN"] = agentAccessToken
+	}
+
 	spec := runtime.AgentSpec{
 		ID:          agentID,
 		DisplayName: displayName,
 		Image:       image,
 		Template:    template,
-		Env: map[string]string{
-			"GITAI_ACP_TOKEN": acpToken,
-		},
+		Env:         agentEnv,
 	}
 
 	handle, err := h.runtime.Spawn(ctx, spec)

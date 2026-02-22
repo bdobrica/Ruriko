@@ -1,0 +1,65 @@
+FROM alpine:3.20
+
+ARG TUWUNEL_VERSION=v1.5.0
+# For x86_64 servers, this is typically correct:
+ARG TUWUNEL_ASSET=v1.5.0-release-all-x86_64-v1-linux-gnu-tuwunel.zst
+
+RUN apk add --no-cache ca-certificates tini curl zstd \
+ && adduser -D -H -s /sbin/nologin tuwunel \
+ && mkdir -p /etc/tuwunel /var/lib/tuwunel \
+ && chown -R tuwunel:tuwunel /var/lib/tuwunel
+
+# Fetch tuwunel binary from GitHub releases, decompress, install
+RUN curl -fsSL \
+    "https://github.com/matrix-construct/tuwunel/releases/download/${TUWUNEL_VERSION}/${TUWUNEL_ASSET}" \
+  | unzstd -c > /usr/local/bin/tuwunel \
+ && chmod +x /usr/local/bin/tuwunel \
+ && /usr/local/bin/tuwunel --version
+
+# Entrypoint: generate config at runtime and start tuwunel
+RUN cat > /entrypoint.sh <<'SH'
+#!/bin/sh
+set -eu
+
+# Use CONDUWUIT_* environment variables to match docker-compose.yaml
+SERVER_NAME="${CONDUWUIT_SERVER_NAME:-localhost}"
+DATA_DIR="${CONDUWUIT_DATABASE_PATH:-/var/lib/tuwunel}"
+PORT="${CONDUWUIT_PORT:-8008}"
+ALLOW_REGISTRATION="${CONDUWUIT_ALLOW_REGISTRATION:-false}"
+REGISTRATION_TOKEN="${CONDUWUIT_REGISTRATION_TOKEN:-}"
+ALLOW_FEDERATION="${CONDUWUIT_ALLOW_FEDERATION:-false}"
+ALLOW_PUBLIC_ROOM_DIRECTORY="${CONDUWUIT_ALLOW_PUBLIC_ROOM_DIRECTORY:-false}"
+LOG_LEVEL="${CONDUWUIT_LOG:-warn}"
+
+mkdir -p "$DATA_DIR"
+chown -R tuwunel:tuwunel "$DATA_DIR"
+
+cat > /etc/tuwunel/config.toml <<EOF
+[global]
+server_name = "${SERVER_NAME}"
+database_path = "${DATA_DIR}"
+
+# Listen on all interfaces for docker container accessibility
+address = ["0.0.0.0"]
+port = ${PORT}
+
+allow_registration = ${ALLOW_REGISTRATION}
+allow_federation = ${ALLOW_FEDERATION}
+allow_public_room_directory_over_federation = ${ALLOW_PUBLIC_ROOM_DIRECTORY}
+
+log = "${LOG_LEVEL}"
+EOF
+
+# Add registration token to config if provided
+if [ -n "$REGISTRATION_TOKEN" ]; then
+  echo "registration_token = \"${REGISTRATION_TOKEN}\"" >> /etc/tuwunel/config.toml
+fi
+
+exec su -s /bin/sh -c "/usr/local/bin/tuwunel --config /etc/tuwunel/config.toml" tuwunel
+SH
+
+RUN chmod +x /entrypoint.sh
+
+EXPOSE 8008
+ENTRYPOINT ["/sbin/tini","--"]
+CMD ["/entrypoint.sh"]

@@ -109,9 +109,12 @@ func New(config *Config) (*App, error) {
 		return nil, fmt.Errorf("failed to initialize database: %w", err)
 	}
 
-	// Initialize Matrix client
-	slog.Info("connecting to Matrix", "homeserver", config.Matrix.Homeserver)
-	matrixClient, err := matrix.New(&config.Matrix)
+	// Initialize Matrix client.
+	// Inject the DB so the client can persist the sync token across restarts.
+	matrixCfg := config.Matrix
+	matrixCfg.DB = store.DB()
+	slog.Info("connecting to Matrix", "homeserver", matrixCfg.Homeserver)
+	matrixClient, err := matrix.New(&matrixCfg)
 	if err != nil {
 		store.Close()
 		return nil, fmt.Errorf("failed to initialize Matrix client: %w", err)
@@ -130,8 +133,9 @@ func New(config *Config) (*App, error) {
 	// Build the handlers configuration progressively; optional subsystems
 	// are attached only when their prerequisites are met.
 	handlersCfg := commands.HandlersConfig{
-		Store:   store,
-		Secrets: secretsStore,
+		Store:            store,
+		Secrets:          secretsStore,
+		MatrixHomeserver: config.Matrix.Homeserver,
 	}
 
 	// Initialize Docker runtime if enabled

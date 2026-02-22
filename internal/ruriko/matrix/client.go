@@ -3,6 +3,7 @@ package matrix
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -19,6 +20,10 @@ type Config struct {
 	UserID      string
 	AccessToken string
 	AdminRooms  []string // Room IDs where Ruriko accepts commands
+	// DB is an optional SQLite connection used to persist the Matrix sync
+	// token (next_batch) across restarts.  When nil, an in-memory store is
+	// used and all room history will be replayed on every restart.
+	DB *sql.DB
 }
 
 // Client wraps the Matrix client
@@ -39,11 +44,22 @@ func New(config *Config) (*Client, error) {
 		return nil, fmt.Errorf("failed to create Matrix client: %w", err)
 	}
 
-	return &Client{
+	c := &Client{
 		client: client,
 		config: config,
 		stopCh: make(chan struct{}),
-	}, nil
+	}
+
+	// Attach a persistent sync store so the bot resumes from the last known
+	// position after a restart instead of replaying the full room history.
+	if config.DB != nil {
+		client.Store = newDBSyncStore(config.DB)
+		slog.Info("Matrix sync store: using persistent SQLite store")
+	} else {
+		slog.Warn("Matrix sync store: no DB configured, using in-memory store (history will replay on restart)")
+	}
+
+	return c, nil
 }
 
 // Start begins syncing with the Matrix homeserver

@@ -48,6 +48,12 @@ services:
     ports:
       - "${HTTP_ADDR_HOST:-127.0.0.1}:${HTTP_ADDR_PORT:-8080}:8080"
 
+    # Add the host docker group so the ruriko user can access /var/run/docker.sock.
+    # Set DOCKER_GID to the GID of the docker group on the host:
+    #   stat -c '%g' /var/run/docker.sock
+    group_add:
+      - "${DOCKER_GID:-990}"
+
     environment:
       # --- Matrix connection (required) ---
       MATRIX_HOMESERVER:      ${MATRIX_HOMESERVER}
@@ -136,7 +142,9 @@ services:
   # Alternative: Synapse (see the commented block at the bottom of this file)
   # --------------------------------------------------------------------------
   tuwunel:
-    image: ghcr.io/girlbossceo/conduwuit:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.tuwunel
     container_name: tuwunel
     restart: unless-stopped
 

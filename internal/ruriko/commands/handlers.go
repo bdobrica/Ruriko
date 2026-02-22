@@ -43,6 +43,9 @@ type HandlersConfig struct {
 	// the natural-language provisioning wizard (R5.4).  When empty, the wizard
 	// falls back to "ghcr.io/bdobrica/gitai:latest".
 	DefaultAgentImage string // optional — default agent image for NL provisioning
+	// MatrixHomeserver is the Matrix homeserver URL injected into agent
+	// container environments as MATRIX_HOMESERVER so gitai can connect.
+	MatrixHomeserver string // optional — injected into spawned agent containers
 }
 
 // RoomSender is the subset of the Matrix client needed for posting breadcrumb
@@ -66,6 +69,7 @@ type Handlers struct {
 	dispatch          DispatchFunc
 	conversations     *conversationStore
 	defaultAgentImage string
+	matrixHomeserver  string
 }
 
 // NewHandlers creates a new Handlers instance from the given config.
@@ -87,6 +91,7 @@ func NewHandlers(cfg HandlersConfig) *Handlers {
 		roomSender:        cfg.RoomSender,
 		conversations:     newConversationStore(),
 		defaultAgentImage: cfg.DefaultAgentImage,
+		matrixHomeserver:  cfg.MatrixHomeserver,
 	}
 }
 
