@@ -225,6 +225,12 @@ func (h *Handlers) HandleHelp(ctx context.Context, cmd *Command, evt *event.Even
 • /ruriko approvals show <id> - Show approval details
 • approve <id> [reason] - Approve a pending operation
 • deny <id> reason="<text>" - Deny a pending operation
+
+**Config Commands:**
+• /ruriko config set <key> <value> - Set a runtime config value (keys: nlp.model, nlp.endpoint, nlp.rate-limit)
+• /ruriko config get <key> - Show a config value
+• /ruriko config list - Show all non-default config values
+• /ruriko config unset <key> - Revert a config value to its default
 `
 	return help, nil
 }

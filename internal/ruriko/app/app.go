@@ -390,6 +390,10 @@ func New(config *Config) (*App, error) {
 	router.Register("gosuto.push", handlers.HandleGosutoPush)
 	router.Register("approvals.list", handlers.HandleApprovalsList)
 	router.Register("approvals.show", handlers.HandleApprovalsShow)
+	router.Register("config.set", handlers.HandleConfigSet)
+	router.Register("config.get", handlers.HandleConfigGet)
+	router.Register("config.list", handlers.HandleConfigList)
+	router.Register("config.unset", handlers.HandleConfigUnset)
 
 	// Wire the dispatch callback so approved operations can be re-executed.
 	handlers.SetDispatch(func(ctx context.Context, action string, cmd *commands.Command, evt *event.Event) (string, error) {

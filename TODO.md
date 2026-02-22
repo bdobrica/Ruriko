@@ -1168,14 +1168,14 @@ via `/ruriko config get` and auditable.
 
 #### `/ruriko config` command namespace
 
-- [ ] `config.set <key> <value>` — store a config value
+- [x] `config.set <key> <value>` — store a config value
   - Allowlist of permitted keys (reject unknown keys to prevent misuse):
     `nlp.model`, `nlp.endpoint`, `nlp.rate-limit`
   - On success: "✓ `nlp.model` set to `gpt-4o`."
-- [ ] `config.get <key>` — retrieve a config value (or "(not set — using default)")
-- [ ] `config.list` — show all non-default config values
-- [ ] `config.unset <key>` — delete a value, reverting to default
-- [ ] Test: Set/get/unset round-trip; unknown key returns an error
+- [x] `config.get <key>` — retrieve a config value (or "(not set — using default)")
+- [x] `config.list` — show all non-default config values
+- [x] `config.unset <key>` — delete a value, reverting to default
+- [x] Test: Set/get/unset round-trip; unknown key returns an error
 
 #### NLP API key via Kuze
 
