@@ -2,14 +2,18 @@ package control_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/bdobrica/Ruriko/common/spec/envelope"
+	gosutospec "github.com/bdobrica/Ruriko/common/spec/gosuto"
 	"github.com/bdobrica/Ruriko/internal/gitai/control"
 )
 
@@ -594,5 +598,326 @@ func TestSecretsApply_DisabledIgnoresBody(t *testing.T) {
 
 	if resp.StatusCode != http.StatusGone {
 		t.Errorf("expected 410 Gone even with invalid body, got %d", resp.StatusCode)
+	}
+}
+
+// --- R12.1: ACP Event Ingress Endpoint ------------------------------------
+
+// makeTestGosutoConfig returns a minimal Gosuto config with the given gateway
+// names registered as cron gateways, used to populate Handlers.ActiveConfig
+// in event ingress tests.
+func makeTestGosutoConfig(gatewayNames []string, maxEventsPerMinute int) *gosutospec.Config {
+	gateways := make([]gosutospec.Gateway, len(gatewayNames))
+	for i, name := range gatewayNames {
+		gateways[i] = gosutospec.Gateway{
+			Name: name,
+			Type: "cron",
+			Config: map[string]string{
+				"expression": "*/15 * * * *",
+				"payload":    "tick",
+			},
+		}
+	}
+	return &gosutospec.Config{
+		APIVersion: "gosuto/v1",
+		Metadata:   gosutospec.Metadata{Name: "test-agent"},
+		Trust: gosutospec.Trust{
+			AllowedRooms:   []string{"*"},
+			AllowedSenders: []string{"*"},
+		},
+		Limits:   gosutospec.Limits{MaxEventsPerMinute: maxEventsPerMinute},
+		Gateways: gateways,
+	}
+}
+
+// newEventTestServer creates a Server pre-wired for event ingress tests.
+// received is incremented each time HandleEvent is called.
+func newEventTestServer(t *testing.T, token string, cfg *gosutospec.Config, received *atomic.Int32) *httptest.Server {
+	t.Helper()
+	srv := control.New(":0", control.Handlers{
+		AgentID:   "test-agent",
+		Version:   "v0.0.1-test",
+		StartedAt: time.Now(),
+		Token:     token,
+		GosutoHash: func() string {
+			return "deadbeefdeadbeefdeadbeefdeadbeef"
+		},
+		MCPNames: func() []string { return nil },
+		ApplyConfig: func(yaml, hash string) error {
+			return nil
+		},
+		ApplySecrets: func(secrets map[string]string) error {
+			return nil
+		},
+		RequestRestart: func() {},
+		RequestCancel:  func() {},
+		ActiveConfig: func() *gosutospec.Config {
+			return cfg
+		},
+		HandleEvent: func(_ context.Context, _ *envelope.Event) {
+			if received != nil {
+				received.Add(1)
+			}
+		},
+	})
+	ts := httptest.NewServer(srv.TestHandler())
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+// validEvent builds a valid Event envelope for the given source.
+func validEvent(source string) envelope.Event {
+	return envelope.Event{
+		Source: source,
+		Type:   "cron.tick",
+		TS:     time.Now().UTC(),
+		Payload: envelope.EventPayload{
+			Message: "scheduled trigger",
+		},
+	}
+}
+
+// postEvent sends a POST /events/{source} with the given event body and token.
+func postEvent(t *testing.T, ts *httptest.Server, source string, evt envelope.Event, token string) *http.Response {
+	t.Helper()
+	body, err := json.Marshal(evt)
+	if err != nil {
+		t.Fatalf("marshal event: %v", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/events/"+source, bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /events/%s: %v", source, err)
+	}
+	return resp
+}
+
+// TestEventIngress_ValidEventAccepted verifies that a well-formed event from a
+// known gateway source is accepted with 202 and forwarded to HandleEvent.
+func TestEventIngress_ValidEventAccepted(t *testing.T) {
+	var received atomic.Int32
+	cfg := makeTestGosutoConfig([]string{"scheduler"}, 0)
+	ts := newEventTestServer(t, "", cfg, &received)
+
+	resp := postEvent(t, ts, "scheduler", validEvent("scheduler"), "")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusAccepted {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 202, got %d: %s", resp.StatusCode, b)
+	}
+	if received.Load() != 1 {
+		t.Errorf("expected HandleEvent called once, got %d", received.Load())
+	}
+}
+
+// TestEventIngress_UnknownSourceRejected verifies that a source name not
+// present in the active Gosuto config returns 404.
+func TestEventIngress_UnknownSourceRejected(t *testing.T) {
+	cfg := makeTestGosutoConfig([]string{"scheduler"}, 0)
+	ts := newEventTestServer(t, "", cfg, nil)
+
+	resp := postEvent(t, ts, "ghost-source", validEvent("ghost-source"), "")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotFound {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 404, got %d: %s", resp.StatusCode, b)
+	}
+}
+
+// TestEventIngress_MalformedJSONRejected verifies that a request body that is
+// not valid JSON is rejected with 400.
+func TestEventIngress_MalformedJSONRejected(t *testing.T) {
+	cfg := makeTestGosutoConfig([]string{"scheduler"}, 0)
+	ts := newEventTestServer(t, "", cfg, nil)
+
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/events/scheduler", strings.NewReader(`{not json`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", resp.StatusCode)
+	}
+}
+
+// TestEventIngress_InvalidEnvelopeRejected verifies that a structurally invalid
+// event envelope (missing required fields) is rejected with 400.
+func TestEventIngress_InvalidEnvelopeRejected(t *testing.T) {
+	cfg := makeTestGosutoConfig([]string{"scheduler"}, 0)
+	ts := newEventTestServer(t, "", cfg, nil)
+
+	// Zero-value TS should trigger validation error.
+	bad := envelope.Event{Source: "scheduler", Type: "cron.tick"} // TS is zero
+	resp := postEvent(t, ts, "scheduler", bad, "")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 400 for zero TS, got %d: %s", resp.StatusCode, b)
+	}
+}
+
+// TestEventIngress_SourceMismatchRejected verifies that an envelope whose
+// declared Source field does not match the URL path parameter is rejected.
+func TestEventIngress_SourceMismatchRejected(t *testing.T) {
+	cfg := makeTestGosutoConfig([]string{"scheduler", "webhook"}, 0)
+	ts := newEventTestServer(t, "", cfg, nil)
+
+	// URL says "scheduler" but envelope says "webhook".
+	evt := validEvent("webhook")
+	resp := postEvent(t, ts, "scheduler", evt, "")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 400 for source mismatch, got %d: %s", resp.StatusCode, b)
+	}
+}
+
+// TestEventIngress_NilHandleEventReturns503 verifies that the endpoint returns
+// 503 when Handlers.HandleEvent is not configured (e.g. during startup).
+func TestEventIngress_NilHandleEventReturns503(t *testing.T) {
+	cfg := makeTestGosutoConfig([]string{"scheduler"}, 0)
+	srv := control.New(":0", control.Handlers{
+		AgentID:      "test-agent",
+		StartedAt:    time.Now(),
+		ActiveConfig: func() *gosutospec.Config { return cfg },
+		// HandleEvent intentionally nil.
+	})
+	ts := httptest.NewServer(srv.TestHandler())
+	t.Cleanup(ts.Close)
+
+	resp := postEvent(t, ts, "scheduler", validEvent("scheduler"), "")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 503, got %d: %s", resp.StatusCode, b)
+	}
+}
+
+// TestEventIngress_RateLimitExceeded verifies that events beyond the
+// MaxEventsPerMinute budget receive a 429 Too Many Requests response.
+func TestEventIngress_RateLimitExceeded(t *testing.T) {
+	const limit = 3
+	var received atomic.Int32
+
+	cfg := makeTestGosutoConfig([]string{"scheduler"}, limit)
+	ts := newEventTestServer(t, "", cfg, &received)
+
+	var lastStatus int
+	for i := 0; i < limit+2; i++ {
+		resp := postEvent(t, ts, "scheduler", validEvent("scheduler"), "")
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		lastStatus = resp.StatusCode
+	}
+
+	if lastStatus != http.StatusTooManyRequests {
+		t.Errorf("expected 429 after exceeding limit, got %d", lastStatus)
+	}
+	if received.Load() != limit {
+		t.Errorf("expected exactly %d events forwarded before rate limit, got %d", limit, received.Load())
+	}
+}
+
+// TestEventIngress_WrongMethodRejected verifies that non-POST requests to the
+// event ingress endpoint are rejected with 405 Method Not Allowed.
+func TestEventIngress_WrongMethodRejected(t *testing.T) {
+	cfg := makeTestGosutoConfig([]string{"scheduler"}, 0)
+	ts := newEventTestServer(t, "", cfg, nil)
+
+	resp, err := http.Get(ts.URL + "/events/scheduler")
+	if err != nil {
+		t.Fatalf("GET /events/scheduler: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Go 1.22+ http.ServeMux returns 405 for method-mismatched registered patterns.
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", resp.StatusCode)
+	}
+}
+
+// TestEventIngress_NoActiveConfigAllowsAnySource verifies that when
+// Handlers.ActiveConfig is nil (dev/test mode) the server accepts any source
+// name without validation.
+func TestEventIngress_NoActiveConfigAllowsAnySource(t *testing.T) {
+	var received atomic.Int32
+	// ActiveConfig intentionally nil — no gateway name validation.
+	srv := control.New(":0", control.Handlers{
+		AgentID:   "test-agent",
+		StartedAt: time.Now(),
+		HandleEvent: func(_ context.Context, _ *envelope.Event) {
+			received.Add(1)
+		},
+	})
+	ts := httptest.NewServer(srv.TestHandler())
+	t.Cleanup(ts.Close)
+
+	resp := postEvent(t, ts, "any-source", validEvent("any-source"), "")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusAccepted {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 202 with nil ActiveConfig, got %d: %s", resp.StatusCode, b)
+	}
+	if received.Load() != 1 {
+		t.Errorf("expected HandleEvent called once, got %d", received.Load())
+	}
+}
+
+// TestEventIngress_LocalhostBypassesAuth verifies that a request from the
+// loopback address (as all httptest connections are) is accepted even when a
+// bearer token is configured, because built-in gateways connect from localhost.
+func TestEventIngress_LocalhostBypassesAuth(t *testing.T) {
+	var received atomic.Int32
+	cfg := makeTestGosutoConfig([]string{"scheduler"}, 0)
+
+	// Token is set; client does NOT supply it.
+	// httptest connects over 127.0.0.1 → localhost bypass should accept.
+	ts := newEventTestServer(t, "super-secret-token", cfg, &received)
+
+	resp := postEvent(t, ts, "scheduler", validEvent("scheduler"), "" /* no token */)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusAccepted {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 202 (localhost bypass), got %d: %s", resp.StatusCode, b)
+	}
+	if received.Load() != 1 {
+		t.Errorf("expected HandleEvent called once, got %d", received.Load())
+	}
+}
+
+// TestEventIngress_BearerTokenAccepted verifies that a non-localhost request
+// (simulated by including the correct bearer token) is accepted when the
+// token matches Handlers.Token.
+// Note: httptest servers always use loopback, so this test verifies the token
+// path via the happy-path: correct token → accepted (localhost bypass is also
+// active, but the goal is to confirm the token header is processed correctly).
+func TestEventIngress_BearerTokenAccepted(t *testing.T) {
+	var received atomic.Int32
+	cfg := makeTestGosutoConfig([]string{"scheduler"}, 0)
+	ts := newEventTestServer(t, "my-token", cfg, &received)
+
+	resp := postEvent(t, ts, "scheduler", validEvent("scheduler"), "my-token")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusAccepted {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 202, got %d: %s", resp.StatusCode, b)
 	}
 }

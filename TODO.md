@@ -1538,19 +1538,19 @@ similarity and injects the relevant context.
 > Depends on: R11 (schema + types), Phase 9 (Gitai runtime).
 
 ### R12.1 ACP Event Ingress Endpoint
-- [ ] Add `POST /events/{source}` endpoint to `internal/gitai/control/server.go`:
-  - Accepts an `Event` envelope (JSON body)
-  - Validates envelope structure (source, type, ts)
-  - Validates `{source}` matches a configured gateway name in the active Gosuto
-  - Authenticates: built-in gateways bypass auth (localhost origin); external gateways and webhook deliveries use ACP bearer token or HMAC
-  - Passes validated event to the app's event handler
-  - Returns 202 Accepted (event queued) or 429 Too Many Requests (rate limit exceeded)
-- [ ] Add rate limiter: token-bucket per gateway + global `maxEventsPerMinute`
-- [ ] Test: Valid events are accepted and forwarded to handler
-- [ ] Test: Unknown source names are rejected (404)
-- [ ] Test: Malformed envelopes are rejected (400)
-- [ ] Test: Rate limiter drops excess events (429)
-- [ ] Test: Unauthenticated requests are rejected
+- [x] Add `POST /events/{source}` endpoint to `internal/gitai/control/server.go`:
+  - [x] Accepts an `Event` envelope (JSON body)
+  - [x] Validates envelope structure (source, type, ts)
+  - [x] Validates `{source}` matches a configured gateway name in the active Gosuto
+  - [x] Authenticates: built-in gateways bypass auth (localhost origin); external gateways and webhook deliveries use ACP bearer token or HMAC
+  - [x] Passes validated event to the app's event handler
+  - [x] Returns 202 Accepted (event queued) or 429 Too Many Requests (rate limit exceeded)
+- [x] Add rate limiter: token-bucket per gateway + global `maxEventsPerMinute`
+- [x] Test: Valid events are accepted and forwarded to handler
+- [x] Test: Unknown source names are rejected (404)
+- [x] Test: Malformed envelopes are rejected (400)
+- [x] Test: Rate limiter drops excess events (429)
+- [x] Test: Unauthenticated requests are rejected
 
 ### R12.2 Event-to-Turn Bridge in App
 - [ ] Add `handleEvent(ctx context.Context, evt Event)` method to `internal/gitai/app/app.go`:

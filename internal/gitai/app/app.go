@@ -190,6 +190,7 @@ func New(cfg *Config) (*App, error) {
 		DirectSecretPushEnabled: cfg.DirectSecretPushEnabled,
 		GosutoHash:              gosutoLdr.Hash,
 		MCPNames:                supv.Names,
+		ActiveConfig:            gosutoLdr.Config,
 		ApplyConfig: func(yaml, hash string) error {
 			if err := gosutoLdr.Apply([]byte(yaml)); err != nil {
 				return err

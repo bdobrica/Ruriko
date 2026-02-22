@@ -13,19 +13,27 @@
 //
 // Endpoints:
 //
-//	GET  /health          → HealthResponse
-//	GET  /status          → StatusResponse
-//	POST /config/apply    → ConfigApplyRequest → 200 OK
-//	POST /secrets/apply   → SecretsApplyRequest → 200 OK  [disabled by default, see R4.4]
-//	POST /secrets/token   → SecretsTokenRequest → 200 OK (redeems via Kuze)
-//	POST /process/restart → 202 Accepted (triggers shutdown via restartFn)
-//	POST /tasks/cancel    → 202 Accepted (cancels current in-flight task)
+//	GET  /health              → HealthResponse
+//	GET  /status              → StatusResponse
+//	POST /config/apply        → ConfigApplyRequest → 200 OK
+//	POST /secrets/apply       → SecretsApplyRequest → 200 OK  [disabled by default, see R4.4]
+//	POST /secrets/token       → SecretsTokenRequest → 200 OK (redeems via Kuze)
+//	POST /process/restart     → 202 Accepted (triggers shutdown via restartFn)
+//	POST /tasks/cancel        → 202 Accepted (cancels current in-flight task)
+//	POST /events/{source}     → Event envelope → 202 Accepted (R12.1)
 //
 // Security hardening (Phase R4.4):
 //   - POST /secrets/apply is disabled by default (Handlers.DirectSecretPushEnabled=false).
 //     In production, secrets must flow via POST /secrets/token + Kuze redemption so that
 //     plaintext values never traverse the ACP payload.  Set DirectSecretPushEnabled=true
 //     only in dev or during migration.  A disabled endpoint returns 410 Gone.
+//
+// Event ingress (Phase R12.1):
+//   - POST /events/{source} accepts normalised Event envelopes from gateway processes.
+//   - Built-in gateways (cron) run on localhost and bypass bearer-token auth.
+//   - External gateways must supply the ACP bearer token in Authorization: Bearer <token>.
+//   - A fixed-window rate limiter (per-source + global) enforces MaxEventsPerMinute
+//     from the active Gosuto Limits, returning 429 when exceeded.
 package control
 
 import (
@@ -39,10 +47,17 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/bdobrica/Ruriko/common/spec/envelope"
+	gosutospec "github.com/bdobrica/Ruriko/common/spec/gosuto"
 )
 
 // idempotencyTTL is how long the server caches responses by idempotency key.
 const idempotencyTTL = 60 * time.Second
+
+// maxEventBodyBytes caps the inbound event request body to prevent memory
+// exhaustion from a misbehaving gateway process.
+const maxEventBodyBytes = 1 * 1024 * 1024 // 1 MiB
 
 // idempotencyEntry is a cached response for a single idempotency key.
 type idempotencyEntry struct {
@@ -59,6 +74,67 @@ type idempotencyCache struct {
 
 func newIdempotencyCache() *idempotencyCache {
 	return &idempotencyCache{entries: make(map[string]idempotencyEntry)}
+}
+
+// --- event rate limiter ---
+
+// fixedWindow is a single fixed-window event counter.
+type fixedWindow struct {
+	count       int
+	windowStart time.Time
+}
+
+// eventRateLimiter enforces per-source and global event ingress rate limits
+// using a fixed 1-minute window. When maxPerMinute is 0 all events are allowed.
+type eventRateLimiter struct {
+	mu      sync.Mutex
+	sources map[string]*fixedWindow
+	global  fixedWindow
+}
+
+func newEventRateLimiter() *eventRateLimiter {
+	return &eventRateLimiter{
+		sources: make(map[string]*fixedWindow),
+	}
+}
+
+// allow returns true when the event may proceed. It checks both the per-source
+// window and the global window; both must have remaining capacity.
+func (l *eventRateLimiter) allow(source string, maxPerMinute int) bool {
+	if maxPerMinute <= 0 {
+		return true
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := time.Now()
+
+	// Refresh global window.
+	if now.Sub(l.global.windowStart) >= time.Minute {
+		l.global.count = 0
+		l.global.windowStart = now
+	}
+	if l.global.count >= maxPerMinute {
+		return false
+	}
+
+	// Refresh per-source window.
+	src, ok := l.sources[source]
+	if !ok {
+		src = &fixedWindow{}
+		l.sources[source] = src
+	}
+	if now.Sub(src.windowStart) >= time.Minute {
+		src.count = 0
+		src.windowStart = now
+	}
+	if src.count >= maxPerMinute {
+		return false
+	}
+
+	// Both windows have capacity — consume one token from each.
+	l.global.count++
+	src.count++
+	return true
 }
 
 // get returns the cached entry (ok=true) if the key exists and has not expired.
@@ -172,38 +248,65 @@ type Handlers struct {
 	// RequestCancel signals the application to cancel the current in-flight task.
 	// When nil the /tasks/cancel endpoint returns 503 Service Unavailable.
 	RequestCancel func()
+
+	// ActiveConfig returns the currently applied Gosuto config, or nil when no
+	// config has been loaded. Used by POST /events/{source} to validate gateway
+	// names and read MaxEventsPerMinute rate-limit settings.
+	// When nil the event ingress endpoint accepts any source name (dev mode).
+	ActiveConfig func() *gosutospec.Config
+
+	// HandleEvent is invoked with a fully validated inbound event envelope.
+	// Implementations must be non-blocking (e.g. a channel send or goroutine
+	// launch) so the HTTP response is returned promptly.
+	// When nil, POST /events/{source} returns 503 Service Unavailable.
+	HandleEvent func(ctx context.Context, evt *envelope.Event)
 }
 
 // Server is the ACP HTTP server.
 type Server struct {
-	addr       string
-	handlers   Handlers
-	server     *http.Server
-	idemCache  *idempotencyCache
-	httpClient *http.Client // used by handleSecretsToken to call Kuze
+	addr         string
+	handlers     Handlers
+	server       *http.Server
+	idemCache    *idempotencyCache
+	httpClient   *http.Client // used by handleSecretsToken to call Kuze
+	eventLimiter *eventRateLimiter
 }
 
 // New creates a new ACP Server listening on addr.
 func New(addr string, h Handlers) *Server {
 	s := &Server{
-		addr:       addr,
-		handlers:   h,
-		idemCache:  newIdempotencyCache(),
-		httpClient: &http.Client{Timeout: 15 * time.Second},
+		addr:         addr,
+		handlers:     h,
+		idemCache:    newIdempotencyCache(),
+		httpClient:   &http.Client{Timeout: 15 * time.Second},
+		eventLimiter: newEventRateLimiter(),
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/health", s.handleHealth)
-	mux.HandleFunc("/status", s.handleStatus)
-	mux.HandleFunc("/config/apply", s.handleConfigApply)
-	mux.HandleFunc("/secrets/apply", s.handleSecretsApply)
-	mux.HandleFunc("/secrets/token", s.handleSecretsToken)
-	mux.HandleFunc("/process/restart", s.handleRestart)
-	mux.HandleFunc("/tasks/cancel", s.handleCancel)
+	// innerMux: ACP management endpoints — all protected by auth middleware.
+	innerMux := http.NewServeMux()
+	innerMux.HandleFunc("/health", s.handleHealth)
+	innerMux.HandleFunc("/status", s.handleStatus)
+	innerMux.HandleFunc("/config/apply", s.handleConfigApply)
+	innerMux.HandleFunc("/secrets/apply", s.handleSecretsApply)
+	innerMux.HandleFunc("/secrets/token", s.handleSecretsToken)
+	innerMux.HandleFunc("/process/restart", s.handleRestart)
+	innerMux.HandleFunc("/tasks/cancel", s.handleCancel)
+
+	// outerMux: event ingress lives here with its own per-handler auth
+	// (built-in gateways on localhost bypass bearer-token auth; external
+	// gateways must present the ACP bearer token). Everything else falls
+	// through to the auth-protected innerMux.
+	//
+	// Note: /events/{source} is registered without a method prefix so that
+	// wrong-method requests reach the handler and receive a proper 405 rather
+	// than falling through to the catch-all and getting a 404.
+	outerMux := http.NewServeMux()
+	outerMux.HandleFunc("/events/{source}", s.handleEventIngress)
+	outerMux.Handle("/", s.authMiddleware(innerMux))
 
 	s.server = &http.Server{
 		Addr:         addr,
-		Handler:      s.authMiddleware(mux),
+		Handler:      outerMux,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
 	}
@@ -554,6 +657,121 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
 		s.idemCache.set(key, http.StatusAccepted, body)
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "cancelling"})
+}
+
+// handleEventIngress handles POST /events/{source} (R12.1).
+//
+// It accepts a normalised Event envelope from a gateway process, validates the
+// source against the active Gosuto config, enforces per-source and global rate
+// limits, and dispatches the event to Handlers.HandleEvent.
+//
+// Auth rules (differ from the rest of the ACP):
+//   - Built-in gateways (cron etc.) run within the same host and connect from
+//     127.0.0.1 / ::1. Localhost connections bypass bearer-token auth so that
+//     in-process gateways don't need a copy of the ACP secret.
+//   - External gateway processes and webhook deliveries must supply the ACP
+//     bearer token in "Authorization: Bearer <token>", same as all other ACP
+//     endpoints.
+//   - When Handlers.Token is empty (dev/test) all connections are accepted.
+func (s *Server) handleEventIngress(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Auth: localhost (built-in gateways) bypasses bearer-token check.
+	if s.handlers.Token != "" && !isLocalhost(r) {
+		auth := r.Header.Get("Authorization")
+		if !strings.HasPrefix(auth, "Bearer ") {
+			writeError(w, http.StatusUnauthorized, "missing bearer token")
+			return
+		}
+		if auth[len("Bearer "):] != s.handlers.Token {
+			writeError(w, http.StatusUnauthorized, "invalid bearer token")
+			return
+		}
+	}
+
+	source := r.PathValue("source")
+	if source == "" {
+		writeError(w, http.StatusBadRequest, "missing event source in path")
+		return
+	}
+
+	// Validate source against the active Gosuto gateway list and read rate
+	// limit from config. When ActiveConfig is nil (dev mode) we skip name
+	// validation and apply no rate limit.
+	var maxEventsPerMinute int
+	if s.handlers.ActiveConfig != nil {
+		cfg := s.handlers.ActiveConfig()
+		if cfg != nil {
+			found := false
+			for _, gw := range cfg.Gateways {
+				if gw.Name == source {
+					found = true
+					break
+				}
+			}
+			if !found {
+				writeError(w, http.StatusNotFound,
+					fmt.Sprintf("unknown gateway source %q", source))
+				return
+			}
+			maxEventsPerMinute = cfg.Limits.MaxEventsPerMinute
+		}
+	}
+
+	// Decode and validate the event envelope (body capped at 1 MiB).
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxEventBodyBytes))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to read request body: "+err.Error())
+		return
+	}
+	var evt envelope.Event
+	if err := json.Unmarshal(body, &evt); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	if err := evt.Validate(); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid event envelope: "+err.Error())
+		return
+	}
+	// Ensure the envelope's declared source matches the URL path parameter so
+	// a gateway cannot impersonate a different source.
+	if evt.Source != source {
+		writeError(w, http.StatusBadRequest,
+			fmt.Sprintf("envelope source %q does not match URL source %q", evt.Source, source))
+		return
+	}
+
+	// Rate limiting: token-bucket per source + global (maxEventsPerMinute).
+	if !s.eventLimiter.allow(source, maxEventsPerMinute) {
+		slog.Warn("ACP: event rate limit exceeded", "source", source, "limit", maxEventsPerMinute)
+		writeError(w, http.StatusTooManyRequests,
+			fmt.Sprintf("rate limit exceeded for gateway %q (%d events/min)", source, maxEventsPerMinute))
+		return
+	}
+
+	// Dispatch to app handler.
+	if s.handlers.HandleEvent == nil {
+		writeError(w, http.StatusServiceUnavailable, "event handling not available")
+		return
+	}
+	s.handlers.HandleEvent(r.Context(), &evt)
+	slog.Info("ACP: event queued", "source", source, "type", evt.Type)
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "queued"})
+}
+
+// isLocalhost reports whether the request originates from the loopback
+// interface (127.0.0.1 or ::1). Used to allow built-in gateway processes
+// (which run in-process and connect from localhost) to bypass bearer-token
+// authentication on the event ingress endpoint.
+func isLocalhost(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	return host == "127.0.0.1" || host == "::1" || host == "localhost"
 }
 
 // --- helpers ---
