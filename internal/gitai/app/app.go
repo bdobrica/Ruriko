@@ -22,6 +22,7 @@ import (
 	"github.com/bdobrica/Ruriko/common/version"
 	"github.com/bdobrica/Ruriko/internal/gitai/approvals"
 	"github.com/bdobrica/Ruriko/internal/gitai/control"
+	"github.com/bdobrica/Ruriko/internal/gitai/gateway"
 	"github.com/bdobrica/Ruriko/internal/gitai/gosuto"
 	"github.com/bdobrica/Ruriko/internal/gitai/llm"
 	"github.com/bdobrica/Ruriko/internal/gitai/matrix"
@@ -101,6 +102,7 @@ type App struct {
 	secretsMgr *secrets.Manager
 	policyEng  *policy.Engine
 	supv       *supervisor.Supervisor
+	cronMgr    *gateway.Manager
 	llmProvMu  sync.RWMutex // guards llmProv
 	llmProv    llm.Provider
 	matrixCli  *matrix.Client
@@ -183,6 +185,9 @@ func New(cfg *Config) (*App, error) {
 	if acpAddr == "" {
 		acpAddr = ":8765"
 	}
+	// Cron gateway manager: connects to the ACP event ingress on localhost.
+	cronMgr := gateway.NewManager(gateway.ACPBaseURL(acpAddr))
+	app.cronMgr = cronMgr
 	app.acpServer = control.New(acpAddr, control.Handlers{
 		AgentID:                 cfg.AgentID,
 		Version:                 version.Version,
@@ -198,9 +203,10 @@ func New(cfg *Config) (*App, error) {
 			}
 			// Persist to DB for restart recovery.
 			_ = db.SaveAppliedConfig(hash, yaml)
-			// Reconcile MCP servers with new config.
+			// Reconcile MCP servers and cron gateways with new config.
 			if c := gosutoLdr.Config(); c != nil {
 				supv.Reconcile(c.MCPs)
+				cronMgr.Reconcile(c.Gateways)
 			}
 			// Rebuild the LLM provider in case the new Gosuto specifies a
 			// different APIKeySecretRef or model, and the matching secret is
@@ -254,9 +260,10 @@ func (a *App) Run() error {
 		return fmt.Errorf("start acp server: %w", err)
 	}
 
-	// Start MCP supervisor if config is available.
+	// Start MCP supervisor and cron gateways if config is available.
 	if c := a.gosutoLdr.Config(); c != nil {
 		a.supv.Reconcile(c.MCPs)
+		a.cronMgr.Reconcile(c.Gateways)
 	}
 
 	// Start Matrix sync.
@@ -313,6 +320,7 @@ func (a *App) Run() error {
 func (a *App) Stop() {
 	a.matrixCli.Stop()
 	a.supv.Stop()
+	a.cronMgr.Stop()
 	a.acpServer.Stop()
 	a.db.Close()
 }

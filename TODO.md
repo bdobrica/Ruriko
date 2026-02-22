@@ -1570,16 +1570,16 @@ similarity and injects the relevant context.
 - [x] Test: Event without message field auto-generates a prompt
 
 ### R12.3 Built-in Cron Gateway
-- [ ] Create `internal/gitai/gateway/cron.go`:
+- [x] Create `internal/gitai/gateway/cron.go`:
   - Parses 5-field cron expression from `config["expression"]`
   - Runs as a goroutine within the Gitai process
   - On each tick: constructs an `Event{Source: name, Type: "cron.tick", TS: now, Payload: {Message: config["payload"]}}` and POSTs it to `localhost:<acp_port>/events/{name}`
   - Respects context cancellation for clean shutdown
-- [ ] Use a lightweight cron parser (e.g. `robfig/cron/v3` or a minimal custom parser)
-- [ ] Reconcile on Gosuto config change: stop old cron, start new one with updated expression
-- [ ] Test: Cron fires at correct intervals (accelerated clock in tests)
-- [ ] Test: Cron stops cleanly on shutdown
-- [ ] Test: Cron reconfigures on Gosuto update
+- [x] Use a lightweight cron parser (e.g. `robfig/cron/v3` or a minimal custom parser)
+- [x] Reconcile on Gosuto config change: stop old cron, start new one with updated expression
+- [x] Test: Cron fires at correct intervals (accelerated clock in tests)
+- [x] Test: Cron stops cleanly on shutdown
+- [x] Test: Cron reconfigures on Gosuto update
 
 ### R12.4 Built-in Webhook Gateway
 - [ ] Add configurable webhook sub-routes to the ACP server:
