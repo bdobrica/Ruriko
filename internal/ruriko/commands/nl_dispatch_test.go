@@ -7,6 +7,7 @@ package commands
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -355,3 +356,168 @@ var errProviderUnavailable = &providerErr{"NLP provider unavailable"}
 type providerErr struct{ msg string }
 
 func (e *providerErr) Error() string { return e.msg }
+
+// ---------------------------------------------------------------------------
+// R9.5 Graceful Degradation and Fallbacks
+// ---------------------------------------------------------------------------
+
+// TestHandleNaturalLanguage_LLM_APIRateLimitReturnsMessage verifies that when
+// the NLP provider returns ErrRateLimit the handler surfaces a user-visible
+// rate-limit message rather than silently falling back to keyword matching.
+func TestHandleNaturalLanguage_LLM_APIRateLimitReturnsMessage(t *testing.T) {
+	stub := &nlpStub{err: fmt.Errorf("api 429: %w", nlp.ErrRateLimit)}
+	cap := &captureDispatch{}
+	h := newNLHandlers(stub, cap)
+	evt := nlpFakeEvent()
+
+	reply, err := h.HandleNaturalLanguage(context.Background(), "list all agents", evt)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if reply != nlp.APIRateLimitMessage {
+		t.Errorf("expected APIRateLimitMessage, got: %q", reply)
+	}
+	if len(cap.dispatched) != 0 {
+		t.Errorf("expected no dispatch on rate limit, got: %v", cap.dispatched)
+	}
+}
+
+// TestHandleNaturalLanguage_LLM_MalformedOutputReturnsMessage verifies that
+// when the LLM returns content that cannot be parsed the handler replies with
+// a clarification prompt instead of silently falling back.
+func TestHandleNaturalLanguage_LLM_MalformedOutputReturnsMessage(t *testing.T) {
+	stub := &nlpStub{err: fmt.Errorf("bad json: %w", nlp.ErrMalformedOutput)}
+	cap := &captureDispatch{}
+	h := newNLHandlers(stub, cap)
+	evt := nlpFakeEvent()
+
+	reply, err := h.HandleNaturalLanguage(context.Background(), "do the thing", evt)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if reply != nlp.MalformedOutputMessage {
+		t.Errorf("expected MalformedOutputMessage, got: %q", reply)
+	}
+	if len(cap.dispatched) != 0 {
+		t.Errorf("expected no dispatch on malformed output, got: %v", cap.dispatched)
+	}
+}
+
+// TestHandleNaturalLanguage_RawCommandsBypassNL verifies that messages
+// starting with "/ruriko" are immediately rejected by HandleNaturalLanguage so
+// that the NL layer never intercepts /ruriko-prefixed messages (which are the
+// command router's responsibility).
+func TestHandleNaturalLanguage_RawCommandsBypassNL(t *testing.T) {
+	// Even with a valid NLP provider wired in, a /ruriko-prefixed message
+	// must return ("", nil) without ever calling the provider.
+	stub := &nlpStub{resp: &nlp.ClassifyResponse{
+		Intent:      nlp.IntentCommand,
+		Action:      "agents.list",
+		Explanation: "List agents.",
+		Confidence:  0.99,
+	}}
+	cap := &captureDispatch{response: "agents: none"}
+	h := newNLHandlers(stub, cap)
+	evt := nlpFakeEvent()
+
+	cases := []string{
+		"/ruriko agents list",
+		"/ruriko help",
+		"  /ruriko ping", // leading space
+		"/ruriko secrets set foo bar",
+	}
+
+	for _, msg := range cases {
+		reply, err := h.HandleNaturalLanguage(context.Background(), msg, evt)
+		if err != nil {
+			t.Errorf("msg %q: unexpected error: %v", msg, err)
+		}
+		if reply != "" {
+			t.Errorf("msg %q: expected empty reply (bypass), got: %q", msg, reply)
+		}
+		if len(cap.dispatched) != 0 {
+			t.Errorf("msg %q: expected no dispatch, got: %v", msg, cap.dispatched)
+		}
+	}
+}
+
+// TestHandleNaturalLanguage_NLPHealthState verifies that NLPProviderStatus
+// transitions correctly in response to different error types.
+func TestHandleNaturalLanguage_NLPHealthState(t *testing.T) {
+	t.Run("ok on successful classify", func(t *testing.T) {
+		stub := &nlpStub{resp: &nlp.ClassifyResponse{
+			Intent:     nlp.IntentConversational,
+			Response:   "Here you go.",
+			Confidence: 0.95,
+		}}
+		h := newNLHandlers(stub, nil)
+		evt := nlpFakeEvent()
+
+		_, _ = h.HandleNaturalLanguage(context.Background(), "how are you?", evt)
+		if got := h.NLPProviderStatus(); got != "ok" {
+			t.Errorf("expected status 'ok', got %q", got)
+		}
+	})
+
+	t.Run("degraded on api rate limit", func(t *testing.T) {
+		stub := &nlpStub{err: fmt.Errorf("429: %w", nlp.ErrRateLimit)}
+		h := newNLHandlers(stub, nil)
+		evt := nlpFakeEvent()
+
+		_, _ = h.HandleNaturalLanguage(context.Background(), "list agents", evt)
+		if got := h.NLPProviderStatus(); got != "degraded" {
+			t.Errorf("expected status 'degraded', got %q", got)
+		}
+	})
+
+	t.Run("degraded on malformed output", func(t *testing.T) {
+		stub := &nlpStub{err: fmt.Errorf("parse: %w", nlp.ErrMalformedOutput)}
+		h := newNLHandlers(stub, nil)
+		evt := nlpFakeEvent()
+
+		_, _ = h.HandleNaturalLanguage(context.Background(), "do stuff", evt)
+		if got := h.NLPProviderStatus(); got != "degraded" {
+			t.Errorf("expected status 'degraded', got %q", got)
+		}
+	})
+
+	t.Run("unavailable on generic error", func(t *testing.T) {
+		stub := &nlpStub{err: errProviderUnavailable}
+		h := newNLHandlers(stub, nil)
+		evt := nlpFakeEvent()
+
+		_, _ = h.HandleNaturalLanguage(context.Background(), "help me", evt)
+		if got := h.NLPProviderStatus(); got != "unavailable" {
+			t.Errorf("expected status 'unavailable', got %q", got)
+		}
+	})
+
+	t.Run("recovers to ok after error", func(t *testing.T) {
+		var callCount int
+		// First call returns a rate limit error; second call succeeds.
+		stub := &nlpStub{}
+		h := NewHandlers(HandlersConfig{NLPProvider: stub})
+		evt := nlpFakeEvent()
+
+		stub.err = fmt.Errorf("429: %w", nlp.ErrRateLimit)
+		_, _ = h.HandleNaturalLanguage(context.Background(), "list agents", evt)
+		if got := h.NLPProviderStatus(); got != "degraded" {
+			t.Errorf("after error: expected 'degraded', got %q", got)
+		}
+		callCount++
+
+		stub.err = nil
+		stub.resp = &nlp.ClassifyResponse{Intent: nlp.IntentConversational, Response: "hi", Confidence: 0.9}
+		_, _ = h.HandleNaturalLanguage(context.Background(), "hi", evt)
+		if got := h.NLPProviderStatus(); got != "ok" {
+			t.Errorf("after recovery (call %d): expected 'ok', got %q", callCount, got)
+		}
+	})
+
+	t.Run("unavailable when no provider", func(t *testing.T) {
+		h := NewHandlers(HandlersConfig{})
+		if got := h.NLPProviderStatus(); got != "unavailable" {
+			t.Errorf("expected 'unavailable' without provider, got %q", got)
+		}
+	})
+}

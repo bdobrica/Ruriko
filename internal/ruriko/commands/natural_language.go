@@ -23,6 +23,7 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -356,18 +357,30 @@ var confirmationNegativeWords = []string{
 // command or agent-creation intent.
 //
 // Routing logic:
-//  1. If there is an active LLM session (stepNLAwaitingConfirmation), delegate
+//  1. If the text starts with "/ruriko", return ("", nil) immediately — these
+//     are handled by the command router and must never be re-interpreted by the
+//     NL layer.
+//  2. If there is an active LLM session (stepNLAwaitingConfirmation), delegate
 //     to handleNLConfirmationResponse.
-//  2. If there is an active keyword session (stepAwaitingConfirmation), delegate
+//  3. If there is an active keyword session (stepAwaitingConfirmation), delegate
 //     to handleConfirmationResponse.
-//  3. If h.nlpProvider is configured, call the LLM classifier (R9.4).
-//  4. Otherwise, fall back to the deterministic keyword-based ParseIntent (R5.4).
+//  4. If h.nlpProvider is configured, call the LLM classifier (R9.4).
+//  5. Otherwise, fall back to the deterministic keyword-based ParseIntent (R5.4).
 //
 // Returns ("", nil) when no intent was detected or the message is not a
 // response to a pending confirmation.
 func (h *Handlers) HandleNaturalLanguage(ctx context.Context, text string, evt *event.Event) (string, error) {
 	roomID := evt.RoomID.String()
 	senderMXID := evt.Sender.String()
+
+	// --- Guard: /ruriko-prefixed messages are owned by the command router ----
+	// This is a defense-in-depth check; the app-level dispatcher already
+	// routes these before reaching HandleNaturalLanguage.  The guard ensures
+	// that if HandleNaturalLanguage is called directly (e.g. in tests) with a
+	// /ruriko prefix it is always a no-op.
+	if strings.HasPrefix(strings.TrimSpace(text), "/ruriko") {
+		return "", nil
+	}
 
 	// --- Check for an active confirmation session ---------------------------
 	if session, ok := h.conversations.get(roomID, senderMXID); ok {
@@ -616,12 +629,37 @@ func (h *Handlers) handleNLClassify(ctx context.Context, text, roomID, senderMXI
 
 	resp, err := h.nlpProvider.Classify(ctx, req)
 	if err != nil {
-		slog.Warn("nlp.classify failed; falling back to keyword path", "err", err)
-		if h.templates != nil {
-			return h.handleKeywordIntent(ctx, text, evt)
+		switch {
+		case errors.Is(err, nlp.ErrRateLimit):
+			// The upstream LLM API is rate-limiting us globally.  Surface a
+			// user-visible message and mark the provider as degraded; do NOT
+			// fall back to keyword matching because the user's message was
+			// understood.
+			slog.Warn("nlp: upstream API rate limit; notifying user", "sender", senderMXID)
+			h.nlpHealthState.Store(nlpHealthDegraded)
+			return nlp.APIRateLimitMessage, nil
+
+		case errors.Is(err, nlp.ErrMalformedOutput):
+			// The LLM returned something we couldn't parse.  Show a friendly
+			// clarification prompt rather than silently falling back.
+			slog.Warn("nlp: malformed LLM output; prompting user to rephrase", "err", err)
+			h.nlpHealthState.Store(nlpHealthDegraded)
+			return nlp.MalformedOutputMessage, nil
+
+		default:
+			// Generic connectivity / server error → degrade health status and
+			// fall back to the deterministic keyword path so the operator is
+			// not left in the dark when the LLM is unreachable.
+			slog.Warn("nlp.classify failed; falling back to keyword path", "err", err)
+			h.nlpHealthState.Store(nlpHealthUnavailable)
+			if h.templates != nil {
+				return h.handleKeywordIntent(ctx, text, evt)
+			}
+			return "", nil
 		}
-		return "", nil
 	}
+	// Successful call — restore health state.
+	h.nlpHealthState.Store(nlpHealthOK)
 
 	switch resp.Intent {
 	case nlp.IntentConversational:

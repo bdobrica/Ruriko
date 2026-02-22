@@ -14,7 +14,23 @@
 //   - Rate limiting prevents runaway token spend per sender.
 package nlp
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrRateLimit is returned by a Provider when the upstream LLM API reports a
+// rate-limiting condition (e.g. HTTP 429 Too Many Requests).  Callers should
+// surface a user-visible message instead of silently falling back to keyword
+// matching, because the user's request was understood but cannot be fulfilled
+// right now.
+var ErrRateLimit = errors.New("nlp: upstream rate limit exceeded")
+
+// ErrMalformedOutput is returned by a Provider when the LLM returns a
+// structurally valid HTTP response whose body cannot be interpreted as a
+// ClassifyResponse (e.g. JSON parse failure, unexpected schema).  Callers
+// should surface a clarification prompt so the user knows to rephrase.
+var ErrMalformedOutput = errors.New("nlp: malformed response from LLM")
 
 // Intent describes what the LLM inferred from the user's message.
 type Intent string
@@ -118,6 +134,15 @@ type CommandStep struct {
 // RateLimitMessage is the response sent to senders who exceed the per-minute
 // NLP call limit.  It is defined here so callers do not need to hard-code it.
 const RateLimitMessage = "⏳ I'm processing too many requests from you right now. Please try again in a moment, or use `/ruriko` commands directly."
+
+// APIRateLimitMessage is the response sent when the upstream LLM API reports
+// a rate-limit condition (HTTP 429).  Unlike RateLimitMessage (which is a
+// per-sender client-side limit), this means the provider is globally throttled.
+const APIRateLimitMessage = "⏳ The AI assistant is temporarily rate-limited by the upstream provider. You can still use `/ruriko help` to see all available commands."
+
+// MalformedOutputMessage is the response sent when the LLM returns output
+// that cannot be parsed as a valid ClassifyResponse.
+const MalformedOutputMessage = "I didn't quite understand that. You can also use `/ruriko help` for available commands."
 
 // Provider classifies free-form user messages into structured Ruriko commands.
 //

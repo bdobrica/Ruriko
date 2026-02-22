@@ -1110,13 +1110,13 @@ or
 
 ### R9.5 Graceful Degradation and Fallbacks
 
-- [ ] If LLM provider is unreachable → fall back to keyword-based matching (R5.4)
-- [ ] If LLM returns malformed output → reply "I didn't quite understand that. You can also use `/ruriko help` for available commands."
-- [ ] If LLM rate limit is exceeded → reply with rate-limit message + command hint
-- [ ] `/ruriko` commands always work regardless of NL layer status (additive, not replacing)
-- [ ] Health endpoint reports NL provider status (`nlp_provider: ok | degraded | unavailable`)
-- [ ] Test: NL layer degrades gracefully when LLM is down
-- [ ] Test: Raw commands bypass NL entirely
+- [x] If LLM provider is unreachable → fall back to keyword-based matching (R5.4)
+- [x] If LLM returns malformed output → reply "I didn't quite understand that. You can also use `/ruriko help` for available commands."
+- [x] If LLM rate limit is exceeded → reply with rate-limit message + command hint
+- [x] `/ruriko` commands always work regardless of NL layer status (additive, not replacing)
+- [x] Health endpoint reports NL provider status (`nlp_provider: ok | degraded | unavailable`)
+- [x] Test: NL layer degrades gracefully when LLM is down
+- [x] Test: Raw commands bypass NL entirely
 
 ### R9.6 LLM Cost Controls
 

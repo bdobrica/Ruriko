@@ -18,6 +18,7 @@ import (
 type HealthServer struct {
 	addr      string
 	store     statusProvider
+	nlpStatus NLPStatusProvider // optional — reports NLP provider health
 	startedAt time.Time
 	server    *http.Server
 	mux       *http.ServeMux
@@ -26,6 +27,14 @@ type HealthServer struct {
 // statusProvider is the minimal interface the health server needs from Store.
 type statusProvider interface {
 	AgentCount(ctx context.Context) (int, error)
+}
+
+// NLPStatusProvider reports the current health of the NLP provider.
+// Implemented by *commands.Handlers; defined here as an interface to avoid
+// an import cycle between the app and commands packages.
+type NLPStatusProvider interface {
+	// NLPProviderStatus returns one of: "ok", "degraded", "unavailable".
+	NLPProviderStatus() string
 }
 
 // healthResponse is returned by GET /health.
@@ -37,13 +46,14 @@ type healthResponse struct {
 
 // statusResponse is returned by GET /status.
 type statusResponse struct {
-	Status     string    `json:"status"`
-	Version    string    `json:"version"`
-	Commit     string    `json:"commit"`
-	BuildTime  string    `json:"build_time"`
-	StartedAt  time.Time `json:"started_at"`
-	UptimeSecs float64   `json:"uptime_seconds"`
-	AgentCount int       `json:"agent_count"`
+	Status      string    `json:"status"`
+	Version     string    `json:"version"`
+	Commit      string    `json:"commit"`
+	BuildTime   string    `json:"build_time"`
+	StartedAt   time.Time `json:"started_at"`
+	UptimeSecs  float64   `json:"uptime_seconds"`
+	AgentCount  int       `json:"agent_count"`
+	NLPProvider string    `json:"nlp_provider"` // "ok" | "degraded" | "unavailable"
 }
 
 // NewHealthServer creates and configures the HTTP server (does not start it).
@@ -64,6 +74,13 @@ func NewHealthServer(addr string, sp statusProvider) *HealthServer {
 // live network listener (e.g. with httptest.NewRecorder).
 func (h *HealthServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.mux.ServeHTTP(w, r)
+}
+
+// SetNLPStatusProvider wires in the NLP provider health reporter.  Call this
+// after NewHealthServer, before Start, to include nlp_provider in /status
+// responses.
+func (h *HealthServer) SetNLPStatusProvider(p NLPStatusProvider) {
+	h.nlpStatus = p
 }
 
 // Handle registers a handler for the given URL pattern, delegating to the
@@ -139,15 +156,21 @@ func (h *HealthServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	nlpStatus := "unavailable"
+	if h.nlpStatus != nil {
+		nlpStatus = h.nlpStatus.NLPProviderStatus()
+	}
+
 	uptime := time.Since(h.startedAt).Seconds()
 	resp := statusResponse{
-		Status:     "ok",
-		Version:    version.Version,
-		Commit:     version.GitCommit,
-		BuildTime:  version.BuildTime,
-		StartedAt:  h.startedAt,
-		UptimeSecs: uptime,
-		AgentCount: agentCount,
+		Status:      "ok",
+		Version:     version.Version,
+		Commit:      version.GitCommit,
+		BuildTime:   version.BuildTime,
+		StartedAt:   h.startedAt,
+		UptimeSecs:  uptime,
+		AgentCount:  agentCount,
+		NLPProvider: nlpStatus,
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

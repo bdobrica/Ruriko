@@ -384,6 +384,7 @@ func New(config *Config) (*App, error) {
 	var healthServer *HealthServer
 	if config.HTTPAddr != "" {
 		healthServer = NewHealthServer(config.HTTPAddr, store)
+		healthServer.SetNLPStatusProvider(handlers)
 		if kuzeServer != nil {
 			kuzeServer.RegisterRoutes(healthServer)
 			slog.Info("Kuze routes registered on HTTP server")

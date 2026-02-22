@@ -142,7 +142,19 @@ func (p *openAIProvider) Classify(ctx context.Context, req ClassifyRequest) (*Cl
 	}
 
 	if oaiResp.Error != nil {
+		if resp.StatusCode == http.StatusTooManyRequests {
+			return nil, fmt.Errorf("nlp: API rate limit (HTTP 429): %s: %w",
+				oaiResp.Error.Message, ErrRateLimit)
+		}
 		return nil, fmt.Errorf("nlp: API error (%s): %s", oaiResp.Error.Type, oaiResp.Error.Message)
+	}
+
+	// A non-429 HTTP error without a structured error body (e.g. 503 upstream).
+	if resp.StatusCode >= 400 {
+		if resp.StatusCode == http.StatusTooManyRequests {
+			return nil, fmt.Errorf("nlp: API rate limit (HTTP 429): %w", ErrRateLimit)
+		}
+		return nil, fmt.Errorf("nlp: unexpected HTTP status %d", resp.StatusCode)
 	}
 
 	if len(oaiResp.Choices) == 0 {
@@ -152,7 +164,7 @@ func (p *openAIProvider) Classify(ctx context.Context, req ClassifyRequest) (*Cl
 	content := oaiResp.Choices[0].Message.Content
 	var classified ClassifyResponse
 	if err := json.Unmarshal([]byte(content), &classified); err != nil {
-		return nil, fmt.Errorf("nlp: decode classification JSON: %w (raw content: %.200s)", err, content)
+		return nil, fmt.Errorf("nlp: decode classification JSON (%.200s): %w", content, ErrMalformedOutput)
 	}
 
 	return &classified, nil

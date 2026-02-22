@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"maunium.net/go/mautrix/event"
@@ -83,7 +84,18 @@ type Handlers struct {
 	matrixHomeserver  string
 	nlpProvider       nlp.Provider
 	nlpRateLimiter    *nlp.RateLimiter
+	// nlpHealthState tracks the health of the NLP provider based on recent
+	// call outcomes.  Written by handleNLClassify; read by NLPProviderStatus.
+	// Values: 0 = ok, 1 = degraded, 2 = unavailable.
+	nlpHealthState atomic.Int32
 }
+
+// nlp health-state constants (stored in Handlers.nlpHealthState).
+const (
+	nlpHealthOK          int32 = 0
+	nlpHealthDegraded    int32 = 1
+	nlpHealthUnavailable int32 = 2
+)
 
 // NewHandlers creates a new Handlers instance from the given config.
 func NewHandlers(cfg HandlersConfig) *Handlers {
@@ -116,6 +128,30 @@ func NewHandlers(cfg HandlersConfig) *Handlers {
 // Handlers — creating a circular dependency at construction time.
 func (h *Handlers) SetDispatch(fn DispatchFunc) {
 	h.dispatch = fn
+}
+
+// NLPProviderStatus returns a string representing the current health of the
+// NLP provider as seen by recent Classify calls:
+//   - "unavailable" — no NLP provider is configured, or the provider is
+//     configured but the last call failed with a hard network error.
+//   - "degraded"    — the provider is configured but the last call hit an
+//     API-side rate limit or returned malformed output.
+//   - "ok"          — the provider is configured and the last call succeeded
+//     (or no call has been made yet since startup).
+//
+// This method is used by the health/status endpoint.
+func (h *Handlers) NLPProviderStatus() string {
+	if h.nlpProvider == nil {
+		return "unavailable"
+	}
+	switch h.nlpHealthState.Load() {
+	case nlpHealthDegraded:
+		return "degraded"
+	case nlpHealthUnavailable:
+		return "unavailable"
+	default:
+		return "ok"
+	}
 }
 
 // HandleHelp shows available commands
