@@ -28,10 +28,14 @@
 //     plaintext values never traverse the ACP payload.  Set DirectSecretPushEnabled=true
 //     only in dev or during migration.  A disabled endpoint returns 410 Gone.
 //
-// Event ingress (Phase R12.1):
-//   - POST /events/{source} accepts normalised Event envelopes from gateway processes.
+// Event ingress (Phase R12.1 + R12.4):
+//   - POST /events/{source} accepts normalised Event envelopes from gateway processes
+//     (cron, external binaries) AND raw webhook deliveries from type:webhook gateways.
 //   - Built-in gateways (cron) run on localhost and bypass bearer-token auth.
 //   - External gateways must supply the ACP bearer token in Authorization: Bearer <token>.
+//   - Webhook gateways (type:webhook) support either bearer or hmac-sha256 auth.
+//     HMAC-SHA256 validates X-Hub-Signature-256 over the raw request body against the
+//     secret named by config["hmacSecretRef"]; raw body is then wrapped into an Event.
 //   - A fixed-window rate limiter (per-source + global) enforces MaxEventsPerMinute
 //     from the active Gosuto Limits, returning 429 when exceeded.
 package control
@@ -50,6 +54,7 @@ import (
 
 	"github.com/bdobrica/Ruriko/common/spec/envelope"
 	gosutospec "github.com/bdobrica/Ruriko/common/spec/gosuto"
+	"github.com/bdobrica/Ruriko/internal/gitai/gateway"
 )
 
 // idempotencyTTL is how long the server caches responses by idempotency key.
@@ -254,6 +259,13 @@ type Handlers struct {
 	// names and read MaxEventsPerMinute rate-limit settings.
 	// When nil the event ingress endpoint accepts any source name (dev mode).
 	ActiveConfig func() *gosutospec.Config
+
+	// GetSecret looks up a secret value by its ref name from the agent's
+	// in-memory secret store.  Used by the built-in webhook gateway to fetch
+	// the HMAC secret for X-Hub-Signature-256 validation.
+	// When nil and an hmac-sha256 webhook gateway receives a request, the
+	// endpoint returns 503 Service Unavailable.
+	GetSecret func(ref string) ([]byte, error)
 
 	// HandleEvent is invoked with a fully validated inbound event envelope.
 	// Implementations must be non-blocking (e.g. a channel send or goroutine
@@ -659,25 +671,72 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "cancelling"})
 }
 
-// handleEventIngress handles POST /events/{source} (R12.1).
+// handleEventIngress handles POST /events/{source} (R12.1 + R12.4).
 //
-// It accepts a normalised Event envelope from a gateway process, validates the
-// source against the active Gosuto config, enforces per-source and global rate
-// limits, and dispatches the event to Handlers.HandleEvent.
+// It dispatches to one of two sub-handlers based on the gateway type
+// registered in the active Gosuto config:
 //
-// Auth rules (differ from the rest of the ACP):
+//   - Non-webhook gateways (cron, external processes): the request body must
+//     be a pre-formed Event envelope (JSON).  Auth is the standard ACP bearer
+//     token with a localhost bypass for in-process gateways.
+//
+//   - Webhook gateways (type: webhook): the request body is a raw HTTP
+//     webhook POST payload.  Auth is either bearer token (default) or
+//     HMAC-SHA256 (X-Hub-Signature-256 header).  The raw body is wrapped in
+//     an Event envelope by handleWebhookEvent.
+//
+// Auth rules apply before body parsing:
 //   - Built-in gateways (cron etc.) run within the same host and connect from
-//     127.0.0.1 / ::1. Localhost connections bypass bearer-token auth so that
-//     in-process gateways don't need a copy of the ACP secret.
-//   - External gateway processes and webhook deliveries must supply the ACP
-//     bearer token in "Authorization: Bearer <token>", same as all other ACP
-//     endpoints.
+//     127.0.0.1 / ::1. Localhost connections bypass bearer-token auth.
+//   - External gateway processes must supply the ACP bearer token.
+//   - Webhook HMAC auth bypasses the bearer check and validates the signature
+//     over the raw body instead.
 //   - When Handlers.Token is empty (dev/test) all connections are accepted.
 func (s *Server) handleEventIngress(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
+	source := r.PathValue("source")
+	if source == "" {
+		writeError(w, http.StatusBadRequest, "missing event source in path")
+		return
+	}
+
+	// Validate source against the active Gosuto gateway list and read rate
+	// limit from config. When ActiveConfig is nil (dev mode) we skip name
+	// validation and apply no rate limit. Capture the gateway config so that
+	// we can detect webhook-type gateways and read their auth settings.
+	var maxEventsPerMinute int
+	var foundGW *gosutospec.Gateway
+	if s.handlers.ActiveConfig != nil {
+		cfg := s.handlers.ActiveConfig()
+		if cfg != nil {
+			for i := range cfg.Gateways {
+				if cfg.Gateways[i].Name == source {
+					gw := cfg.Gateways[i] // copy to avoid loop-var alias
+					foundGW = &gw
+					break
+				}
+			}
+			if foundGW == nil {
+				writeError(w, http.StatusNotFound,
+					fmt.Sprintf("unknown gateway source %q", source))
+				return
+			}
+			maxEventsPerMinute = cfg.Limits.MaxEventsPerMinute
+		}
+	}
+
+	// Route webhook gateways to the dedicated sub-handler which performs
+	// raw-body auth and wraps the payload in an Event envelope.
+	if foundGW != nil && foundGW.Type == "webhook" {
+		s.handleWebhookEvent(w, r, source, foundGW, maxEventsPerMinute)
+		return
+	}
+
+	// ── Non-webhook path (cron, external gateway processes) ──────────────────
 
 	// Auth: localhost (built-in gateways) bypasses bearer-token check.
 	if s.handlers.Token != "" && !isLocalhost(r) {
@@ -689,35 +748,6 @@ func (s *Server) handleEventIngress(w http.ResponseWriter, r *http.Request) {
 		if auth[len("Bearer "):] != s.handlers.Token {
 			writeError(w, http.StatusUnauthorized, "invalid bearer token")
 			return
-		}
-	}
-
-	source := r.PathValue("source")
-	if source == "" {
-		writeError(w, http.StatusBadRequest, "missing event source in path")
-		return
-	}
-
-	// Validate source against the active Gosuto gateway list and read rate
-	// limit from config. When ActiveConfig is nil (dev mode) we skip name
-	// validation and apply no rate limit.
-	var maxEventsPerMinute int
-	if s.handlers.ActiveConfig != nil {
-		cfg := s.handlers.ActiveConfig()
-		if cfg != nil {
-			found := false
-			for _, gw := range cfg.Gateways {
-				if gw.Name == source {
-					found = true
-					break
-				}
-			}
-			if !found {
-				writeError(w, http.StatusNotFound,
-					fmt.Sprintf("unknown gateway source %q", source))
-				return
-			}
-			maxEventsPerMinute = cfg.Limits.MaxEventsPerMinute
 		}
 	}
 
@@ -759,6 +789,118 @@ func (s *Server) handleEventIngress(w http.ResponseWriter, r *http.Request) {
 	}
 	s.handlers.HandleEvent(r.Context(), &evt)
 	slog.Info("ACP: event queued", "source", source, "type", evt.Type)
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "queued"})
+}
+
+// handleWebhookEvent handles inbound webhook deliveries for gateways with
+// type: webhook (R12.4).
+//
+// Unlike the standard event ingress which expects a pre-formed Event envelope,
+// this handler accepts a raw HTTP POST body from an external webhook sender
+// (GitHub, Stripe, custom services, etc.) and wraps it in an Event envelope
+// using gateway.WrapRawWebhookBody.
+//
+// Auth:
+//   - authType "bearer" (default): ACP bearer token, localhost-bypass applies.
+//   - authType "hmac-sha256": validates X-Hub-Signature-256 over the raw body
+//     against the secret named by config["hmacSecretRef"] in the agent's
+//     secret store.  Bearer auth is deliberately skipped so caller does not
+//     need the ACP token — only the HMAC shared secret.
+func (s *Server) handleWebhookEvent(
+	w http.ResponseWriter,
+	r *http.Request,
+	source string,
+	gwCfg *gosutospec.Gateway,
+	maxEventsPerMinute int,
+) {
+	// Read the raw body first — HMAC validation must be computed over the
+	// exact bytes received (including whitespace, key ordering, etc.).
+	rawBody, err := io.ReadAll(io.LimitReader(r.Body, maxEventBodyBytes))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to read webhook body: "+err.Error())
+		return
+	}
+
+	// Determine auth type from gateway config. Default is "bearer".
+	authType := gwCfg.Config["authType"]
+	if authType == "" {
+		authType = "bearer"
+	}
+
+	switch authType {
+	case "bearer":
+		// Same localhost-bypass bearer check as non-webhook gateways.
+		if s.handlers.Token != "" && !isLocalhost(r) {
+			auth := r.Header.Get("Authorization")
+			if !strings.HasPrefix(auth, "Bearer ") {
+				writeError(w, http.StatusUnauthorized, "missing bearer token")
+				return
+			}
+			if auth[len("Bearer "):] != s.handlers.Token {
+				writeError(w, http.StatusUnauthorized, "invalid bearer token")
+				return
+			}
+		}
+
+	case "hmac-sha256":
+		// Validate the X-Hub-Signature-256 header against the raw body.
+		// Bearer token is NOT required for HMAC-authenticated webhooks.
+		sigHeader := r.Header.Get("X-Hub-Signature-256")
+		if sigHeader == "" {
+			writeError(w, http.StatusUnauthorized, "missing X-Hub-Signature-256 header")
+			return
+		}
+		hmacRef := gwCfg.Config["hmacSecretRef"]
+		if hmacRef == "" {
+			// validateGateway should have caught this, but be defensive.
+			writeError(w, http.StatusInternalServerError,
+				"webhook gateway misconfigured: hmacSecretRef is empty")
+			return
+		}
+		if s.handlers.GetSecret == nil {
+			writeError(w, http.StatusServiceUnavailable,
+				"secret lookup not available; cannot validate HMAC signature")
+			return
+		}
+		hmacSecret, err := s.handlers.GetSecret(hmacRef)
+		if err != nil {
+			slog.Error("webhook: HMAC secret not found",
+				"source", source, "ref", hmacRef, "err", err)
+			// Do not leak whether the secret is absent or wrong — both look
+			// like an auth failure to the external caller.
+			writeError(w, http.StatusUnauthorized, "HMAC secret not available")
+			return
+		}
+		if !gateway.ValidateHMACSHA256(hmacSecret, rawBody, sigHeader) {
+			slog.Warn("webhook: invalid HMAC signature", "source", source)
+			writeError(w, http.StatusUnauthorized, "invalid HMAC signature")
+			return
+		}
+
+	default:
+		writeError(w, http.StatusBadRequest,
+			fmt.Sprintf("unsupported webhook authType %q", authType))
+		return
+	}
+
+	// Rate limiting.
+	if !s.eventLimiter.allow(source, maxEventsPerMinute) {
+		slog.Warn("ACP: webhook rate limit exceeded", "source", source, "limit", maxEventsPerMinute)
+		writeError(w, http.StatusTooManyRequests,
+			fmt.Sprintf("rate limit exceeded for gateway %q (%d events/min)", source, maxEventsPerMinute))
+		return
+	}
+
+	// Wrap the raw body into a normalised Event envelope.
+	evt := gateway.WrapRawWebhookBody(source, rawBody)
+
+	// Dispatch to app handler.
+	if s.handlers.HandleEvent == nil {
+		writeError(w, http.StatusServiceUnavailable, "event handling not available")
+		return
+	}
+	s.handlers.HandleEvent(r.Context(), evt)
+	slog.Info("ACP: webhook event queued", "source", source, "type", evt.Type)
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "queued"})
 }
 

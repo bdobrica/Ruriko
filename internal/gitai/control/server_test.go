@@ -3,7 +3,11 @@ package control_test
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -919,5 +923,395 @@ func TestEventIngress_BearerTokenAccepted(t *testing.T) {
 	if resp.StatusCode != http.StatusAccepted {
 		b, _ := io.ReadAll(resp.Body)
 		t.Fatalf("expected 202, got %d: %s", resp.StatusCode, b)
+	}
+}
+
+// --- R12.4: Built-in Webhook Gateway ----------------------------------------
+
+// makeWebhookTestGosutoConfig returns a minimal Gosuto config with a single
+// webhook gateway configured at the given authType.
+// Pass authType="" or "bearer" for bearer auth; "hmac-sha256" for HMAC auth.
+// When authType is hmac-sha256, hmacSecretRef is the secret ref name.
+func makeWebhookTestGosutoConfig(name, authType, hmacSecretRef string) *gosutospec.Config {
+	cfg := map[string]string{}
+	if authType != "" {
+		cfg["authType"] = authType
+	}
+	if hmacSecretRef != "" {
+		cfg["hmacSecretRef"] = hmacSecretRef
+	}
+	return &gosutospec.Config{
+		APIVersion: "gosuto/v1",
+		Metadata:   gosutospec.Metadata{Name: "test-agent"},
+		Trust: gosutospec.Trust{
+			AllowedRooms:   []string{"*"},
+			AllowedSenders: []string{"*"},
+		},
+		Gateways: []gosutospec.Gateway{
+			{Name: name, Type: "webhook", Config: cfg},
+		},
+	}
+}
+
+// computeHubSignature returns the "sha256=<hex>" HMAC-SHA256 signature for body using secret.
+func computeHubSignature(secret, body []byte) string {
+	mac := hmac.New(sha256.New, secret)
+	mac.Write(body)
+	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
+}
+
+// newWebhookTestServer creates a control.Server wired for webhook gateway tests.
+// secrets maps ref name → value bytes for GetSecret lookups.
+// received is incremented each time HandleEvent fires.
+func newWebhookTestServer(
+	t *testing.T,
+	acpToken string,
+	cfg *gosutospec.Config,
+	secrets map[string][]byte,
+	received *atomic.Int32,
+) *httptest.Server {
+	t.Helper()
+	srv := control.New(":0", control.Handlers{
+		AgentID:      "test-agent",
+		Version:      "v0.0.1-test",
+		StartedAt:    time.Now(),
+		Token:        acpToken,
+		GosutoHash:   func() string { return "deadbeef" },
+		MCPNames:     func() []string { return nil },
+		ApplyConfig:  func(yaml, hash string) error { return nil },
+		ApplySecrets: func(sec map[string]string) error { return nil },
+		ActiveConfig: func() *gosutospec.Config { return cfg },
+		GetSecret: func(ref string) ([]byte, error) {
+			if secrets == nil {
+				return nil, fmt.Errorf("secret %q not found", ref)
+			}
+			val, ok := secrets[ref]
+			if !ok {
+				return nil, fmt.Errorf("secret %q not found", ref)
+			}
+			return val, nil
+		},
+		HandleEvent: func(_ context.Context, _ *envelope.Event) {
+			if received != nil {
+				received.Add(1)
+			}
+		},
+	})
+	ts := httptest.NewServer(srv.TestHandler())
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+// postWebhook sends a POST /events/{source} with a raw JSON body simulating an
+// external webhook delivery. It optionally includes an HMAC signature header.
+func postWebhook(t *testing.T, ts *httptest.Server, source string, body []byte, hmacSig, bearerToken string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/events/"+source, bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("build webhook request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if hmacSig != "" {
+		req.Header.Set("X-Hub-Signature-256", hmacSig)
+	}
+	if bearerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+bearerToken)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /events/%s: %v", source, err)
+	}
+	return resp
+}
+
+// TestWebhookIngress_BearerAuthAccepted verifies that a webhook gateway with
+// bearer auth wraps the raw body in an Event envelope and forwards it.
+// (httptest connections are on localhost, so the bearer check is bypassed ─
+// the test confirms the body is wrapped and HandleEvent is called.)
+func TestWebhookIngress_BearerAuthAccepted(t *testing.T) {
+	var received atomic.Int32
+	cfg := makeWebhookTestGosutoConfig("github", "bearer", "")
+	ts := newWebhookTestServer(t, "", cfg, nil, &received)
+
+	body := []byte(`{"action":"opened","number":1}`)
+	resp := postWebhook(t, ts, "github", body, "", "")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusAccepted {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 202, got %d: %s", resp.StatusCode, b)
+	}
+	if received.Load() != 1 {
+		t.Errorf("expected HandleEvent called once, got %d", received.Load())
+	}
+}
+
+// TestWebhookIngress_DefaultAuthIsBearerAccepted verifies that a webhook
+// gateway with no explicit authType defaults to bearer and still accepts
+// deliveries (localhost bypass active from httptest).
+func TestWebhookIngress_DefaultAuthIsBearerAccepted(t *testing.T) {
+	var received atomic.Int32
+	// authType is empty string → defaults to "bearer" in handleWebhookEvent
+	cfg := makeWebhookTestGosutoConfig("hook", "", "")
+	ts := newWebhookTestServer(t, "", cfg, nil, &received)
+
+	body := []byte(`{"type":"payment.succeeded"}`)
+	resp := postWebhook(t, ts, "hook", body, "", "")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusAccepted {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 202 (default bearer), got %d: %s", resp.StatusCode, b)
+	}
+	if received.Load() != 1 {
+		t.Errorf("expected HandleEvent called once, got %d", received.Load())
+	}
+}
+
+// TestWebhookIngress_HMACAuthAccepted verifies that a webhook delivery with a
+// correct X-Hub-Signature-256 header passes validation and is forwarded.
+func TestWebhookIngress_HMACAuthAccepted(t *testing.T) {
+	var received atomic.Int32
+	hmacSecret := []byte("super-secret-webhook-key")
+	cfg := makeWebhookTestGosutoConfig("github", "hmac-sha256", "github.hmac-secret")
+	ts := newWebhookTestServer(t, "", cfg, map[string][]byte{
+		"github.hmac-secret": hmacSecret,
+	}, &received)
+
+	body := []byte(`{"action":"pushed","ref":"refs/heads/main"}`)
+	sig := computeHubSignature(hmacSecret, body)
+
+	resp := postWebhook(t, ts, "github", body, sig, "")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusAccepted {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 202, got %d: %s", resp.StatusCode, b)
+	}
+	if received.Load() != 1 {
+		t.Errorf("expected HandleEvent called once, got %d", received.Load())
+	}
+}
+
+// TestWebhookIngress_HMACWrongSignatureRejected verifies that a delivery with
+// an incorrect X-Hub-Signature-256 signature receives 401 Unauthorized.
+func TestWebhookIngress_HMACWrongSignatureRejected(t *testing.T) {
+	hmacSecret := []byte("super-secret-webhook-key")
+	cfg := makeWebhookTestGosutoConfig("github", "hmac-sha256", "github.hmac-secret")
+	ts := newWebhookTestServer(t, "", cfg, map[string][]byte{
+		"github.hmac-secret": hmacSecret,
+	}, nil)
+
+	body := []byte(`{"action":"pushed"}`)
+	wrongSig := computeHubSignature([]byte("wrong-secret"), body)
+
+	resp := postWebhook(t, ts, "github", body, wrongSig, "")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnauthorized {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 401, got %d: %s", resp.StatusCode, b)
+	}
+}
+
+// TestWebhookIngress_HMACMissingSignatureHeaderRejected verifies that a
+// delivery to an HMAC-authenticated webhook with no signature header returns 401.
+func TestWebhookIngress_HMACMissingSignatureHeaderRejected(t *testing.T) {
+	hmacSecret := []byte("super-secret-webhook-key")
+	cfg := makeWebhookTestGosutoConfig("alerts", "hmac-sha256", "alerts.hmac-secret")
+	ts := newWebhookTestServer(t, "", cfg, map[string][]byte{
+		"alerts.hmac-secret": hmacSecret,
+	}, nil)
+
+	body := []byte(`{"alert":"disk-full"}`)
+	// No HMAC signature header supplied.
+	resp := postWebhook(t, ts, "alerts", body, "", "")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnauthorized {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 401 for missing HMAC header, got %d: %s", resp.StatusCode, b)
+	}
+}
+
+// TestWebhookIngress_HMACSecretNotFound verifies that if the HMAC secret ref
+// is not present in the agent's secret store the request is rejected with 401.
+func TestWebhookIngress_HMACSecretNotFound(t *testing.T) {
+	cfg := makeWebhookTestGosutoConfig("stripe", "hmac-sha256", "stripe.hmac-secret")
+	// secrets map is empty — ref not found.
+	ts := newWebhookTestServer(t, "", cfg, map[string][]byte{}, nil)
+
+	body := []byte(`{"type":"invoice.paid"}`)
+	dummySig := "sha256=" + strings.Repeat("aa", 32)
+
+	resp := postWebhook(t, ts, "stripe", body, dummySig, "")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnauthorized {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 401 when HMAC secret not in store, got %d: %s", resp.StatusCode, b)
+	}
+}
+
+// TestWebhookIngress_GetSecretNilReturns503 verifies that when GetSecret is
+// nil (not wired) and the gateway uses HMAC auth, the endpoint returns 503.
+func TestWebhookIngress_GetSecretNilReturns503(t *testing.T) {
+	cfg := makeWebhookTestGosutoConfig("hook", "hmac-sha256", "hook.secret")
+	srv := control.New(":0", control.Handlers{
+		AgentID:      "test-agent",
+		StartedAt:    time.Now(),
+		ActiveConfig: func() *gosutospec.Config { return cfg },
+		GetSecret:    nil, // intentionally nil
+		HandleEvent:  func(_ context.Context, _ *envelope.Event) {},
+	})
+	ts := httptest.NewServer(srv.TestHandler())
+	t.Cleanup(ts.Close)
+
+	body := []byte(`{"action":"fired"}`)
+	sig := computeHubSignature([]byte("any-secret"), body)
+	resp := postWebhook(t, ts, "hook", body, sig, "")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 503 when GetSecret is nil, got %d: %s", resp.StatusCode, b)
+	}
+}
+
+// TestWebhookIngress_UnsupportedAuthTypeReturns400 verifies that an unknown
+// authType in the gateway config returns 400 Bad Request.
+func TestWebhookIngress_UnsupportedAuthTypeReturns400(t *testing.T) {
+	cfg := makeWebhookTestGosutoConfig("hook", "oauth2", "") // not supported
+	ts := newWebhookTestServer(t, "", cfg, nil, nil)
+
+	body := []byte(`{"event":"triggered"}`)
+	resp := postWebhook(t, ts, "hook", body, "", "")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 400 for unsupported authType, got %d: %s", resp.StatusCode, b)
+	}
+}
+
+// TestWebhookIngress_UnknownSourceRejected verifies that a webhook delivery to
+// an unknown source (not in Gosuto config) returns 404.
+func TestWebhookIngress_UnknownSourceRejected(t *testing.T) {
+	cfg := makeWebhookTestGosutoConfig("github", "bearer", "")
+	ts := newWebhookTestServer(t, "", cfg, nil, nil)
+
+	body := []byte(`{"action":"opened"}`)
+	resp := postWebhook(t, ts, "unknown-hook", body, "", "")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotFound {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 404 for unknown webhook source, got %d: %s", resp.StatusCode, b)
+	}
+}
+
+// TestWebhookIngress_EventEnvelopeBodyRejected verifies that a webhook gateway
+// does NOT try to parse the raw body as an Event envelope — it wraps it as-is.
+// This is a regression guard: if the caller posts a pre-formed Event envelope
+// to a webhook-type gateway, the handler should still wrap it (not reject it).
+func TestWebhookIngress_EventEnvelopeBodyAccepted(t *testing.T) {
+	var received atomic.Int32
+	cfg := makeWebhookTestGosutoConfig("events-sink", "bearer", "")
+	ts := newWebhookTestServer(t, "", cfg, nil, &received)
+
+	// An Event-envelope-shaped JSON body sent by mistake — should be wrapped.
+	envBody, _ := json.Marshal(envelope.Event{
+		Source:  "events-sink",
+		Type:    "cron.tick",
+		TS:      time.Now().UTC(),
+		Payload: envelope.EventPayload{Message: "tick"},
+	})
+	resp := postWebhook(t, ts, "events-sink", envBody, "", "")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusAccepted {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 202 (wrapped envelope body), got %d: %s", resp.StatusCode, b)
+	}
+	if received.Load() != 1 {
+		t.Errorf("expected HandleEvent called once, got %d", received.Load())
+	}
+}
+
+// TestWebhookIngress_HandleEventNilReturns503 verifies that if HandleEvent is
+// nil (not wired) the webhook endpoint returns 503.
+func TestWebhookIngress_HandleEventNilReturns503(t *testing.T) {
+	cfg := makeWebhookTestGosutoConfig("hook", "bearer", "")
+	srv := control.New(":0", control.Handlers{
+		AgentID:      "test-agent",
+		StartedAt:    time.Now(),
+		ActiveConfig: func() *gosutospec.Config { return cfg },
+		// HandleEvent intentionally nil
+	})
+	ts := httptest.NewServer(srv.TestHandler())
+	t.Cleanup(ts.Close)
+
+	resp := postWebhook(t, ts, "hook", []byte(`{}`), "", "")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 503 when HandleEvent is nil, got %d: %s", resp.StatusCode, b)
+	}
+}
+
+// TestWebhookIngress_NonJSONBodyAccepted verifies that non-JSON webhook bodies
+// are accepted and wrapped (stored under the "raw" data key).
+func TestWebhookIngress_NonJSONBodyAccepted(t *testing.T) {
+	var received atomic.Int32
+	cfg := makeWebhookTestGosutoConfig("legacy", "bearer", "")
+	ts := newWebhookTestServer(t, "", cfg, nil, &received)
+
+	body := []byte(`payload=hello&other=world`)
+	resp := postWebhook(t, ts, "legacy", body, "", "")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusAccepted {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 202 for non-JSON body, got %d: %s", resp.StatusCode, b)
+	}
+	if received.Load() != 1 {
+		t.Errorf("expected HandleEvent called once, got %d", received.Load())
+	}
+}
+
+// TestWebhookIngress_RateLimitEnforced verifies that excessive webhook
+// deliveries to the same source are rejected with 429.
+func TestWebhookIngress_RateLimitEnforced(t *testing.T) {
+	const limit = 2
+	var received atomic.Int32
+	cfg := &gosutospec.Config{
+		APIVersion: "gosuto/v1",
+		Metadata:   gosutospec.Metadata{Name: "test-agent"},
+		Trust: gosutospec.Trust{
+			AllowedRooms:   []string{"*"},
+			AllowedSenders: []string{"*"},
+		},
+		Limits: gosutospec.Limits{MaxEventsPerMinute: limit},
+		Gateways: []gosutospec.Gateway{
+			{Name: "hook", Type: "webhook", Config: map[string]string{}},
+		},
+	}
+	ts := newWebhookTestServer(t, "", cfg, nil, &received)
+
+	body := []byte(`{"ping":true}`)
+	var lastStatus int
+	for i := 0; i < limit+2; i++ {
+		resp := postWebhook(t, ts, "hook", body, "", "")
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		lastStatus = resp.StatusCode
+	}
+
+	if lastStatus != http.StatusTooManyRequests {
+		t.Errorf("expected 429 after exceeding limit, got %d", lastStatus)
+	}
+	if received.Load() != limit {
+		t.Errorf("expected %d events forwarded before rate limit, got %d", limit, received.Load())
 	}
 }

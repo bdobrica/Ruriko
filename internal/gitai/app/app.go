@@ -197,6 +197,11 @@ func New(cfg *Config) (*App, error) {
 		GosutoHash:              gosutoLdr.Hash,
 		MCPNames:                supv.Names,
 		ActiveConfig:            gosutoLdr.Config,
+		// GetSecret looks up an agent secret by ref name. Used by the
+		// built-in webhook gateway to validate HMAC-SHA256 signatures.
+		GetSecret: func(ref string) ([]byte, error) {
+			return secStore.Get(ref)
+		},
 		ApplyConfig: func(yaml, hash string) error {
 			if err := gosutoLdr.Apply([]byte(yaml)); err != nil {
 				return err

@@ -1582,14 +1582,14 @@ similarity and injects the relevant context.
 - [x] Test: Cron reconfigures on Gosuto update
 
 ### R12.4 Built-in Webhook Gateway
-- [ ] Add configurable webhook sub-routes to the ACP server:
-  - When a gateway has `type: webhook`, expose its path (default `/events/{name}`, or `config["path"]`)
-  - Auth: `bearer` (default, uses ACP token) or `hmac-sha256` (validates `X-Hub-Signature-256` header against `hmacSecretRef`)
-  - Parse incoming POST body as the `payload.data` field of the event envelope
-  - Auto-generate `payload.message` from the webhook body (configurable template, or JSON summary)
-- [ ] Test: Webhook with bearer auth accepts valid token
-- [ ] Test: Webhook with HMAC auth validates signature
-- [ ] Test: Webhook without valid auth is rejected
+- [x] Add configurable webhook sub-routes to the ACP server:
+  - [x] When a gateway has `type: webhook`, expose its path (default `/events/{name}`, or `config["path"]`)
+  - [x] Auth: `bearer` (default, uses ACP token) or `hmac-sha256` (validates `X-Hub-Signature-256` header against `hmacSecretRef`)
+  - [x] Parse incoming POST body as the `payload.data` field of the event envelope
+  - [x] Auto-generate `payload.message` from the webhook body (configurable template, or JSON summary)
+- [x] Test: Webhook with bearer auth accepts valid token
+- [x] Test: Webhook with HMAC auth validates signature
+- [x] Test: Webhook without valid auth is rejected
 
 ### R12.5 External Gateway Supervisor
 - [ ] Extend `internal/gitai/supervisor/supervisor.go` (or create `internal/gitai/gateway/supervisor.go`) to also manage gateway processes:
