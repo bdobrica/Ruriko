@@ -78,8 +78,17 @@ type oaiFormat struct {
 	Type string `json:"type"` // "json_object"
 }
 
+// oaiUsage holds the token-count fields returned by the OpenAI /chat/completions
+// endpoint in the top-level "usage" object.
+type oaiUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}
+
 type oaiResponse struct {
 	Choices []oaiChoice `json:"choices"`
+	Usage   oaiUsage    `json:"usage"`
 	Error   *struct {
 		Message string `json:"message"`
 		Type    string `json:"type"`
@@ -125,7 +134,9 @@ func (p *openAIProvider) Classify(ctx context.Context, req ClassifyRequest) (*Cl
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+p.cfg.APIKey)
 
+	start := time.Now()
 	resp, err := p.client.Do(httpReq)
+	latencyMS := time.Since(start).Milliseconds()
 	if err != nil {
 		return nil, fmt.Errorf("nlp: http request: %w", err)
 	}
@@ -165,6 +176,16 @@ func (p *openAIProvider) Classify(ctx context.Context, req ClassifyRequest) (*Cl
 	var classified ClassifyResponse
 	if err := json.Unmarshal([]byte(content), &classified); err != nil {
 		return nil, fmt.Errorf("nlp: decode classification JSON (%.200s): %w", content, ErrMalformedOutput)
+	}
+
+	// Attach token-usage metadata so callers can enforce budgets and write
+	// cost entries to the audit trail.
+	classified.Usage = &TokenUsage{
+		PromptTokens:     oaiResp.Usage.PromptTokens,
+		CompletionTokens: oaiResp.Usage.CompletionTokens,
+		TotalTokens:      oaiResp.Usage.TotalTokens,
+		Model:            p.cfg.Model,
+		LatencyMS:        latencyMS,
 	}
 
 	return &classified, nil

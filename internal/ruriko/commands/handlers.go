@@ -58,6 +58,13 @@ type HandlersConfig struct {
 	// NLPRateLimiter, when non-nil, enforces per-sender call limits on LLM
 	// classification requests.  Should always be set alongside NLPProvider.
 	NLPRateLimiter *nlp.RateLimiter // optional — rate limits NLP calls per sender
+
+	// NLPTokenBudget, when non-nil, enforces per-sender daily token budgets
+	// for LLM classification requests.  Should always be set alongside
+	// NLPProvider.  Token usage is recorded after each successful Classify
+	// call; when the budget is exhausted the handler replies with the
+	// TokenBudgetExceededMessage without invoking the provider.
+	NLPTokenBudget *nlp.TokenBudget // optional — token budget per sender per day
 }
 
 // RoomSender is the subset of the Matrix client needed for posting breadcrumb
@@ -84,6 +91,7 @@ type Handlers struct {
 	matrixHomeserver  string
 	nlpProvider       nlp.Provider
 	nlpRateLimiter    *nlp.RateLimiter
+	nlpTokenBudget    *nlp.TokenBudget
 	// nlpHealthState tracks the health of the NLP provider based on recent
 	// call outcomes.  Written by handleNLClassify; read by NLPProviderStatus.
 	// Values: 0 = ok, 1 = degraded, 2 = unavailable.
@@ -119,6 +127,7 @@ func NewHandlers(cfg HandlersConfig) *Handlers {
 		matrixHomeserver:  cfg.MatrixHomeserver,
 		nlpProvider:       cfg.NLPProvider,
 		nlpRateLimiter:    cfg.NLPRateLimiter,
+		nlpTokenBudget:    cfg.NLPTokenBudget,
 	}
 }
 

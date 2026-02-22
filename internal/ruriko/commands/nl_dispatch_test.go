@@ -521,3 +521,87 @@ func TestHandleNaturalLanguage_NLPHealthState(t *testing.T) {
 		}
 	})
 }
+
+// TestHandleNaturalLanguage_TokenBudgetEnforced verifies that when a sender
+// has exhausted their daily token budget the handler returns the
+// TokenBudgetExceededMessage without calling the LLM provider.
+func TestHandleNaturalLanguage_TokenBudgetEnforced(t *testing.T) {
+	stub := &nlpStub{resp: &nlp.ClassifyResponse{
+		Intent:     nlp.IntentConversational,
+		Response:   "Hello from the LLM.",
+		Confidence: 0.9,
+	}}
+	budget := nlp.NewTokenBudget(100)
+	// Exhaust the budget before the handler is called.
+	budget.RecordUsage("@alice:example.com", 100)
+
+	h := NewHandlers(HandlersConfig{
+		NLPProvider:    stub,
+		NLPTokenBudget: budget,
+	})
+	evt := nlpFakeEvent()
+
+	reply, err := h.HandleNaturalLanguage(context.Background(), "hello", evt)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if reply != nlp.TokenBudgetExceededMessage {
+		t.Errorf("expected budget-exceeded message, got %q", reply)
+	}
+}
+
+// TestHandleNaturalLanguage_TokenUsageRecorded verifies that after a
+// successful classify call the consumed tokens are recorded in the budget
+// tracker so subsequent calls can enforce the limit correctly.
+func TestHandleNaturalLanguage_TokenUsageRecorded(t *testing.T) {
+	const tokensUsed = 42
+	stub := &nlpStub{resp: &nlp.ClassifyResponse{
+		Intent:     nlp.IntentConversational,
+		Response:   "Hello.",
+		Confidence: 0.9,
+		Usage:      &nlp.TokenUsage{TotalTokens: tokensUsed, PromptTokens: 30, CompletionTokens: 12},
+	}}
+	budget := nlp.NewTokenBudget(1000)
+
+	h := NewHandlers(HandlersConfig{
+		NLPProvider:    stub,
+		NLPTokenBudget: budget,
+	})
+	evt := nlpFakeEvent()
+
+	_, err := h.HandleNaturalLanguage(context.Background(), "hello", evt)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got := budget.Used("@alice:example.com"); got != tokensUsed {
+		t.Errorf("budget.Used after classify: got %d, want %d", got, tokensUsed)
+	}
+}
+
+// TestHandleNaturalLanguage_NilUsageNotPanics verifies that when the provider
+// returns a ClassifyResponse without Usage set (e.g. a stub or keyword path)
+// the handler does not panic and still records nothing in the budget.
+func TestHandleNaturalLanguage_NilUsageNotPanics(t *testing.T) {
+	stub := &nlpStub{resp: &nlp.ClassifyResponse{
+		Intent:     nlp.IntentConversational,
+		Response:   "Fine.",
+		Confidence: 0.9,
+		// Usage is intentionally nil.
+	}}
+	budget := nlp.NewTokenBudget(1000)
+
+	h := NewHandlers(HandlersConfig{
+		NLPProvider:    stub,
+		NLPTokenBudget: budget,
+	})
+	evt := nlpFakeEvent()
+
+	_, err := h.HandleNaturalLanguage(context.Background(), "hello", evt)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := budget.Used("@alice:example.com"); got != 0 {
+		t.Errorf("expected 0 tokens recorded when Usage is nil, got %d", got)
+	}
+}

@@ -594,12 +594,22 @@ func buildConfirmationPrompt(intent ParsedIntent, missingSecrets []string, image
 // ---------------------------------------------------------------------------
 
 // handleNLClassify is called when h.nlpProvider is configured.  It enforces
-// the rate limit, builds the ClassifyRequest from live context, calls the LLM,
-// and routes the response to the appropriate sub-handler.
+// the rate limit and daily token budget, builds the ClassifyRequest from live
+// context, calls the LLM, records token usage, and routes the response to the
+// appropriate sub-handler.
 func (h *Handlers) handleNLClassify(ctx context.Context, text, roomID, senderMXID string, evt *event.Event) (string, error) {
 	// Rate-limit check.
 	if h.nlpRateLimiter != nil && !h.nlpRateLimiter.Allow(senderMXID) {
 		return nlp.RateLimitMessage, nil
+	}
+
+	// Daily token-budget check.
+	if h.nlpTokenBudget != nil && !h.nlpTokenBudget.Allow(senderMXID) {
+		slog.Info("nlp: daily token budget exhausted; rejecting request",
+			"sender", senderMXID,
+			"budget", nlp.DefaultTokenBudget,
+		)
+		return nlp.TokenBudgetExceededMessage, nil
 	}
 
 	// Collect live context for the classifier.
@@ -660,6 +670,22 @@ func (h *Handlers) handleNLClassify(ctx context.Context, text, roomID, senderMXI
 	}
 	// Successful call — restore health state.
 	h.nlpHealthState.Store(nlpHealthOK)
+
+	// Record token usage and write an audit-trail entry so cost can be
+	// tracked per operator after the fact.
+	if resp.Usage != nil {
+		if h.nlpTokenBudget != nil {
+			h.nlpTokenBudget.RecordUsage(senderMXID, resp.Usage.TotalTokens)
+		}
+		slog.Info("nlp: token usage",
+			"sender", senderMXID,
+			"prompt_tokens", resp.Usage.PromptTokens,
+			"completion_tokens", resp.Usage.CompletionTokens,
+			"total_tokens", resp.Usage.TotalTokens,
+			"model", resp.Usage.Model,
+			"latency_ms", resp.Usage.LatencyMS,
+		)
+	}
 
 	switch resp.Intent {
 	case nlp.IntentConversational:

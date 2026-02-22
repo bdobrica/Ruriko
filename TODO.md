@@ -1120,12 +1120,12 @@ or
 
 ### R9.6 LLM Cost Controls
 
-- [ ] Track token usage per sender per day (in-memory counter, reset at midnight UTC)
-- [ ] Configurable daily token budget per sender (`NLP_TOKEN_BUDGET`, default: 50k tokens/day)
-- [ ] When budget exceeded: "I've reached my daily conversation limit. You can still use `/ruriko` commands directly."
-- [ ] Log token usage in audit trail (input tokens, output tokens, model, latency)
-- [ ] Test: Token budget enforcement works
-- [ ] Test: Usage is logged accurately
+- [x] Track token usage per sender per day (in-memory counter, reset at midnight UTC)
+- [x] Configurable daily token budget per sender (`NLP_TOKEN_BUDGET`, default: 50k tokens/day)
+- [x] When budget exceeded: "I've reached my daily conversation limit. You can still use `/ruriko` commands directly."
+- [x] Log token usage in audit trail (input tokens, output tokens, model, latency)
+- [x] Test: Token budget enforcement works
+- [x] Test: Usage is logged accurately
 
 ### R9.7 Runtime Configuration Store — NLP Key, Model, and Tuning Knobs
 

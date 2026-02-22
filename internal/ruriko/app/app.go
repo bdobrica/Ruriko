@@ -98,6 +98,11 @@ type Config struct {
 	// NLPRateLimit is the maximum number of NLP classification calls allowed
 	// per sender per minute.  Defaults to nlp.DefaultRateLimit (20) when zero.
 	NLPRateLimit int
+
+	// NLPTokenBudget is the maximum number of LLM tokens allowed per sender
+	// per UTC day.  Defaults to nlp.DefaultTokenBudget (50 000) when zero.
+	// Set the NLP_TOKEN_BUDGET environment variable to override.
+	NLPTokenBudget int
 }
 
 // App is the main Ruriko application
@@ -312,8 +317,11 @@ func New(config *Config) (*App, error) {
 		if resolvedProvider != nil {
 			rateLimit := config.NLPRateLimit
 			rateLimiter := nlp.NewRateLimiter(rateLimit, time.Minute)
+			tokenBudget := nlp.NewTokenBudget(config.NLPTokenBudget)
 			handlersCfg.NLPProvider = resolvedProvider
 			handlersCfg.NLPRateLimiter = rateLimiter
+			handlersCfg.NLPTokenBudget = tokenBudget
+			slog.Info("NLP: token budget configured", "daily_tokens_per_sender", tokenBudget.Budget())
 		}
 	}
 

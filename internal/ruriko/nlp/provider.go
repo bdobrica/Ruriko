@@ -115,6 +115,12 @@ type ClassifyResponse struct {
 	// using the top-level Action/Args/Flags fields.
 	// Only populated when Intent == IntentCommand.
 	Steps []CommandStep `json:"steps,omitempty"`
+
+	// Usage holds the token counts reported by the underlying LLM provider for
+	// this call.  Nil when the provider does not report usage data (e.g. stub
+	// implementations in tests).  Callers use this to enforce per-sender token
+	// budgets and to write cost entries to the audit trail.
+	Usage *TokenUsage `json:"-"`
 }
 
 // CommandStep is one ordered step within a multi-step mutation response.
@@ -131,6 +137,23 @@ type CommandStep struct {
 	Explanation string `json:"explanation,omitempty"`
 }
 
+// TokenUsage carries the token counts reported by the upstream LLM API for a
+// single classification call.  Fields are zero-valued when the provider does
+// not report usage data.
+type TokenUsage struct {
+	// PromptTokens is the number of tokens in the input (system prompt + user message).
+	PromptTokens int
+	// CompletionTokens is the number of tokens in the LLM's response.
+	CompletionTokens int
+	// TotalTokens is PromptTokens + CompletionTokens.
+	TotalTokens int
+	// Model is the model name as reported by the provider (may be empty for
+	// providers that do not echo it back).
+	Model string
+	// LatencyMS is the observed HTTP round-trip time in milliseconds.
+	LatencyMS int64
+}
+
 // RateLimitMessage is the response sent to senders who exceed the per-minute
 // NLP call limit.  It is defined here so callers do not need to hard-code it.
 const RateLimitMessage = "⏳ I'm processing too many requests from you right now. Please try again in a moment, or use `/ruriko` commands directly."
@@ -143,6 +166,10 @@ const APIRateLimitMessage = "⏳ The AI assistant is temporarily rate-limited by
 // MalformedOutputMessage is the response sent when the LLM returns output
 // that cannot be parsed as a valid ClassifyResponse.
 const MalformedOutputMessage = "I didn't quite understand that. You can also use `/ruriko help` for available commands."
+
+// TokenBudgetExceededMessage is the reply surfaced to a sender who has
+// exhausted their daily token allowance.
+const TokenBudgetExceededMessage = "I've reached my daily conversation limit. You can still use `/ruriko` commands directly."
 
 // Provider classifies free-form user messages into structured Ruriko commands.
 //

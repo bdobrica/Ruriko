@@ -129,6 +129,7 @@ func loadConfig() (*app.Config, error) {
 		NLPEndpoint:        environment.StringOr("NLP_ENDPOINT", ""),
 		NLPAPIKeySecretRef: environment.StringOr("NLP_API_KEY_ENV", ""),
 		NLPRateLimit:       environment.IntOr("NLP_RATE_LIMIT", 0),
+		NLPTokenBudget:     environment.IntOr("NLP_TOKEN_BUDGET", 0),
 	}, nil
 }
 
