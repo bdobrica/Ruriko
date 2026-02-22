@@ -1644,18 +1644,18 @@ similarity and injects the relevant context.
 > Depends on: R12 (Gitai gateway runtime), R5 (provisioning).
 
 ### R13.1 Webhook Reverse Proxy
-- [ ] Add `POST /webhooks/{agent}/{source}` endpoint to Ruriko's HTTP server:
+- [x] Add `POST /webhooks/{agent}/{source}` endpoint to Ruriko's HTTP server:
   - Validate `{agent}` exists and is healthy
   - Validate `{source}` matches a gateway with `type: webhook` in the agent's active Gosuto
   - Forward the request body to the agent's ACP `POST /events/{source}` endpoint
   - Authenticate the inbound webhook (HMAC signature or shared secret, per gateway config)
   - Return the agent's response status to the webhook sender
-- [ ] Rate limit inbound webhooks per agent (configurable, default: 60/minute)
-- [ ] Log webhook forwarding in audit trail (source, agent, status — never payload content)
-- [ ] Test: Webhook reaches agent via Ruriko proxy
-- [ ] Test: Unknown agent or source returns 404
-- [ ] Test: Rate limiting is enforced
-- [ ] Test: Invalid HMAC signature is rejected
+- [x] Rate limit inbound webhooks per agent (configurable, default: 60/minute)
+- [x] Log webhook forwarding in audit trail (source, agent, status — never payload content)
+- [x] Test: Webhook reaches agent via Ruriko proxy
+- [x] Test: Unknown agent or source returns 404
+- [x] Test: Rate limiting is enforced
+- [x] Test: Invalid HMAC signature is rejected
 
 ### R13.2 Provisioning Pipeline — Gateway Awareness
 - [ ] Update provisioning pipeline (R5.2) to handle gateway-bearing Gosuto configs:

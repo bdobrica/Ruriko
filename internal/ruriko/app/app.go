@@ -28,6 +28,7 @@ import (
 	"github.com/bdobrica/Ruriko/internal/ruriko/secrets"
 	"github.com/bdobrica/Ruriko/internal/ruriko/store"
 	"github.com/bdobrica/Ruriko/internal/ruriko/templates"
+	"github.com/bdobrica/Ruriko/internal/ruriko/webhook"
 )
 
 // Config holds application configuration
@@ -68,6 +69,11 @@ type Config struct {
 	// the natural-language provisioning wizard (R5.4 stretch goal).
 	// When empty, "ghcr.io/bdobrica/gitai:latest" is used as a fallback.
 	DefaultAgentImage string
+
+	// WebhookRateLimit is the maximum number of inbound webhook deliveries
+	// accepted per agent per minute before Ruriko starts returning 429.
+	// Defaults to webhook.DefaultRateLimit (60) when zero.
+	WebhookRateLimit int
 
 	// --- R9: Natural Language Interface ---
 
@@ -118,6 +124,7 @@ type App struct {
 	reconciler   *runtime.Reconciler
 	healthServer *HealthServer
 	kuzeServer   *kuze.Server
+	webhookProxy *webhook.Proxy
 }
 
 // kuzeTokenAdapter bridges *kuze.Server → secrets.TokenIssuer, breaking the
@@ -395,6 +402,7 @@ func New(config *Config) (*App, error) {
 
 	// Optionally build the health/status HTTP server.
 	var healthServer *HealthServer
+	var webhookProxy *webhook.Proxy
 	if config.HTTPAddr != "" {
 		healthServer = NewHealthServer(config.HTTPAddr, store)
 		healthServer.SetNLPStatusProvider(handlers)
@@ -402,6 +410,12 @@ func New(config *Config) (*App, error) {
 			kuzeServer.RegisterRoutes(healthServer)
 			slog.Info("Kuze routes registered on HTTP server")
 		}
+		// Mount the webhook reverse proxy (R13.1): POST /webhooks/{agent}/{source}
+		webhookProxy = webhook.New(store, secretsStore, webhook.Config{
+			RateLimit: config.WebhookRateLimit,
+		})
+		webhookProxy.RegisterRoutes(healthServer)
+		slog.Info("webhook reverse proxy registered on HTTP server")
 		slog.Info("health server configured", "addr", config.HTTPAddr)
 	}
 
@@ -416,6 +430,7 @@ func New(config *Config) (*App, error) {
 		reconciler:   reconciler,
 		healthServer: healthServer,
 		kuzeServer:   kuzeServer,
+		webhookProxy: webhookProxy,
 	}, nil
 }
 
