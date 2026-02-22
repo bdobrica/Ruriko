@@ -792,6 +792,8 @@ These are **real, working subsystems** — not scaffolding. The realignment phas
 
 ### R6.1 Saito Scheduling
 - [ ] Saito emits a trigger every N minutes (configurable, default 15)
+  - Pre-R12: Saito uses its LLM persona to send periodic Matrix messages (current approach)
+  - Post-R12: Saito uses a built-in cron gateway to trigger turns without LLM polling overhead
 - [ ] Trigger is sent as a Matrix DM to Kairo (human-readable but structured enough for parsing)
 - [ ] Saito is intentionally deterministic: no LLM reasoning, only schedule + notify
 - [ ] Saito should handle: start, stop, interval change via Gosuto
@@ -1356,6 +1358,253 @@ similarity and injects the relevant context.
 
 ---
 
+## 📋 Phase R11: Event Gateways — Gosuto Schema, Types, and Validation (1–2 days)
+
+**Goal**: Extend the Gosuto specification and Go types to support inbound event gateways. No runtime changes yet — this phase is pure schema, validation, and documentation.
+
+> **Context**: Event gateways are the inbound complement to MCPs. Where MCPs let
+> agents call outbound tools, gateways let external events (cron ticks, emails,
+> webhooks, social media) trigger agent turns. Gateways POST a normalised event
+> envelope to the agent's local ACP endpoint (`POST /events/{source}`). This is
+> the same principle as MCPs — supervised processes, Gosuto-configured, credential-
+> managed via Kuze — but for inbound event ingress instead of outbound tool access.
+>
+> See [docs/gosuto-spec.md](docs/gosuto-spec.md) for the full specification.
+
+### R11.1 Gosuto Types Extension
+- [ ] Add `Gateway` struct to `common/spec/gosuto/types.go`:
+  ```go
+  type Gateway struct {
+      Name        string            `yaml:"name" json:"name"`
+      Type        string            `yaml:"type,omitempty" json:"type,omitempty"`           // "cron" | "webhook" (built-in)
+      Command     string            `yaml:"command,omitempty" json:"command,omitempty"`     // external gateway binary
+      Args        []string          `yaml:"args,omitempty" json:"args,omitempty"`
+      Env         map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
+      Config      map[string]string `yaml:"config,omitempty" json:"config,omitempty"`
+      AutoRestart bool              `yaml:"autoRestart,omitempty" json:"autoRestart,omitempty"`
+  }
+  ```
+- [ ] Add `Gateways []Gateway` field to `Config` struct (between `MCPs` and `Secrets`)
+- [ ] Add `MaxEventsPerMinute int` field to `Limits` struct
+- [ ] Test: YAML round-trip — gateway configs marshal and unmarshal correctly
+
+### R11.2 Gosuto Validation Extension
+- [ ] Add `validateGateway(g Gateway) error` to `common/spec/gosuto/validate.go`:
+  - Name must not be empty
+  - Exactly one of `type` or `command` must be set (not both, not neither)
+  - If `type` is set: must be `"cron"` or `"webhook"` (known built-in types)
+  - If `type` is `"cron"`: `config["expression"]` must be present and non-empty
+  - If `type` is `"webhook"` and `config["authType"]` is `"hmac-sha256"`: `config["hmacSecretRef"]` must be present
+  - If `command` is set: must not be empty string
+  - Names must be unique across all gateways (no duplicates)
+  - Names must not collide with MCP server names (they share the supervisor namespace)
+- [ ] Wire `validateGateway` into `Validate()` loop (same pattern as MCPs)
+- [ ] Validate `MaxEventsPerMinute >= 0` in `validateLimits`
+- [ ] Test: Valid gateway configs pass validation (cron, webhook, external)
+- [ ] Test: Invalid configs fail — missing name, both type+command, unknown type, missing cron expression, duplicate names, MCP name collision
+
+### R11.3 Event Envelope Types
+- [ ] Create `common/spec/envelope/event.go` (or extend existing envelope package):
+  ```go
+  type Event struct {
+      Source   string          `json:"source"`
+      Type     string          `json:"type"`
+      TS       time.Time       `json:"ts"`
+      Payload  EventPayload    `json:"payload"`
+  }
+
+  type EventPayload struct {
+      Message string                 `json:"message"`           // human-readable, goes to LLM
+      Data    map[string]interface{} `json:"data,omitempty"`    // structured metadata
+  }
+  ```
+- [ ] Add validation: `Source` must not be empty, `Type` must not be empty, `TS` must not be zero
+- [ ] Test: Event envelope marshals/unmarshals correctly
+- [ ] Test: Invalid envelopes (missing source, missing type) are rejected
+
+### R11.4 Update Existing Templates
+- [ ] Update `templates/saito-agent/gosuto.yaml` to use a built-in cron gateway instead of relying on LLM-based periodic messaging:
+  ```yaml
+  gateways:
+    - name: scheduler
+      type: cron
+      config:
+        expression: "*/15 * * * *"
+        payload: "Trigger scheduled check for all coordinated agents"
+  ```
+  - Saito keeps its LLM persona (for coordination reasoning) but is now *woken* by the cron gateway rather than running its own timer
+- [ ] Verify all existing templates still pass validation after schema changes
+- [ ] Test: Updated Saito template validates correctly
+
+### Definition of done
+- Gosuto types include `Gateway` struct and `Gateways` field
+- Gosuto validation rejects invalid gateway configurations
+- Event envelope type is defined with validation
+- Existing templates updated and validated
+- No runtime changes yet — this is schema-only
+
+---
+
+## 📋 Phase R12: Event Gateways — Gitai Runtime Integration (3–6 days)
+
+**Goal**: Gitai agents can receive and process inbound events from gateways. The turn engine handles events alongside Matrix messages.
+
+> Depends on: R11 (schema + types), Phase 9 (Gitai runtime).
+
+### R12.1 ACP Event Ingress Endpoint
+- [ ] Add `POST /events/{source}` endpoint to `internal/gitai/control/server.go`:
+  - Accepts an `Event` envelope (JSON body)
+  - Validates envelope structure (source, type, ts)
+  - Validates `{source}` matches a configured gateway name in the active Gosuto
+  - Authenticates: built-in gateways bypass auth (localhost origin); external gateways and webhook deliveries use ACP bearer token or HMAC
+  - Passes validated event to the app's event handler
+  - Returns 202 Accepted (event queued) or 429 Too Many Requests (rate limit exceeded)
+- [ ] Add rate limiter: token-bucket per gateway + global `maxEventsPerMinute`
+- [ ] Test: Valid events are accepted and forwarded to handler
+- [ ] Test: Unknown source names are rejected (404)
+- [ ] Test: Malformed envelopes are rejected (400)
+- [ ] Test: Rate limiter drops excess events (429)
+- [ ] Test: Unauthenticated requests are rejected
+
+### R12.2 Event-to-Turn Bridge in App
+- [ ] Add `handleEvent(ctx context.Context, evt Event)` method to `internal/gitai/app/app.go`:
+  - Generates trace ID for the event turn
+  - Constructs LLM messages:
+    - System prompt (from Gosuto persona, unchanged)
+    - User message: `evt.Payload.Message` (or a formatted version of the event for events without a message)
+  - Calls the same `runTurn` pipeline as `handleMessage`
+  - Posts the response to the agent's admin room (Matrix) or a configured output room
+  - Logs the turn (source=gateway, gateway_name, event_type)
+- [ ] If `Payload.Message` is empty, auto-generate a prompt from structured data:
+  - `"Event received from {source} (type: {type}). Data: {json(data)}"`
+- [ ] Wire `handleEvent` into the ACP server's `/events/{source}` handler
+- [ ] Test: Cron event triggers a full LLM turn
+- [ ] Test: Event response is posted to the admin room
+- [ ] Test: Event turn is logged with gateway metadata
+- [ ] Test: Event without message field auto-generates a prompt
+
+### R12.3 Built-in Cron Gateway
+- [ ] Create `internal/gitai/gateway/cron.go`:
+  - Parses 5-field cron expression from `config["expression"]`
+  - Runs as a goroutine within the Gitai process
+  - On each tick: constructs an `Event{Source: name, Type: "cron.tick", TS: now, Payload: {Message: config["payload"]}}` and POSTs it to `localhost:<acp_port>/events/{name}`
+  - Respects context cancellation for clean shutdown
+- [ ] Use a lightweight cron parser (e.g. `robfig/cron/v3` or a minimal custom parser)
+- [ ] Reconcile on Gosuto config change: stop old cron, start new one with updated expression
+- [ ] Test: Cron fires at correct intervals (accelerated clock in tests)
+- [ ] Test: Cron stops cleanly on shutdown
+- [ ] Test: Cron reconfigures on Gosuto update
+
+### R12.4 Built-in Webhook Gateway
+- [ ] Add configurable webhook sub-routes to the ACP server:
+  - When a gateway has `type: webhook`, expose its path (default `/events/{name}`, or `config["path"]`)
+  - Auth: `bearer` (default, uses ACP token) or `hmac-sha256` (validates `X-Hub-Signature-256` header against `hmacSecretRef`)
+  - Parse incoming POST body as the `payload.data` field of the event envelope
+  - Auto-generate `payload.message` from the webhook body (configurable template, or JSON summary)
+- [ ] Test: Webhook with bearer auth accepts valid token
+- [ ] Test: Webhook with HMAC auth validates signature
+- [ ] Test: Webhook without valid auth is rejected
+
+### R12.5 External Gateway Supervisor
+- [ ] Extend `internal/gitai/supervisor/supervisor.go` (or create `internal/gitai/gateway/supervisor.go`) to also manage gateway processes:
+  - Start gateway binaries with: command, args, env (from Gosuto + injected secrets)
+  - Inject `GATEWAY_TARGET_URL=http://localhost:{acp_port}/events/{name}` environment variable
+  - Inject `GATEWAY_*` prefixed config entries as environment variables
+  - Monitor process health, restart on crash (when `autoRestart` is true)
+  - Stop all gateways on agent shutdown
+- [ ] Reconcile gateway processes on Gosuto config change (same pattern as MCP reconciliation):
+  - Stop gateways no longer in config
+  - Start newly added gateways
+  - Restart gateways whose config changed
+- [ ] Test: External gateway process starts and receives correct environment
+- [ ] Test: Gateway process restarts on crash (when autoRestart=true)
+- [ ] Test: Gateway processes are stopped on shutdown
+- [ ] Test: Reconcile adds/removes gateway processes correctly
+
+### R12.6 Event-to-Matrix Bridging
+- [ ] When an event triggers a turn, post the response to Matrix for observability:
+  - Use the agent's admin room (from `trust.adminRoom`) by default
+  - Format: breadcrumb header ("⚡ Event: {source}/{type}") + LLM response
+  - Never include raw event payloads that might contain sensitive data — only the LLM's processed response
+- [ ] If the event references other agents (e.g. a coordination trigger), the agent sends messages to those agents' Matrix rooms as it normally would
+- [ ] Test: Event-triggered responses appear in the admin room
+- [ ] Test: Sensitive event data is not leaked to Matrix
+
+### R12.7 Observability and Auditing
+- [ ] Log all gateway events at INFO level:
+  - `"event received"` — source, type, timestamp (never log payload content at INFO)
+  - `"event processed"` — source, type, duration, tool_calls, status
+  - `"event dropped"` — source, type, reason (rate limit, unknown source, etc.)
+- [ ] Include gateway metadata in turn audit records:
+  - `trigger: "gateway"`, `gateway_name: "..."`, `event_type: "..."`
+- [ ] Distinguish gateway turns from Matrix turns in the store's turn log
+- [ ] Test: Audit records include gateway metadata
+
+### Definition of done
+- Agents can receive events via `POST /events/{source}` and process them through the LLM turn engine
+- Built-in cron gateway fires on schedule and triggers turns without LLM polling overhead
+- Built-in webhook gateway accepts authenticated HTTP deliveries
+- External gateway processes are supervised alongside MCP processes
+- Event responses are posted to Matrix for observability
+- Rate limiting prevents event flooding
+- All event turns are auditable with source attribution
+
+---
+
+## 📋 Phase R13: Ruriko-Side Gateway Wiring (2–4 days)
+
+**Goal**: Ruriko forwards internet-facing webhooks to agents, and the provisioning pipeline handles gateway-bearing Gosuto configs.
+
+> Depends on: R12 (Gitai gateway runtime), R5 (provisioning).
+
+### R13.1 Webhook Reverse Proxy
+- [ ] Add `POST /webhooks/{agent}/{source}` endpoint to Ruriko's HTTP server:
+  - Validate `{agent}` exists and is healthy
+  - Validate `{source}` matches a gateway with `type: webhook` in the agent's active Gosuto
+  - Forward the request body to the agent's ACP `POST /events/{source}` endpoint
+  - Authenticate the inbound webhook (HMAC signature or shared secret, per gateway config)
+  - Return the agent's response status to the webhook sender
+- [ ] Rate limit inbound webhooks per agent (configurable, default: 60/minute)
+- [ ] Log webhook forwarding in audit trail (source, agent, status — never payload content)
+- [ ] Test: Webhook reaches agent via Ruriko proxy
+- [ ] Test: Unknown agent or source returns 404
+- [ ] Test: Rate limiting is enforced
+- [ ] Test: Invalid HMAC signature is rejected
+
+### R13.2 Provisioning Pipeline — Gateway Awareness
+- [ ] Update provisioning pipeline (R5.2) to handle gateway-bearing Gosuto configs:
+  - After applying Gosuto via ACP, verify that gateway processes are running via `/status`
+  - Include gateway process status in the health/status reporting
+  - If a gateway references secrets (e.g. IMAP credentials, webhook HMAC secret), push those secret tokens alongside other secrets during provisioning
+- [ ] Update `agents status` command to show active gateways alongside MCPs
+- [ ] Test: Provisioning a gateway-bearing Gosuto results in running gateway processes
+
+### R13.3 Container Image Building — Gateway Binaries
+- [ ] Document the pattern for including gateway binaries in agent container images:
+  - Same approach as MCPs: gateway binaries are baked into the Gitai Docker image at build time
+  - `Dockerfile.gitai` copies vetted gateway binaries alongside MCP binaries
+  - Gateway binaries are listed in a vetted manifest (same vetting process as MCPs)
+- [ ] Add example gateway binary to Docker build (e.g. `ruriko-gw-imap` placeholder)
+- [ ] Update `deploy/docker/Dockerfile.gitai` with gateway binary layer
+- [ ] Test: Built image contains gateway binaries at expected paths
+
+### R13.4 Documentation
+- [ ] Update `docs/architecture.md` with gateway architecture diagram
+- [ ] Update `docs/threat-model.md` with new attack surface analysis:
+  - Gateway process surface (same mitigations as MCP: vetted, supervised, sandboxed)
+  - Webhook endpoint surface (authentication, rate limiting, Ruriko proxy)
+  - Event payload injection (untrusted input → policy engine, same as Matrix messages)
+- [ ] Update `README.md` to mention event gateways in the architecture overview
+- [ ] Add gateway template examples (cron-triggered agent, email-reactive agent)
+
+### Definition of done
+- Ruriko proxies internet webhooks to agents securely
+- Provisioning handles gateway-bearing configs end-to-end
+- Container images include vetted gateway binaries
+- Documentation covers architecture, security, and usage
+
+---
+
 ## 🚀 Post-MVP Roadmap (explicitly not required now)
 
 - [ ] Reverse RPC broker (agents behind NAT without inbound connectivity)
@@ -1373,6 +1622,8 @@ similarity and injects the relevant context.
 - [ ] LLM-powered conversation summarisation for memory archival
 - [ ] Multi-user memory isolation and per-room memory scoping
 - [ ] Voice-to-text Matrix messages → NL pipeline
+- [ ] Additional gateway binaries (MQTT, RSS poller, Mastodon streaming, Slack events)
+- [ ] Gateway marketplace / vetted registry for community-contributed gateways
 
 ---
 
@@ -1387,6 +1638,8 @@ similarity and injects the relevant context.
 - **LLM translates, code decides**: The NL layer proposes commands; the deterministic pipeline executes them
 - **Memory is bounded**: Short-term is sharp; long-term is fuzzy; context window stays predictable
 - **Graceful degradation**: LLM down → keyword matching; memory down → no recall; commands always work
+- **Three ingress patterns, one turn engine**: Matrix messages, webhook events, and gateway events all feed into the same policy → LLM → tool call pipeline
+- **MCPs for outbound, gateways for inbound**: Symmetric supervised-process model, same credential management, same Gosuto configuration
 - **Document as you go**: Keep preamble and architecture docs up to date
 
 ---
@@ -1419,6 +1672,9 @@ similarity and injects the relevant context.
 - [ ] Phase R8: Integration and End-to-End Testing
 - [ ] Phase R9: Natural Language Interface — LLM-Powered Command Translation
 - [ ] Phase R10: Conversation Memory — Short-Term / Long-Term Architecture
+- [ ] Phase R11: Event Gateways — Gosuto Schema, Types, and Validation
+- [ ] Phase R12: Event Gateways — Gitai Runtime Integration
+- [ ] Phase R13: Ruriko-Side Gateway Wiring
 
 ---
 

@@ -29,6 +29,7 @@ limits: { ... }                    # optional
 capabilities: [ ... ]              # optional; default-deny if omitted
 approvals: { ... }                 # optional
 mcps: [ ... ]                      # optional
+gateways: [ ... ]                  # optional; event source gateways
 secrets: [ ... ]                   # optional
 persona: { ... }                   # optional
 ```
@@ -154,6 +155,120 @@ List of MCP server processes the Gitai runtime will supervise.
 
 ---
 
+### `gateways` *(optional)*
+
+Event source gateways that feed inbound events into the agent's turn engine. Gateways are the inbound complement to MCPs: where MCPs provide outbound tool access, gateways provide inbound event ingress. Each gateway translates domain-specific events (email arrival, social media notification, timer tick) into a normalised event envelope and delivers it to the agent via its local webhook endpoint (`POST /events/{source}`).
+
+There are two categories:
+
+1. **Built-in gateways** — compiled into the Gitai binary, zero external dependencies. Specified by `type` only (no `command` field).
+2. **External gateways** — supervised child processes, identical lifecycle model to MCPs. Specified by `command` + optional `args`/`env`. They POST events to `localhost:<acp_port>/events/{name}`.
+
+| Field         | Type              | Required | Description                                                     |
+|---------------|-------------------|----------|-----------------------------------------------------------------|
+| `name`        | string            | ✅       | Unique name for this gateway within the agent. Used as the `{source}` path segment in `/events/{source}`. |
+| `type`        | string            | ❌       | Built-in gateway type: `"cron"` or `"webhook"`. Mutually exclusive with `command`. |
+| `command`     | string            | ❌       | Binary path for an external gateway process. Mutually exclusive with `type`. |
+| `args`        | []string          | ❌       | Command-line arguments (external gateways only).                |
+| `env`         | map[string]string | ❌       | Additional environment variables (external gateways only).      |
+| `config`      | map[string]string | ❌       | Type-specific or gateway-specific configuration (see below).    |
+| `autoRestart` | bool              | ❌       | Restart the gateway process if it exits unexpectedly (external only). |
+
+**Exactly one** of `type` or `command` must be set.
+
+#### Built-in type: `cron`
+
+Emits a periodic event based on a cron expression. The event is delivered as a `POST /events/{name}` to the agent's own ACP listener. No external process is spawned — this is a goroutine inside the Gitai binary.
+
+| Config key    | Type   | Required | Description                                                   |
+|---------------|--------|----------|---------------------------------------------------------------|
+| `expression`  | string | ✅       | Standard 5-field cron expression (minute hour dom month dow). |
+| `payload`     | string | ❌       | Static text included in the event envelope's `payload.message` field. Passed to the LLM as the "user message" for this event trigger. |
+
+**Example:**
+
+```yaml
+gateways:
+  - name: market-check
+    type: cron
+    config:
+      expression: "*/15 9-16 * * 1-5"
+      payload: "Check portfolio performance and market state"
+```
+
+#### Built-in type: `webhook`
+
+Exposes an additional authenticated HTTP endpoint on the ACP listener for receiving external webhook deliveries (e.g. from GitHub, Stripe, or Ruriko acting as a reverse proxy for internet-facing webhooks).
+
+| Config key       | Type   | Required | Description                                                      |
+|------------------|--------|----------|------------------------------------------------------------------|
+| `path`           | string | ❌       | Custom sub-path (default: `/events/{name}`).                     |
+| `authType`       | string | ❌       | Authentication method: `"bearer"` (default, uses ACP token), `"hmac-sha256"`. |
+| `hmacSecretRef`  | string | ❌       | Secret ref for HMAC verification (required when `authType` is `"hmac-sha256"`). |
+
+**Example:**
+
+```yaml
+gateways:
+  - name: github-push
+    type: webhook
+    config:
+      authType: hmac-sha256
+      hmacSecretRef: "my-agent.github-webhook-secret"
+```
+
+#### External gateways
+
+External gateways are supervised processes that watch a domain-specific source and POST normalised event envelopes to the agent's local webhook endpoint. They follow the same lifecycle model as MCP server processes: started by the supervisor, restarted on crash (when `autoRestart` is true), and stopped on agent shutdown.
+
+**Example:**
+
+```yaml
+gateways:
+  - name: inbox-watch
+    command: /usr/local/bin/ruriko-gw-imap
+    args: ["--idle"]
+    env: {}
+    config:
+      host: imap.gmail.com
+      port: "993"
+      tls: "true"
+      folder: INBOX
+    autoRestart: true
+```
+
+The set of `config` keys is gateway-specific and documented by each gateway binary. The Gitai runtime passes `config` entries as environment variables prefixed with `GATEWAY_` (e.g. `GATEWAY_HOST=imap.gmail.com`) and injects `GATEWAY_TARGET_URL=http://localhost:8765/events/{name}` so the gateway knows where to POST events.
+
+#### Event envelope format
+
+All gateways — built-in and external — produce the same normalised JSON envelope:
+
+```json
+{
+  "source":   "inbox-watch",
+  "type":     "email.received",
+  "ts":       "2026-02-22T14:30:00Z",
+  "payload": {
+    "message": "New email from alice@example.com: Q4 earnings report",
+    "data": { "from": "alice@example.com", "subject": "Q4 earnings report" }
+  }
+}
+```
+
+The `payload.message` field is what reaches the LLM as the equivalent of a "user message" for this event. The `payload.data` field carries structured metadata for downstream tool calls.
+
+#### Rate limiting
+
+Gateway events share the agent's existing rate limits (`limits.maxRequestsPerMinute`, etc.). An additional per-gateway rate limit can be enforced via the `eventRateLimit` field in `limits`:
+
+| Field                      | Type | Default | Description                                    |
+|----------------------------|------|---------|------------------------------------------------|
+| `maxEventsPerMinute`       | int  | 0 (∞)   | Maximum inbound events per minute across all gateways. |
+
+Events that exceed the rate limit are dropped with a warning log.
+
+---
+
 ### `secrets` *(optional)*
 
 References to Ruriko secrets the agent expects to be injected at runtime. Secret *values* are never stored in Gosuto. Ruriko distributes them via ACP `/secrets/apply`.
@@ -209,6 +324,10 @@ Ruriko tracks every Gosuto change:
 3. **Default deny.** If no capability rule matches, the tool call is rejected.
 4. **Approval gating.** Sensitive operations must be explicitly approved, regardless of capability rules.
 5. **Version history.** All changes are auditable with trace correlation.
+6. **Gateway events are untrusted input.** Event payloads are treated identically to user messages — they pass through the same policy engine. A crafted event cannot bypass capability rules.
+7. **External gateways follow the MCP threat model.** They are vetted binaries baked into the container image, supervised by the same process manager, and receive credentials only via Kuze-managed environment variables.
+8. **Webhook authentication.** Built-in webhook gateways require ACP bearer token or HMAC signature verification. Unauthenticated webhook deliveries are rejected.
+9. **Internet webhooks are proxied through Ruriko.** Agents never receive raw internet traffic. Ruriko validates and forwards webhook payloads via ACP.
 
 ---
 
@@ -225,4 +344,80 @@ trust:
     - "!roomid:example.com"
   allowedSenders:
     - "@alice:example.com"
+```
+
+---
+
+## Event-Driven Agent Example
+
+```yaml
+apiVersion: gosuto/v1
+metadata:
+  name: portfolio-watcher
+  template: finance-agent
+  description: Watches market on a schedule and reacts to email alerts
+
+trust:
+  allowedRooms:
+    - "!room:example.com"
+  allowedSenders:
+    - "@bogdan:example.com"
+
+limits:
+  maxRequestsPerMinute: 10
+  maxEventsPerMinute: 30
+
+gateways:
+  - name: market-hours-tick
+    type: cron
+    config:
+      expression: "*/15 9-16 * * 1-5"
+      payload: "Check portfolio performance and market state"
+
+  - name: inbox-watch
+    command: /usr/local/bin/ruriko-gw-imap
+    args: ["--idle"]
+    config:
+      host: imap.gmail.com
+      port: "993"
+      tls: "true"
+      folder: INBOX
+    autoRestart: true
+
+mcps:
+  - name: finnhub
+    command: /usr/local/bin/mcp-finnhub
+    autoRestart: true
+
+capabilities:
+  - name: allow-finnhub
+    mcp: finnhub
+    tool: "*"
+    allow: true
+  - name: default-deny
+    mcp: "*"
+    tool: "*"
+    allow: false
+
+secrets:
+  - name: portfolio-watcher.openai-api-key
+    envVar: OPENAI_API_KEY
+    required: true
+  - name: portfolio-watcher.finnhub-api-key
+    envVar: FINNHUB_API_KEY
+    required: true
+  - name: portfolio-watcher.imap-credentials
+    envVar: IMAP_CREDENTIALS
+    required: true
+
+persona:
+  systemPrompt: |
+    You are a portfolio analyst. When triggered by a scheduled check, analyse
+    current market conditions using your tools. When triggered by an email,
+    assess whether the email content is relevant to the portfolio and act
+    accordingly. Always provide concise, actionable reports.
+  llmProvider: openai
+  model: gpt-4o
+  temperature: 0.2
+  apiKeySecretRef: portfolio-watcher.openai-api-key
 ```
