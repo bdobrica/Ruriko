@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -71,6 +72,13 @@ type HandlersConfig struct {
 	// It holds non-secret operator-tunable knobs (e.g. nlp.model, nlp.endpoint,
 	// nlp.rate-limit) that take effect without a container restart.
 	ConfigStore config.Store // optional — enables /ruriko config commands
+
+	// NLPEnvAPIKey is the API key discovered from the environment variable at
+	// startup (typically RURIKO_NLP_API_KEY).  When non-empty it is used as the
+	// bootstrap API key until the operator stores an overriding value via
+	// `/ruriko secrets set ruriko.nlp-api-key`.  Storing the env-var value here
+	// lets tests inject a key without modifying the process environment.
+	NLPEnvAPIKey string // optional — bootstrap NLP API key from env
 }
 
 // RoomSender is the subset of the Matrix client needed for posting breadcrumb
@@ -106,6 +114,18 @@ type Handlers struct {
 	// configStore is the runtime key/value configuration store for non-secret
 	// operator-tunable knobs (e.g. nlp.model, nlp.endpoint, nlp.rate-limit).
 	configStore config.Store
+
+	// nlpEnvAPIKey is the API key captured from the environment at startup.
+	// It is the bootstrap fallback used when the secrets store has no
+	// "ruriko.nlp-api-key" entry yet.
+	nlpEnvAPIKey string
+
+	// nlpProviderMu guards nlpProviderCache for concurrent-safe lazy rebuilds.
+	nlpProviderMu sync.RWMutex
+
+	// nlpProviderCache is the memoised provider and the config snapshot that
+	// was used to build it.  Rebuilt whenever apiKey / model / endpoint change.
+	nlpProviderCache nlpCache
 }
 
 // nlp health-state constants (stored in Handlers.nlpHealthState).
@@ -139,6 +159,7 @@ func NewHandlers(cfg HandlersConfig) *Handlers {
 		nlpRateLimiter:    cfg.NLPRateLimiter,
 		nlpTokenBudget:    cfg.NLPTokenBudget,
 		configStore:       cfg.ConfigStore,
+		nlpEnvAPIKey:      cfg.NLPEnvAPIKey,
 	}
 }
 

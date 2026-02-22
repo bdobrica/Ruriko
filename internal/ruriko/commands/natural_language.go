@@ -390,9 +390,15 @@ func (h *Handlers) HandleNaturalLanguage(ctx context.Context, text string, evt *
 		return h.handleConfirmationResponse(ctx, text, session, roomID, senderMXID, evt)
 	}
 
-	// --- LLM path (R9.4) — takes precedence when provider is configured ----
-	if h.nlpProvider != nil {
-		return h.handleNLClassify(ctx, text, roomID, senderMXID, evt)
+	// --- LLM path (R9.4) — takes precedence when a provider is available ----
+	// resolveNLPProvider performs the R9.7 lookup order:
+	//   1. "ruriko.nlp-api-key" secret (preferred)
+	//   2. RURIKO_NLP_API_KEY env var (bootstrap fallback)
+	//   3. Nil → degrade to keyword matching below
+	// It also rebuilds the underlying http.Client wrapper lazily whenever the
+	// effective (apiKey, model, endpoint) triple changes.
+	if provider := h.resolveNLPProvider(ctx); provider != nil {
+		return h.handleNLClassify(ctx, text, roomID, senderMXID, provider, evt)
 	}
 
 	// --- Keyword path (R5.4) — requires template registry ------------------
@@ -593,11 +599,16 @@ func buildConfirmationPrompt(intent ParsedIntent, missingSecrets []string, image
 // R9.4 LLM-backed NL dispatch
 // ---------------------------------------------------------------------------
 
-// handleNLClassify is called when h.nlpProvider is configured.  It enforces
+// handleNLClassify is called when an NLP provider is available.  It enforces
 // the rate limit and daily token budget, builds the ClassifyRequest from live
-// context, calls the LLM, records token usage, and routes the response to the
-// appropriate sub-handler.
-func (h *Handlers) handleNLClassify(ctx context.Context, text, roomID, senderMXID string, evt *event.Event) (string, error) {
+// context, calls the LLM via provider, records token usage, and routes the
+// response to the appropriate sub-handler.
+//
+// provider is the resolved nlp.Provider from resolveNLPProvider (R9.7).  It
+// is passed as an argument rather than read from h.nlpProvider so that the
+// value used for this request always matches the one that caused the path to
+// be taken in HandleNaturalLanguage.
+func (h *Handlers) handleNLClassify(ctx context.Context, text, roomID, senderMXID string, provider nlp.Provider, evt *event.Event) (string, error) {
 	// Rate-limit check.
 	if h.nlpRateLimiter != nil && !h.nlpRateLimiter.Allow(senderMXID) {
 		return nlp.RateLimitMessage, nil
@@ -637,7 +648,7 @@ func (h *Handlers) handleNLClassify(ctx context.Context, text, roomID, senderMXI
 		SenderMXID:       senderMXID,
 	}
 
-	resp, err := h.nlpProvider.Classify(ctx, req)
+	resp, err := provider.Classify(ctx, req)
 	if err != nil {
 		switch {
 		case errors.Is(err, nlp.ErrRateLimit):

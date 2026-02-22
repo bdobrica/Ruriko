@@ -1179,26 +1179,26 @@ via `/ruriko config get` and auditable.
 
 #### NLP API key via Kuze
 
-- [ ] Operator runs `/ruriko secrets set ruriko.nlp-api-key` to store the key
+- [x] Operator runs `/ruriko secrets set ruriko.nlp-api-key` to store the key
   - Follows the standard Kuze flow: one-time browser link, value never in chat
-- [ ] Provider lookup order on each `Classify` call:
+- [x] Provider lookup order on each `Classify` call:
   1. `ruriko.nlp-api-key` secret from the encrypted secrets store (preferred)
   2. `RURIKO_NLP_API_KEY` env var (bootstrap fallback)
   3. Neither present → NL layer stays in keyword-matching mode, no error
-- [ ] Log a `warn` if both sources are present (helps operators spot stale config)
-- [ ] Test: Secret takes precedence over env var
-- [ ] Test: Absent key degrades gracefully to keyword matching
+- [x] Log a `warn` if both sources are present (helps operators spot stale config)
+- [x] Test: Secret takes precedence over env var
+- [x] Test: Absent key degrades gracefully to keyword matching
 
 #### Lazy provider rebuild
 
-- [ ] `Handlers` holds a `providerCache` (current provider + the config snapshot
+- [x] `Handlers` holds a `providerCache` (current provider + the config snapshot
   it was built from)
-- [ ] On each `HandleNaturalLanguage` call, compare current config (key + model +
+- [x] On each `HandleNaturalLanguage` call, compare current config (key + model +
   endpoint) to the cached snapshot; rebuild the provider if anything changed
-- [ ] Rebuild is cheap (~zero overhead: just constructs a new `http.Client` wrapper)
-- [ ] Thread-safe: use a `sync.RWMutex` around the cache
-- [ ] Test: Provider is rebuilt when model changes; not rebuilt when config is unchanged
-- [ ] Test: Concurrent calls during a rebuild do not race (run with `-race`)
+- [x] Rebuild is cheap (~zero overhead: just constructs a new `http.Client` wrapper)
+- [x] Thread-safe: use a `sync.RWMutex` around the cache
+- [x] Test: Provider is rebuilt when model changes; not rebuilt when config is unchanged
+- [x] Test: Concurrent calls during a rebuild do not race (run with `-race`)
 
 #### Definition of done (R9.7)
 - `/ruriko config set nlp.model gpt-4o` takes effect on the next NL message, no restart

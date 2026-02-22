@@ -284,53 +284,46 @@ func New(config *Config) (*App, error) {
 	}
 
 	// Initialise NLP provider for natural-language command classification (R9).
-	// Priority:
-	//   1. A pre-constructed provider injected directly via Config.NLPProvider.
-	//   2. Auto-constructed OpenAI-compatible provider when an API key is found
-	//      in the environment variable named by Config.NLPAPIKeySecretRef
-	//      (or the default RURIKO_NLP_API_KEY).
-	//   3. No provider → NL layer uses the deterministic keyword matcher (R5.4).
+	//
+	// R9.7 lookup order (evaluated lazily on every Classify call):
+	//   1. "ruriko.nlp-api-key" secret in the encrypted secrets store (preferred)
+	//   2. Env var named by NLPAPIKeySecretRef / RURIKO_NLP_API_KEY (bootstrap)
+	//   3. Neither → NL layer uses the deterministic keyword matcher (R5.4)
+	//
+	// A pre-constructed Config.NLPProvider short-circuits key resolution and is
+	// used as-is (useful for integration tests and custom provider wiring).
 	{
-		var resolvedProvider nlp.Provider
 		if config.NLPProvider != nil {
-			resolvedProvider = config.NLPProvider
-			slog.Info("NLP: using pre-configured provider")
+			handlersCfg.NLPProvider = config.NLPProvider
+			slog.Info("NLP: using pre-configured provider (key resolution disabled)")
 		} else {
 			envVar := config.NLPAPIKeySecretRef
 			if envVar == "" {
 				envVar = "RURIKO_NLP_API_KEY"
 			}
 			if apiKey := os.Getenv(envVar); apiKey != "" {
-				resolvedProvider = nlp.New(nlp.Config{
-					APIKey:  apiKey,
-					BaseURL: config.NLPEndpoint,
-					Model:   config.NLPModel,
-				})
-				model := config.NLPModel
-				if model == "" {
-					model = "gpt-4o-mini"
-				}
-				endpoint := config.NLPEndpoint
-				if endpoint == "" {
-					endpoint = "https://api.openai.com/v1"
-				}
-				slog.Info("NLP: OpenAI-compatible provider ready",
-					"model", model, "endpoint", endpoint, "key_env", envVar)
+				// Capture the env-var key as the bootstrap fallback so that
+				// resolveNLPProvider (R9.7) can use it before the operator has
+				// stored the secret via `/ruriko secrets set ruriko.nlp-api-key`.
+				handlersCfg.NLPEnvAPIKey = apiKey
+				slog.Info("NLP: bootstrap API key found in environment; provider will be built lazily",
+					"key_env", envVar,
+					"hint", "store via /ruriko secrets set ruriko.nlp-api-key for secure rotation")
 			} else {
-				slog.Info("NLP: no API key found; natural-language layer will use keyword matching",
-					"key_env", envVar)
+				slog.Info("NLP: no API key in environment; keyword matching active until a secret is stored",
+					"key_env", envVar,
+					"secret_name", "ruriko.nlp-api-key")
 			}
 		}
 
-		if resolvedProvider != nil {
-			rateLimit := config.NLPRateLimit
-			rateLimiter := nlp.NewRateLimiter(rateLimit, time.Minute)
-			tokenBudget := nlp.NewTokenBudget(config.NLPTokenBudget)
-			handlersCfg.NLPProvider = resolvedProvider
-			handlersCfg.NLPRateLimiter = rateLimiter
-			handlersCfg.NLPTokenBudget = tokenBudget
-			slog.Info("NLP: token budget configured", "daily_tokens_per_sender", tokenBudget.Budget())
-		}
+		// Rate-limiter and token budget are always initialised so they take
+		// effect the moment a key becomes available (env var or secrets store).
+		rateLimit := config.NLPRateLimit
+		rateLimiter := nlp.NewRateLimiter(rateLimit, time.Minute)
+		tokenBudget := nlp.NewTokenBudget(config.NLPTokenBudget)
+		handlersCfg.NLPRateLimiter = rateLimiter
+		handlersCfg.NLPTokenBudget = tokenBudget
+		slog.Info("NLP: rate-limiter and token budget ready", "daily_tokens_per_sender", tokenBudget.Budget())
 	}
 
 	// Initialise approval gate.
