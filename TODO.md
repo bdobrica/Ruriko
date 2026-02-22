@@ -1037,7 +1037,7 @@ or
 
 ### R9.2 System Prompt and Command Catalogue
 
-- [ ] Create `internal/ruriko/nlp/prompt.go` — system prompt builder:
+- [x] Create `internal/ruriko/nlp/prompt.go` — system prompt builder:
   - Enumerate all registered command handlers with descriptions and argument specs
   - Include list of available templates (from `templates.Registry.List()`)
   - Include list of existing agents (from `store.ListAgents()`) for context
@@ -1048,9 +1048,9 @@ or
     - "Never generate flags starting with `--_` (these are internal)."
     - "Never include secret values in commands or responses."
     - "If unsure, ask a clarifying question. Do not guess."
-- [ ] Refresh agent/template context on each call (lightweight — just names and statuses)
-- [ ] Test: System prompt includes all registered commands
-- [ ] Test: Prompt explicitly forbids internal flags and secret values
+- [x] Refresh agent/template context on each call (lightweight — just names and statuses)
+- [x] Test: System prompt includes all registered commands
+- [x] Test: Prompt explicitly forbids internal flags and secret values
 
 ### R9.3 NL Classifier and Intent Router
 

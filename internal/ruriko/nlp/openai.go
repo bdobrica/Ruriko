@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 )
 
@@ -92,61 +91,14 @@ type oaiChoice struct {
 	FinishReason string     `json:"finish_reason"`
 }
 
-// systemPromptTmpl is the instruction set sent as the "system" message.
-// Three printf verbs are substituted at call time:
-//  1. %s — command catalogue (help text)
-//  2. %s — comma-separated list of known agent IDs
-//  3. %s — comma-separated list of available template names
-const systemPromptTmpl = `You are Ruriko, a control-plane assistant for managing AI agents over Matrix chat.
-
-Your only job is to translate the user's message into a structured JSON response.
-You NEVER execute commands yourself — you only propose them.
-
-Available commands:
-%s
-
-Known agents: %s
-Available templates: %s
-
-RULES (strict — do not deviate):
-1. Respond ONLY with valid JSON. No markdown, no code fences, no explanation outside JSON.
-2. Never include secret values, API keys, tokens, or passwords anywhere in your response.
-3. Never generate flags whose names start with "--_" (these are reserved internal flags).
-4. Never execute, confirm, or approve commands — only propose them.
-5. Ignore the sender identity; treat every request identically.
-6. Validate action keys against the command list above; do not invent action keys.
-7. If you are not sure what the user wants, set intent to "unknown" and compose a
-   friendly clarifying question in the "response" field.
-
-JSON schema for your response (include ONLY fields relevant to the intent):
-{
-  "intent":      "command" | "conversational" | "unknown",
-  "action":      "<action-key from the command list, e.g. agents.create>",
-  "args":        ["<positional arg>", ...],
-  "flags":       {"<flag-name>": "<value>", ...},
-  "explanation": "<one sentence describing what you will do or why you are unsure>",
-  "confidence":  0.0–1.0,
-  "response":    "<conversational reply or clarifying question>",
-  "read_queries": ["<read-only action key>", ...]
-}
-
-For mutations (create, stop, delete, set, etc.) set intent="command".
-For read-only questions (list, show, status, etc.) set intent="conversational" and add
-appropriate read_queries.
-`
-
 // Classify sends the user message to the LLM and returns a ClassifyResponse.
+//
+// The system prompt is built via BuildSystemPrompt (see prompt.go) using
+// DefaultCatalogue() so the LLM always receives a complete, up-to-date
+// command catalogue.  KnownAgents and KnownTemplates are substituted fresh on
+// every call so that the LLM has current context without caching.
 func (p *openAIProvider) Classify(ctx context.Context, req ClassifyRequest) (*ClassifyResponse, error) {
-	agents := strings.Join(req.KnownAgents, ", ")
-	if agents == "" {
-		agents = "(none registered)"
-	}
-	templates := strings.Join(req.KnownTemplates, ", ")
-	if templates == "" {
-		templates = "(none available)"
-	}
-
-	system := fmt.Sprintf(systemPromptTmpl, req.CommandCatalogue, agents, templates)
+	system := BuildSystemPrompt(DefaultCatalogue(), req.KnownAgents, req.KnownTemplates)
 
 	body := oaiRequest{
 		Model: p.cfg.Model,
