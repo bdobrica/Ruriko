@@ -1,0 +1,110 @@
+apiVersion: gosuto/v1
+metadata:
+  name: "{{.AgentName}}"
+  template: email-agent
+  description: >
+    Email-reactive agent. Monitors an IMAP mailbox via the ruriko-gw-imap gateway
+    and acts on new messages. Each new email triggers a turn: the agent reads the
+    subject and body, optionally fetches linked URLs, and posts a summary to the
+    admin room. Useful for monitoring customer support inboxes, automated reports,
+    alert emails, or any workflow driven by incoming mail.
+
+# Trust: only the admin room is monitored; any sender in the room is allowed.
+# The gateway source "imap" is the implicit trigger — it bypasses the sender
+# allowlist (events have no Matrix MXID) and is rate-limited via limits.
+trust:
+  allowedRooms:
+    - "{{.AdminRoom}}"
+  allowedSenders:
+    - "*"
+  requireE2EE: false
+  adminRoom: "{{.AdminRoom}}"
+
+limits:
+  maxRequestsPerMinute: 10
+  maxTokensPerRequest: 4096
+  maxConcurrentRequests: 1
+  maxMonthlyCostUSD: 5.00
+  # Cap gateway-triggered turns to avoid runaway cost if the mailbox floods.
+  maxEventsPerMinute: 5
+
+capabilities:
+  - name: allow-fetch-read
+    mcp: fetch
+    tool: fetch
+    allow: true
+    constraints:
+      method: GET
+
+  - name: deny-all-write-tools
+    mcp: "*"
+    tool: "*"
+    allow: false
+
+approvals:
+  enabled: false
+
+persona:
+  systemPrompt: |
+    You are an email-reactive agent. When you receive an email event, your job is to:
+
+    1. Read the email subject and body provided in the event message.
+    2. Optionally fetch and summarise any URLs mentioned in the email if they are
+       relevant to understanding the content (use the "fetch" tool, GET only).
+    3. Post a concise, structured summary to the admin room:
+       - From: <sender>
+       - Subject: <subject>
+       - Summary: <2-3 sentence summary>
+       - Action required: <yes/no and why, if applicable>
+
+    Be factual and concise. Never take actions beyond summarising and fetching URLs.
+    Do not reply to emails or call external APIs.
+  llmProvider: openai
+  model: gpt-4o-mini
+  temperature: 0.2
+  apiKeySecretRef: "{{.AgentName}}.openai-api-key"
+
+secrets:
+  - name: "{{.AgentName}}.openai-api-key"
+    envVar: OPENAI_API_KEY
+    required: true
+
+  # IMAP credentials are pushed by Ruriko during provisioning. They are
+  # injected into the ruriko-gw-imap gateway process as GW_IMAP_PASSWORD.
+  - name: "{{.AgentName}}.imap-password"
+    envVar: IMAP_PASSWORD
+    required: true
+
+mcps:
+  - name: fetch
+    command: npx
+    args:
+      - "-y"
+      - "@modelcontextprotocol/server-fetch"
+    autoRestart: true
+
+# ---------------------------------------------------------------------------
+# IMAP gateway: monitors a mailbox and sends an imap.email event for each
+# new message. The gateway binary (ruriko-gw-imap) is baked into the Gitai
+# Docker image at /usr/local/lib/gitai/gateways/ruriko-gw-imap.
+#
+# Required: fill in GW_IMAP_HOST and GW_IMAP_USER for your mail server.
+# The password is injected from the "{{.AgentName}}.imap-password" secret
+# (see secrets section above) — never hard-code it here.
+#
+# See docs/ops/gateway-binaries.md for the full environment variable reference.
+# ---------------------------------------------------------------------------
+gateways:
+  - name: imap
+    command: /usr/local/lib/gitai/gateways/ruriko-gw-imap
+    env:
+      ACP_URL: http://localhost:8765
+      GW_SOURCE: imap
+      GW_IMAP_HOST: "imap.example.com"
+      GW_IMAP_PORT: "993"
+      GW_IMAP_USER: "{{.AgentName}}@example.com"
+      # GW_IMAP_PASSWORD is injected from the IMAP_PASSWORD secret above.
+      GW_IMAP_PASSWORD: "${IMAP_PASSWORD}"
+      GW_IMAP_MAILBOX: INBOX
+      GW_POLL_INTERVAL: 60s
+    autoRestart: true

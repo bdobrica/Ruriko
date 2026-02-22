@@ -60,6 +60,8 @@ Each agent runs as a separate single binary:
 * Communicates via structured message envelopes
 * Calls LLM providers
 * Manages and supervises MCP tool processes
+* **Manages and supervises event gateway processes** (built-in cron/webhook, external binaries)
+* Accepts inbound event triggers via ACP `POST /events/{source}` and routes them through the same policy → LLM → tool pipeline as Matrix messages
 * Enforces policy locally
 * Handles approvals
 * Executes tool calls within strict constraints
@@ -77,9 +79,10 @@ Gosuto defines:
 * Allowed rooms and senders
 * Capability rules
 * MCP server wiring
+* **Event gateway wiring** (built-in cron/webhook, and external gateway binaries baked into the image)
 * Tool allowlists and constraints
 * Approval requirements
-* Limits (rate, cost, concurrency)
+* Limits (rate, cost, concurrency, events-per-minute)
 * Secret bindings
 * Persona and style (non-authoritative)
 
@@ -117,8 +120,9 @@ Ruriko uses **three distinct channels**:
 | Channel | Used for |
 |---------|----------|
 | **Matrix** (conversation) | Human ↔ Ruriko dialogue, agent ↔ agent discussion, audit breadcrumbs |
-| **ACP** (Agent Control Protocol) | Lifecycle control, config apply, health checks, restarts — private to the Docker network |
+| **ACP** (Agent Control Protocol) | Lifecycle control, config apply, health checks, restarts, **inbound event delivery** (`POST /events/{source}`) — private to the Docker network |
 | **Kuze** (secret plane) | One-time secret entry (human) and one-time secret redemption (agents) — never through Matrix |
+| **Event Gateways** (inbound triggers) | Cron ticks, email arrivals, webhook deliveries — translated to event envelopes, posted to ACP |
 
 This separation keeps the transcript meaningful and safe.
 
@@ -140,6 +144,20 @@ MCP processes are supervised and reconciled by Gitai.
 
 ---
 
+# 🔔 Inbound Event Gateways
+
+Agents can be *woken* by external events rather than waiting for Matrix messages.
+
+Gateway types:
+
+* **Built-in Cron** — fires `cron.tick` events on any 5-field cron schedule (no external process needed)
+* **Built-in Webhook** — receives HTTP POSTs proxied through Ruriko's rate-limited, HMAC-authenticated `/webhook/{agent}/{source}` endpoint
+* **External binaries** — compiled gateway processes baked into the Gitai Docker image (e.g. `ruriko-gw-imap` for email-reactive agents)
+
+Gateways are wired in Gosuto under `gateways:` and are supervised identically to MCP processes — same credential management, same restart semantics, same audit trail. Events enter the same policy → LLM → tool pipeline as Matrix messages; prompt injection from external sources is mitigated by code-enforced policy.
+
+---
+
 # 🛠 Agent Templates
 
 ### Canonical agents
@@ -149,7 +167,8 @@ MCP processes are supervised and reconciled by Gitai.
 
 ### Generic templates
 
-* **Cron Agent** – scheduled checks and recurring tasks
+* **Cron Agent** – scheduled checks and recurring tasks, woken by a built-in cron gateway
+* **Email Agent** – email-reactive agent; monitors an IMAP mailbox via `ruriko-gw-imap` and acts on new messages
 * **Browser Agent** – headless browsing with approval-gated navigation
 * **Research Agent** – structured envelope-based task delegation
 

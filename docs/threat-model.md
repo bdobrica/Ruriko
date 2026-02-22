@@ -3,7 +3,7 @@
 > **Security analysis and threat mitigation strategies**
 
 **Version**: 0.1.0  
-**Last Updated**: 2026-02-19  
+**Last Updated**: 2026-02-22  
 **Status**: Living Document
 
 ---
@@ -256,6 +256,62 @@ The MVP targets a **single-host deployment** with the following security propert
 
 ---
 
+### 6. Gateway Process Surface
+
+**Entry Points**:
+- External gateway binary processes supervised by Gitai (e.g. `ruriko-gw-imap`)
+- Built-in cron and webhook gateway goroutines inside Gitai
+- Environment variables carrying gateway credentials (IMAP passwords, webhook secrets)
+
+**Risks**:
+- Compromised or maliciously-crafted gateway binary exfiltrates credentials or injects payloads
+- Credential theft: gateway process can read its own environment (IMAP password, ACP token)
+- ACP flooding: a runaway gateway overwhelms the agent's event endpoint
+- Gateway process escapes supervision and persists after Gosuto removal
+
+**Mitigations**:
+→ See [Gateway Security Controls](#8-gateway-security-controls)
+
+---
+
+### 7. Webhook Endpoint Surface
+
+**Entry Points**:
+- Ruriko's `/webhook/{agentName}/{source}` proxy endpoint (internet-facing)
+- Inbound HTTP traffic from third-party services (GitHub, Stripe, etc.)
+
+**Risks**:
+- Spoofed webhook delivery (unsigned requests from any source)
+- Payload injection via untrusted webhook body content
+- Route enumeration (agent name / source discovery via 404 vs 401 responses)
+- Denial of service (webhook flooding; amplified cost if each event triggers an LLM call)
+- Replay attacks (re-delivery of previously authenticated webhook events)
+
+**Mitigations**:
+→ See [Gateway Security Controls](#8-gateway-security-controls)
+
+---
+
+### 8. Event Payload Injection Surface
+
+**Entry Points**:
+- `payload.message` field of the event envelope, forwarded verbatim to the LLM as the user turn
+- `payload.data` structured metadata from gateway-translated external content (email subject/body,
+  cron message strings, webhook JSON)
+
+**Risks**:
+- Prompt injection embedded in email subject/body, cron trigger text, or webhook JSON string fields
+- Attacker-controlled content reaching the agent's LLM turn engine and inducing disallowed actions
+- Exfiltration channels encoded in structured event data
+- Cascading compromise: email gateway + email from attacker = remote code execution via LLM
+
+**Mitigations**:
+- Same policy-first architecture as Matrix message prompt injection: the LLM *proposes* actions;
+  the deterministic policy engine *decides*. Prompt injection cannot bypass code-enforced policy.
+→ Also see [Gateway Security Controls](#8-gateway-security-controls)
+
+---
+
 ## Threat Scenarios
 
 ### Scenario 1: Compromised Agent Attempts Privilege Escalation
@@ -400,6 +456,30 @@ The MVP targets a **single-host deployment** with the following security propert
 
 ---
 
+### Scenario 9: Malicious Content via Gateway Event
+
+**Attack Flow**:
+1. Attacker sends a crafted email to the address monitored by `ruriko-gw-imap`
+2. Email subject/body contains prompt injection instructions
+3. Gateway translates email into a `imap.email` event envelope and POSTs to ACP
+4. Gitai's turn engine processes the message as a legitimate user turn
+5. LLM "follows" the injected instructions and proposes a disallowed tool call
+6. Policy engine is invoked; disallowed tool call is blocked
+
+**Mitigations**:
+- ✅ **Policy-first architecture**: LLM proposes, policy decides — prompt injection cannot bypass code
+- ✅ **Sender allowlists**: `trust.allowedSenders` constrains which Matrix users may direct the agent;
+  gateway events are treated as a separate queue and never elevate trust context
+- ✅ **Rate limiting**: `limits.maxEventsPerMinute` caps events across all gateways
+- ✅ **Capability rules**: tools not explicitly allowed in Gosuto are denied regardless of LLM output
+- ✅ **Audit trail**: gateway source, event type, and resulting action are logged (never payload)
+- ⚠️ **Payload sanitisation**: future — strip/truncate event payloads before LLM injection
+- ⚠️ **Gateway sender trust tiers**: future — differentiate trust level by gateway source type
+
+**Residual Risk**: LOW–MEDIUM (policy enforcement is robust; advanced multi-step social engineering via crafted events remains a theoretical risk)
+
+---
+
 ## Mitigations
 
 ### Summary of Mitigations by Threat Type
@@ -412,6 +492,8 @@ The MVP targets a **single-host deployment** with the following security propert
 | Information Disclosure       | Secret redaction, encryption at rest, scoping    | MEDIUM        |
 | Denial of Service            | Rate limits, resource quotas, token budgets      | LOW           |
 | Elevation of Privilege       | Policy enforcement, approval gates, isolation    | LOW           |
+| Gateway Payload Injection    | Policy-first arch, capability rules, rate limits | LOW           |
+| Webhook Spoofing             | HMAC auth, Ruriko proxy, rate limiting           | LOW           |
 
 ---
 
@@ -564,6 +646,47 @@ The MVP targets a **single-host deployment** with the following security propert
 **C7.4: Retention**
 - Audit logs retained for compliance period
 - Backed up regularly
+
+---
+
+### 8. Gateway Security Controls
+
+**C8.1: Source-Compiled Binaries Only**
+- All gateway binaries compiled from source inside the Docker builder stage
+- No pre-built artefacts downloaded at build time
+- Vetted manifest (`deploy/docker/gateway-manifest.yaml`) is the authoritative list of approved binaries
+- Each binary verified with `RUN test -x <path>` as a hard build-time check
+
+**C8.2: Supervised Process Lifecycle**
+- Gateway processes run as children of the `gitai` non-root user
+- Maximum restarts enforced by Gitai supervisor (exponential backoff)
+- Processes cleaned up on Gosuto removal or agent shutdown
+- External gateways cannot escalate beyond their environment's permissions
+
+**C8.3: Credential Isolation**
+- Gateway credentials (IMAP passwords, webhook HMAC secrets) injected via environment variables
+- Never stored in Gosuto YAML files or in the Docker image
+- Pushed by Ruriko's secrets pipeline under the same AES-GCM encryption as all other secrets
+- Each gateway process can only access the secrets explicitly bound to it
+
+**C8.4: Webhook Authentication and Rate Limiting**
+- Ruriko's `/webhook/{agentName}/{source}` proxy validates HMAC-SHA256 signatures before forwarding
+- Bearer token authentication supported as an alternative
+- Per-agent rate limiting enforced at the Ruriko proxy (default: 60 deliveries/minute)
+- Invalid signatures and rate-exceeded requests return 4xx without disclosing internal details
+- Agents are never directly reachable from the internet
+
+**C8.5: Event Payload Handling**
+- Event payloads treated as untrusted user input — identical threat model to Matrix messages
+- `payload.message` is the user turn fed to LLM; all resulting actions are policy-gated
+- `payload.data` structured metadata is never forwarded to LLM directly
+- Audit log records source, type, and action outcome; never the payload content itself
+- `limits.maxEventsPerMinute` in Gosuto caps cross-gateway event throughput
+
+**C8.6: ACP Event Authentication**
+- `POST /events/{source}` requires `Authorization: Bearer <GITAI_ACP_TOKEN>` when the agent
+  has `GITAI_ACP_TOKEN` set (the same token used for all other ACP operations)
+- Requests without valid auth are rejected with HTTP 401 before event processing
 
 ---
 

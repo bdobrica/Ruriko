@@ -67,3 +67,16 @@ mcps:
       - "-y"
       - "@modelcontextprotocol/server-fetch"
     autoRestart: true
+
+# ---------------------------------------------------------------------------
+# Cron gateway: wakes the agent on a configurable schedule.
+# The default sends a "run scheduled check" trigger every hour. The built-in
+# cron gateway requires no additional process — it runs inside Gitai.
+# Adjust config.expression for your desired schedule (5-field cron syntax).
+# ---------------------------------------------------------------------------
+gateways:
+  - name: schedule
+    type: cron
+    config:
+      expression: "0 * * * *"
+      payload: "Run scheduled check and report results to the admin room."

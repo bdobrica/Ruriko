@@ -3,7 +3,7 @@
 > **High-level architecture and component interactions**
 
 **Version**: 0.1.0  
-**Last Updated**: 2026-02-19  
+**Last Updated**: 2026-02-22  
 **Status**: Living Document
 
 > For the canonical product story, user UX contract, and full glossary see
@@ -143,6 +143,27 @@ Ruriko is a distributed control plane for managing secure, capability-scoped AI 
 - Communicate via stdio or TCP
 - Defined in Gosuto configuration
 - Calls gated by policy engine
+
+---
+
+### 6. Event Gateways
+
+**Role**: Inbound event ingestion — the symmetric inbound complement to MCPs
+
+**Types**:
+- **Built-in: Cron** — fires `cron.tick` events on a 5-field cron schedule (no external dependency)
+- **Built-in: Webhook** — accepts HTTP POSTs from Ruriko's `/webhook/{agent}/{source}` proxy
+- **External binaries** — compiled artefacts baked into the Gitai Docker image (e.g. `ruriko-gw-imap`)
+
+**Integration**:
+- Supervised by Gitai (same process model as MCP servers: start, monitor, restart)
+- POST normalised event envelopes (`common/spec/envelope`) to the agent's ACP: `POST /events/{source}`
+- Defined under `gateways:` in Gosuto configuration
+- Credentials managed by Ruriko's secrets pipeline; injected as environment variables
+- External binary artefacts listed in `deploy/docker/gateway-manifest.yaml`
+
+**Event lifecycle**:
+- Gateway process fires → POSTs envelope to ACP `/events/{source}` → Gitai turn engine handles it identically to a Matrix message → LLM proposes tools → policy engine enforces → response sent to Matrix room
 
 ---
 
@@ -299,6 +320,58 @@ sequenceDiagram
 
 ---
 
+### Gateway Architecture
+
+```mermaid
+flowchart LR
+  subgraph External["External Event Sources"]
+    IMAP["IMAP Server\n(email)"]
+    WebSrc["Webhook Sender\n(GitHub, Stripe, etc.)"]
+    Clock["System Clock\n(cron)"]
+  end
+
+  subgraph RurikoProxy["Ruriko Control Plane"]
+    WHProxy["/webhook/{agent}/{source}\nRate-limit · HMAC auth · Proxy"]
+  end
+
+  subgraph GitaiAgent["Gitai Agent Runtime"]
+    GWS["Gateway Supervisor"]
+
+    subgraph GWProcs["Gateway Processes"]
+      CronGW["Built-in Cron Gateway"]
+      WHBuiltin["Built-in Webhook Gateway"]
+      IMAPGW["ruriko-gw-imap\n(external binary)"]
+    end
+
+    ACP["ACP\nPOST /events/{source}"]
+    TE["Turn Engine\n(Policy → LLM → Tools)"]
+  end
+
+  Clock -->|"tick"| CronGW
+  WebSrc -->|"HTTP POST"| WebSrc
+  WebSrc --> WHProxy
+  WHProxy -->|"authenticated,\nrate-limited"| WHBuiltin
+  IMAP -->|"IMAP IDLE / poll"| IMAPGW
+
+  GWS --> CronGW
+  GWS --> WHBuiltin
+  GWS --> IMAPGW
+
+  CronGW -->|"POST envelope"| ACP
+  WHBuiltin -->|"POST envelope"| ACP
+  IMAPGW -->|"POST envelope"| ACP
+
+  ACP --> TE
+```
+
+**Key invariants**:
+- Every inbound event — regardless of source — passes through the same turn engine as Matrix messages.
+- Built-in gateways run in-process inside Gitai; external binaries are supervised child processes.
+- Ruriko's webhook proxy is the only internet-facing ingress; agents are never directly reachable.
+- Rate limiting and HMAC verification are enforced at the Ruriko proxy before delivery.
+
+---
+
 ## Component Details
 
 ### Ruriko Subsystems
@@ -362,6 +435,13 @@ sequenceDiagram
 - Restarts on crash with backoff
 - Exposes status via /status endpoint
 - Logs MCP stdout/stderr
+
+#### Gateway Supervisor (`internal/gitai/gateway/`)
+- Manages built-in cron and webhook gateway goroutines
+- Manages external gateway binary processes (same lifecycle as MCPs)
+- Reconciles running gateways against active Gosuto on hot-reload
+- Restarts external gateway processes on crash (when `autoRestart: true`)
+- Exposes gateway status alongside MCP status via `/status` endpoint
 
 #### Envelope Parser (`internal/gitai/envelope/`)
 - Extracts JSON envelope from Matrix message
@@ -437,9 +517,39 @@ Gitai validates received Gosuto
     ↓
 Atomic swap to new config
     ↓
+Gateway supervisor reconciles (starts/stops gateway processes)
+    ↓
 Reports applied hash back to Ruriko
     ↓
 Audit logged
+```
+
+---
+
+### 4. Gateway Event Flow
+
+```
+External event source fires (cron tick, email arrives, webhook delivery)
+    ↓
+Gateway process (built-in or external binary) receives event
+    ↓
+Gateway normalises event into envelope {source, type, ts, payload}
+    ↓
+Gateway POSTs envelope to ACP: POST /events/{source}
+    ↓                              (with Bearer token if GITAI_ACP_TOKEN set)
+Gitai turn engine receives event
+    ↓
+Policy engine checks trust context (sender allowlist, rate limits)
+    ↓
+LLM processes payload.message as user turn
+    ↓
+LLM proposes tool calls → policy engine validates each
+    ↓
+MCP tools execute (if allowed)
+    ↓
+Response sent to Matrix room
+    ↓
+Audit logged (source, type, status — never payload content)
 ```
 
 ---
@@ -488,6 +598,27 @@ Audit logged
 - Tool discovery
 - Tool invocation
 - Result return
+
+---
+
+### 4. Gateway Events (Gateway Process → Gitai ACP)
+
+**Protocol**: HTTP REST  
+**Transport**: HTTP/1.1 (loopback — gateway and agent share a container)  
+**Authentication**: Bearer token (`ACP_TOKEN` env var, same value as `GITAI_ACP_TOKEN`)  
+**Format**: JSON (`common/spec/envelope.Event`)  
+
+**Endpoint**: `POST /events/{source}`
+
+**Event envelope fields**:
+
+| Field | Type | Description |
+|---|---|---|
+| `source` | string | Gateway name from the Gosuto `gateways[].name` field |
+| `type` | string | Event classifier, e.g. `cron.tick`, `webhook.delivery`, `imap.email` |
+| `ts` | RFC 3339 | UTC timestamp at which the event was generated |
+| `payload.message` | string | Human-readable message passed to the LLM as the user turn |
+| `payload.data` | object | Optional structured metadata (not forwarded to LLM directly) |
 
 ---
 

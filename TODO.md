@@ -1675,13 +1675,13 @@ similarity and injects the relevant context.
 - [x] Test: Built image contains gateway binaries at expected paths
 
 ### R13.4 Documentation
-- [ ] Update `docs/architecture.md` with gateway architecture diagram
-- [ ] Update `docs/threat-model.md` with new attack surface analysis:
+- [x] Update `docs/architecture.md` with gateway architecture diagram
+- [x] Update `docs/threat-model.md` with new attack surface analysis:
   - Gateway process surface (same mitigations as MCP: vetted, supervised, sandboxed)
   - Webhook endpoint surface (authentication, rate limiting, Ruriko proxy)
   - Event payload injection (untrusted input → policy engine, same as Matrix messages)
-- [ ] Update `README.md` to mention event gateways in the architecture overview
-- [ ] Add gateway template examples (cron-triggered agent, email-reactive agent)
+- [x] Update `README.md` to mention event gateways in the architecture overview
+- [x] Add gateway template examples (cron-triggered agent, email-reactive agent)
 
 ### Definition of done
 - Ruriko proxies internet webhooks to agents securely
@@ -1760,7 +1760,7 @@ similarity and injects the relevant context.
 - [ ] Phase R10: Conversation Memory — Short-Term / Long-Term Architecture
 - [x] Phase R11: Event Gateways — Gosuto Schema, Types, and Validation ✅
 - [x] Phase R12: Event Gateways — Gitai Runtime Integration ✅
-- [ ] Phase R13: Ruriko-Side Gateway Wiring
+- [x] Phase R13: Ruriko-Side Gateway Wiring ✅
 
 ---
 
