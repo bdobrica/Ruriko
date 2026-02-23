@@ -330,13 +330,13 @@ The MVP is ready when **all** of the following are true:
 
 ### R15.5 Audit and Observability
 
-- [ ] Log all `matrix.send_message` calls at INFO:
+- [x] Log all `matrix.send_message` calls at INFO:
   - Fields: source agent, target alias, target room ID, trace ID, status
   - Never log message content at INFO (only at DEBUG with redaction)
-- [ ] Include messaging activity in agent status reports
-- [ ] Post audit breadcrumbs to admin room: "📨 Sent message to kairo (trace=…)"
-- [ ] Test: Audit log records messaging events
-- [ ] Test: Breadcrumbs appear in admin room
+- [x] Include messaging activity in agent status reports
+- [x] Post audit breadcrumbs to admin room: "📨 Sent message to kairo (trace=…)"
+- [x] Test: Audit log records messaging events
+- [x] Test: Breadcrumbs appear in admin room
 
 ### R15.6 Template Updates — Canonical Agents
 

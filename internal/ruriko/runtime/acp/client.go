@@ -81,6 +81,9 @@ type StatusResponse struct {
 	// agent runtime (R13.2). Populated by Gitai once the Gosuto config has been
 	// applied and the gateway supervisor has started the processes.
 	Gateways []string `json:"gateways,omitempty"`
+	// MessagesOutbound is the total number of successful matrix.send_message
+	// calls made by the agent since startup (R15.5 audit/observability).
+	MessagesOutbound int64 `json:"messages_outbound,omitempty"`
 }
 
 // ConfigApplyRequest is the body for POST /config/apply.

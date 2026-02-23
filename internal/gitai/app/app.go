@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -129,6 +130,9 @@ type App struct {
 	// builtinReg holds the registry of non-MCP built-in tools exposed to the
 	// LLM. Currently contains matrix.send_message (R15.2).
 	builtinReg *builtin.Registry
+	// msgOutbound counts the total number of successful matrix.send_message
+	// calls made by this agent (R15.5 audit/observability).
+	msgOutbound atomic.Int64
 }
 
 // New creates and initialises all Gitai subsystems. It does NOT start any
@@ -222,6 +226,8 @@ func New(cfg *Config) (*App, error) {
 		GosutoHash:              gosutoLdr.Hash,
 		MCPNames:                supv.Names,
 		ActiveConfig:            gosutoLdr.Config,
+		// R15.5: expose outbound message count in the ACP /status response.
+		MessagesOutbound: func() int64 { return app.msgOutbound.Load() },
 		// GetSecret looks up an agent secret by ref name. Used by the
 		// built-in webhook gateway to validate HMAC-SHA256 signatures.
 		GetSecret: func(ref string) ([]byte, error) {
@@ -811,7 +817,80 @@ func (a *App) executeBuiltinTool(ctx context.Context, sender string, tc llm.Tool
 	if tool == nil {
 		return "", fmt.Errorf("built-in tool %q not found in registry", tc.Function.Name)
 	}
-	return tool.Execute(ctx, args)
+
+	toolResult, execErr := tool.Execute(ctx, args)
+
+	// R15.5: Audit logging for matrix.send_message.
+	// Log at INFO: agent_id, target alias, room_id, status.
+	// trace_id is implicit via observability.WithTrace(ctx).
+	// Message content is never logged at INFO (only DEBUG with redaction).
+	if tc.Function.Name == builtin.MatrixSendToolName {
+		a.auditMessagingSend(ctx, args, execErr)
+	}
+
+	return toolResult, execErr
+}
+
+// auditMessagingSend logs a matrix.send_message call at INFO and, on success,
+// posts an audit breadcrumb to the agent's admin room and increments the
+// outbound message counter (R15.5).
+//
+// Message content is never logged at INFO.
+func (a *App) auditMessagingSend(ctx context.Context, args map[string]interface{}, execErr error) {
+	log := observability.WithTrace(ctx)
+
+	targetAlias, _ := args["target"].(string)
+
+	// Resolve the room ID for the target alias from the active Gosuto config.
+	// This is a read-only lookup — it does not re-validate or re-check policy.
+	roomID := ""
+	if cfg := a.gosutoLdr.Config(); cfg != nil {
+		for _, t := range cfg.Messaging.AllowedTargets {
+			if t.Alias == targetAlias {
+				roomID = t.RoomID
+				break
+			}
+		}
+	}
+
+	agentID := ""
+	if a.cfg != nil {
+		agentID = a.cfg.AgentID
+	}
+
+	status := "success"
+	if execErr != nil {
+		status = "error"
+	}
+
+	log.Info("matrix.send_message",
+		"agent_id", agentID,
+		"target", targetAlias,
+		"room_id", roomID,
+		"status", status,
+	)
+
+	if execErr != nil {
+		return
+	}
+
+	// R15.5: Increment outbound message counter.
+	a.msgOutbound.Add(1)
+
+	// R15.5: Post audit breadcrumb to admin room.
+	// Only attempt when the Matrix sender is available and adminRoom is configured.
+	cfg := a.gosutoLdr.Config()
+	if cfg == nil || cfg.Trust.AdminRoom == "" || a.eventSender == nil {
+		return
+	}
+	traceID := trace.FromContext(ctx)
+	breadcrumb := fmt.Sprintf("📨 Sent message to %s (trace=%s)", targetAlias, traceID)
+	if err := a.eventSender.SendText(cfg.Trust.AdminRoom, breadcrumb); err != nil {
+		log.Warn("audit: could not post messaging breadcrumb to admin room",
+			"admin_room", cfg.Trust.AdminRoom,
+			"err", err,
+		)
+	}
 }
 
 // buildMessagingTargets returns a slice of human-readable target strings

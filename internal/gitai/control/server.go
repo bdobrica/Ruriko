@@ -216,6 +216,9 @@ type StatusResponse struct {
 	Uptime     float64   `json:"uptime_seconds"`
 	StartedAt  time.Time `json:"started_at"`
 	MCPs       []string  `json:"mcps"`
+	// MessagesOutbound is the total number of successful matrix.send_message
+	// calls made by this agent since startup (R15.5 audit/observability).
+	MessagesOutbound int64 `json:"messages_outbound,omitempty"`
 }
 
 // Handlers bundles the callbacks the server delegates to.
@@ -272,6 +275,11 @@ type Handlers struct {
 	// launch) so the HTTP response is returned promptly.
 	// When nil, POST /events/{source} returns 503 Service Unavailable.
 	HandleEvent func(ctx context.Context, evt *envelope.Event)
+
+	// MessagesOutbound returns the total number of successful
+	// matrix.send_message calls since agent startup (R15.5).
+	// When nil, the field is omitted from the status response.
+	MessagesOutbound func() int64
 }
 
 // Server is the ACP HTTP server.
@@ -400,13 +408,18 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if s.handlers.MCPNames != nil {
 		mcps = s.handlers.MCPNames()
 	}
+	var msgsOut int64
+	if s.handlers.MessagesOutbound != nil {
+		msgsOut = s.handlers.MessagesOutbound()
+	}
 	writeJSON(w, http.StatusOK, StatusResponse{
-		AgentID:    s.handlers.AgentID,
-		Version:    s.handlers.Version,
-		GosutoHash: hash,
-		Uptime:     uptime,
-		StartedAt:  s.handlers.StartedAt,
-		MCPs:       mcps,
+		AgentID:          s.handlers.AgentID,
+		Version:          s.handlers.Version,
+		GosutoHash:       hash,
+		Uptime:           uptime,
+		StartedAt:        s.handlers.StartedAt,
+		MCPs:             mcps,
+		MessagesOutbound: msgsOut,
 	})
 }
 
