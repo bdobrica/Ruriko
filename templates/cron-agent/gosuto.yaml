@@ -80,3 +80,18 @@ gateways:
     config:
       expression: "0 * * * *"
       payload: "Run scheduled check and report results to the admin room."
+
+instructions:
+  role: |
+    You are a scheduled task agent. On each cron trigger, perform the
+    configured periodic check using your search and fetch tools, then
+    summarise findings clearly and post results to the admin room.
+    Be factual and brief. Do not take actions outside your defined tools.
+  workflow:
+    - trigger: "cron.tick event received"
+      action: "Perform the scheduled check: search for relevant information using brave-search, optionally fetch URLs for detail, then summarise findings."
+    - trigger: "after gathering results"
+      action: "Post a concise, structured summary to the admin room. Include: what was checked, key findings, and any action items."
+  context:
+    user: "The user is the sole approver and recipient of scheduled reports."
+    peers: []

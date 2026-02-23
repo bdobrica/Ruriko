@@ -206,15 +206,15 @@ The MVP is ready when **all** of the following are true:
 
 ### R14.4 Ruriko — Instructions Authoring and Auditing
 
-- [ ] Ruriko generates `instructions` when provisioning agents from templates:
+- [x] Ruriko generates `instructions` when provisioning agents from templates:
   - Templates include default instructions for the role
   - NLP planning layer (R16) can customise instructions based on user request
   - All instruction changes are versioned with the Gosuto
-- [ ] `/ruriko gosuto show <agent>` displays instructions separately from persona
-- [ ] `/ruriko gosuto diff` shows instruction changes clearly
-- [ ] Ruriko can update instructions without changing persona (and vice versa)
-- [ ] Test: Provisioned agent has correct default instructions from template
-- [ ] Test: Instructions change is versioned and auditable
+- [x] `/ruriko gosuto show <agent>` displays instructions separately from persona
+- [x] `/ruriko gosuto diff` shows instruction changes clearly
+- [x] Ruriko can update instructions without changing persona (and vice versa)
+- [x] Test: Provisioned agent has correct default instructions from template
+- [x] Test: Instructions change is versioned and auditable
 
 ### R14.5 Template Updates — Add Instructions to Canonical Agents
 
@@ -231,7 +231,7 @@ The MVP is ready when **all** of the following are true:
   ```
 - [x] Update `templates/kairo-agent/gosuto.yaml` with finance/analysis instructions
 - [x] Update `templates/kumo-agent/gosuto.yaml` with search-focused instructions
-- [ ] Add instructions to all other templates (browser-agent, email-agent, cron-agent)
+- [x] Add instructions to all other templates (browser-agent, email-agent, cron-agent)
 - [ ] Test: Updated templates pass validation
 - [ ] Test: Instructions render correctly in the system prompt
 

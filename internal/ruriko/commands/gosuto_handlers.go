@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"gopkg.in/yaml.v3"
 	"maunium.net/go/mautrix/event"
 
 	"github.com/bdobrica/Ruriko/common/retry"
@@ -66,15 +67,118 @@ func (h *Handlers) HandleGosutoShow(ctx context.Context, cmd *Command, evt *even
 		slog.Warn("audit write failed", "op", "gosuto.show", "err", err)
 	}
 
-	return fmt.Sprintf(
-		"**Gosuto config for %s** (v%d)\n\nHash: `%s`\nSet by: %s\nAt: %s\n\n```yaml\n%s\n```\n\n(trace: %s)",
+	return formatGosutoShow(agentID, gv, traceID), nil
+}
+
+// formatGosutoShow renders the output for HandleGosutoShow. It tries to parse
+// the stored YAML so that persona and instructions can be displayed as clearly
+// labelled sections, making it easy to distinguish cosmetic from operational
+// config. Falls back to raw YAML if parsing fails (e.g. legacy format).
+func formatGosutoShow(agentID string, gv *store.GosutoVersion, traceID string) string {
+	header := fmt.Sprintf(
+		"**Gosuto config for %s** (v%d)\n\nHash: `%s`\nSet by: %s\nAt: %s",
 		agentID, gv.Version,
 		gv.Hash[:16]+"…",
 		gv.CreatedByMXID,
 		gv.CreatedAt.Format("2006-01-02 15:04:05 UTC"),
-		strings.TrimRight(gv.YAMLBlob, "\n"),
-		traceID,
-	), nil
+	)
+
+	var cfg gosuto.Config
+	if err := yaml.Unmarshal([]byte(gv.YAMLBlob), &cfg); err != nil {
+		// Fall back to raw YAML display.
+		return fmt.Sprintf(
+			"%s\n\n```yaml\n%s\n```\n\n(trace: %s)",
+			header, strings.TrimRight(gv.YAMLBlob, "\n"), traceID,
+		)
+	}
+
+	var sb strings.Builder
+	sb.WriteString(header)
+	sb.WriteString("\n")
+
+	// ── Persona section ────────────────────────────────────────────────────
+	sb.WriteString("\n**Persona** (cosmetic — tone, style, model)")
+	if cfg.Persona.LLMProvider != "" || cfg.Persona.Model != "" {
+		providerModel := strings.TrimSpace(cfg.Persona.LLMProvider + "/" + cfg.Persona.Model)
+		if cfg.Persona.LLMProvider == "" {
+			providerModel = cfg.Persona.Model
+		} else if cfg.Persona.Model == "" {
+			providerModel = cfg.Persona.LLMProvider
+		}
+		sb.WriteString("\nModel: ")
+		sb.WriteString(providerModel)
+		if cfg.Persona.Temperature != nil {
+			sb.WriteString(fmt.Sprintf(" (temperature: %.1f)", *cfg.Persona.Temperature))
+		}
+	}
+	if cfg.Persona.SystemPrompt != "" {
+		prompt := strings.TrimSpace(cfg.Persona.SystemPrompt)
+		firstLine := prompt
+		if idx := strings.IndexByte(prompt, '\n'); idx > 0 {
+			firstLine = prompt[:idx] + "…"
+		} else if len(prompt) > 120 {
+			firstLine = prompt[:120] + "…"
+		}
+		sb.WriteString("\nSystem prompt: ")
+		sb.WriteString(firstLine)
+	} else {
+		sb.WriteString("\n_(no system prompt)_")
+	}
+
+	// ── Instructions section ───────────────────────────────────────────────
+	sb.WriteString("\n\n**Instructions** (operational — workflow, peer awareness, user context)")
+	instr := cfg.Instructions
+	if instr.Role == "" && len(instr.Workflow) == 0 && instr.Context.User == "" && len(instr.Context.Peers) == 0 {
+		sb.WriteString("\n_(no instructions configured)_")
+	} else {
+		if instr.Role != "" {
+			role := strings.TrimSpace(instr.Role)
+			firstLine := role
+			if idx := strings.IndexByte(role, '\n'); idx > 0 {
+				firstLine = role[:idx] + "…"
+			} else if len(role) > 120 {
+				firstLine = role[:120] + "…"
+			}
+			sb.WriteString("\nRole: ")
+			sb.WriteString(firstLine)
+		}
+		if len(instr.Workflow) > 0 {
+			sb.WriteString(fmt.Sprintf("\nWorkflow: %d step(s)", len(instr.Workflow)))
+			for i, step := range instr.Workflow {
+				trigger := strings.TrimSpace(step.Trigger)
+				action := strings.TrimSpace(step.Action)
+				if len(action) > 80 {
+					action = action[:80] + "…"
+				}
+				sb.WriteString(fmt.Sprintf("\n  %d. [%s] → %s", i+1, trigger, action))
+			}
+		}
+		if instr.Context.User != "" {
+			userCtx := strings.TrimSpace(instr.Context.User)
+			if len(userCtx) > 100 {
+				userCtx = userCtx[:100] + "…"
+			}
+			sb.WriteString("\nUser context: ")
+			sb.WriteString(userCtx)
+		}
+		if len(instr.Context.Peers) > 0 {
+			peerNames := make([]string, len(instr.Context.Peers))
+			for i, p := range instr.Context.Peers {
+				peerNames[i] = p.Name
+			}
+			sb.WriteString("\nPeers: ")
+			sb.WriteString(strings.Join(peerNames, ", "))
+		}
+	}
+
+	// ── Full YAML ──────────────────────────────────────────────────────────
+	sb.WriteString("\n\n**Full config (YAML)**")
+	sb.WriteString("\n```yaml\n")
+	sb.WriteString(strings.TrimRight(gv.YAMLBlob, "\n"))
+	sb.WriteString("\n```")
+	sb.WriteString(fmt.Sprintf("\n\n(trace: %s)", traceID))
+
+	return sb.String()
 }
 
 // HandleGosutoVersions lists all stored Gosuto versions for an agent.
@@ -184,9 +288,12 @@ func (h *Handlers) HandleGosutoDiff(ctx context.Context, cmd *Command, evt *even
 
 	diff := diffLines(fromGV.YAMLBlob, toGV.YAMLBlob)
 
+	// Determine which high-level sections changed to make the diff more readable.
+	sectionNote := gosutoDiffSections(fromGV.YAMLBlob, toGV.YAMLBlob)
+
 	return fmt.Sprintf(
-		"**Gosuto diff %s** v%d → v%d\n\n```diff\n%s\n```\n\n(trace: %s)",
-		agentID, fromN, toN, diff, traceID,
+		"**Gosuto diff %s** v%d → v%d\n\n%s\n```diff\n%s\n```\n\n(trace: %s)",
+		agentID, fromN, toN, sectionNote, diff, traceID,
 	), nil
 }
 
@@ -457,6 +564,172 @@ func (h *Handlers) HandleSecretsPush(ctx context.Context, cmd *Command, evt *eve
 	return fmt.Sprintf("📤 Pushed **%d** secret(s) to **%s**\n\n(trace: %s)", n, agentID, traceID), nil
 }
 
+// HandleGosutoSetInstructions updates only the instructions section of the
+// current Gosuto config for an agent, leaving persona and all other sections
+// unchanged. The existing config is loaded, the instructions section is
+// replaced, the result is validated, and a new version is stored.
+//
+// Usage:
+//
+//	/ruriko gosuto set-instructions <agent> --content <base64-yaml>
+//
+// The --content flag is a base64-encoded YAML document containing the
+// instructions section fields: role, workflow, and context.
+//
+// Example YAML (before base64 encoding):
+//
+//	role: |
+//	  You are a scheduling coordinator.
+//	workflow:
+//	  - trigger: "cron.tick event received"
+//	    action: "Send a trigger message to each peer agent."
+//	context:
+//	  user: "The user is the sole approver."
+//	  peers: []
+func (h *Handlers) HandleGosutoSetInstructions(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
+	traceID := trace.GenerateID()
+	ctx = trace.WithTraceID(ctx, traceID)
+
+	agentID, ok := cmd.GetArg(0)
+	if !ok {
+		return "", fmt.Errorf("usage: /ruriko gosuto set-instructions <agent> --content <base64-yaml>")
+	}
+
+	b64 := cmd.GetFlag("content", "")
+	if b64 == "" {
+		return "", fmt.Errorf("--content is required (base64-encoded YAML of the instructions section)")
+	}
+
+	if _, err := h.store.GetAgent(ctx, agentID); err != nil {
+		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "gosuto.set-instructions", agentID, "error", nil, err.Error())
+		return "", fmt.Errorf("agent not found: %s", agentID)
+	}
+
+	rawSection, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		rawSection, err = base64.URLEncoding.DecodeString(b64)
+		if err != nil {
+			return "", fmt.Errorf("--content must be valid base64: %w", err)
+		}
+	}
+
+	var newInstructions gosuto.Instructions
+	if err := yaml.Unmarshal(rawSection, &newInstructions); err != nil {
+		return "", fmt.Errorf("invalid instructions YAML: %w", err)
+	}
+
+	// Require approval for Gosuto config changes.
+	if msg, needed, err := h.requestApprovalIfNeeded(ctx, "gosuto.set-instructions", agentID, cmd, evt); needed {
+		return msg, err
+	}
+
+	gv, noChange, err := h.patchCurrentGosuto(ctx, agentID, evt.Sender.String(), func(cfg *gosuto.Config) {
+		cfg.Instructions = newInstructions
+	})
+	if err != nil {
+		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "gosuto.set-instructions", agentID, "error", nil, err.Error())
+		return "", err
+	}
+
+	if noChange {
+		return fmt.Sprintf(
+			"ℹ️  Instructions for **%s** are unchanged (matches v%d).\n\n(trace: %s)",
+			agentID, gv.Version, traceID,
+		), nil
+	}
+
+	if err := h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "gosuto.set-instructions", agentID, "success",
+		store.AuditPayload{"version": gv.Version, "hash": gv.Hash[:16]}, ""); err != nil {
+		slog.Warn("audit write failed", "op", "gosuto.set-instructions", "err", err)
+	}
+
+	return fmt.Sprintf(
+		"✅ Instructions for **%s** updated — stored as Gosuto **v%d** (hash: `%s…`)\n\nRun `/ruriko gosuto push %s` to apply it to the running agent.\n\n(trace: %s)",
+		agentID, gv.Version, gv.Hash[:16], agentID, traceID,
+	), nil
+}
+
+// HandleGosutoSetPersona updates only the persona section of the current
+// Gosuto config for an agent, leaving instructions and all other sections
+// unchanged. The existing config is loaded, the persona section is replaced,
+// the result is validated, and a new version is stored.
+//
+// Usage:
+//
+//	/ruriko gosuto set-persona <agent> --content <base64-yaml>
+//
+// The --content flag is a base64-encoded YAML document containing the persona
+// section fields: systemPrompt, llmProvider, model, temperature, apiKeySecretRef.
+//
+// Example YAML (before base64 encoding):
+//
+//	systemPrompt: "You are Kairo, a meticulous financial analyst."
+//	llmProvider: openai
+//	model: gpt-4o
+//	temperature: 0.2
+func (h *Handlers) HandleGosutoSetPersona(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
+	traceID := trace.GenerateID()
+	ctx = trace.WithTraceID(ctx, traceID)
+
+	agentID, ok := cmd.GetArg(0)
+	if !ok {
+		return "", fmt.Errorf("usage: /ruriko gosuto set-persona <agent> --content <base64-yaml>")
+	}
+
+	b64 := cmd.GetFlag("content", "")
+	if b64 == "" {
+		return "", fmt.Errorf("--content is required (base64-encoded YAML of the persona section)")
+	}
+
+	if _, err := h.store.GetAgent(ctx, agentID); err != nil {
+		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "gosuto.set-persona", agentID, "error", nil, err.Error())
+		return "", fmt.Errorf("agent not found: %s", agentID)
+	}
+
+	rawSection, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		rawSection, err = base64.URLEncoding.DecodeString(b64)
+		if err != nil {
+			return "", fmt.Errorf("--content must be valid base64: %w", err)
+		}
+	}
+
+	var newPersona gosuto.Persona
+	if err := yaml.Unmarshal(rawSection, &newPersona); err != nil {
+		return "", fmt.Errorf("invalid persona YAML: %w", err)
+	}
+
+	// Require approval for Gosuto config changes.
+	if msg, needed, err := h.requestApprovalIfNeeded(ctx, "gosuto.set-persona", agentID, cmd, evt); needed {
+		return msg, err
+	}
+
+	gv, noChange, err := h.patchCurrentGosuto(ctx, agentID, evt.Sender.String(), func(cfg *gosuto.Config) {
+		cfg.Persona = newPersona
+	})
+	if err != nil {
+		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "gosuto.set-persona", agentID, "error", nil, err.Error())
+		return "", err
+	}
+
+	if noChange {
+		return fmt.Sprintf(
+			"ℹ️  Persona for **%s** is unchanged (matches v%d).\n\n(trace: %s)",
+			agentID, gv.Version, traceID,
+		), nil
+	}
+
+	if err := h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "gosuto.set-persona", agentID, "success",
+		store.AuditPayload{"version": gv.Version, "hash": gv.Hash[:16]}, ""); err != nil {
+		slog.Warn("audit write failed", "op", "gosuto.set-persona", "err", err)
+	}
+
+	return fmt.Sprintf(
+		"✅ Persona for **%s** updated — stored as Gosuto **v%d** (hash: `%s…`)\n\nRun `/ruriko gosuto push %s` to apply it to the running agent.\n\n(trace: %s)",
+		agentID, gv.Version, gv.Hash[:16], agentID, traceID,
+	), nil
+}
+
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 // pushGosuto sends a Gosuto config to an agent via its ACP endpoint.
@@ -471,6 +744,122 @@ func pushGosuto(ctx context.Context, controlURL, acpToken string, gv *store.Gosu
 			Hash: gv.Hash,
 		})
 	})
+}
+
+// patchCurrentGosuto loads the latest Gosuto version for agentID, applies fn
+// to modify the parsed Config, re-serialises, validates, and stores a new
+// version. It returns the resulting GosutoVersion and a boolean indicating
+// whether the content was unchanged (true = no new version was created, the
+// returned *GosutoVersion is the existing latest). An error is returned for
+// any persistent failure.
+func (h *Handlers) patchCurrentGosuto(
+	ctx context.Context,
+	agentID, createdByMXID string,
+	fn func(cfg *gosuto.Config),
+) (gv *store.GosutoVersion, noChange bool, err error) {
+	// Load current version.
+	current, err := h.store.GetLatestGosutoVersion(ctx, agentID)
+	if err != nil {
+		return nil, false, fmt.Errorf("no gosuto config found for agent %q: %w", agentID, err)
+	}
+
+	// Parse current config.
+	var cfg gosuto.Config
+	if err := yaml.Unmarshal([]byte(current.YAMLBlob), &cfg); err != nil {
+		return nil, false, fmt.Errorf("failed to parse current gosuto config: %w", err)
+	}
+
+	// Apply the caller's mutation.
+	fn(&cfg)
+
+	// Re-serialise.
+	newYAML, err := yaml.Marshal(&cfg)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to serialise patched config: %w", err)
+	}
+
+	// Full validation.
+	if _, err := gosuto.Parse(newYAML); err != nil {
+		return nil, false, fmt.Errorf("patched config is invalid: %w", err)
+	}
+
+	// Hash.
+	sum := sha256.Sum256(newYAML)
+	hash := fmt.Sprintf("%x", sum)
+
+	// No-op: same content as current.
+	if current.Hash == hash {
+		return current, true, nil
+	}
+
+	// Determine next version number.
+	nextVer, err := h.store.NextGosutoVersion(ctx, agentID)
+	if err != nil {
+		return nil, false, fmt.Errorf("next gosuto version: %w", err)
+	}
+
+	newGV := &store.GosutoVersion{
+		AgentID:       agentID,
+		Version:       nextVer,
+		Hash:          hash,
+		YAMLBlob:      string(newYAML),
+		CreatedByMXID: createdByMXID,
+	}
+	if err := h.store.CreateGosutoVersion(ctx, newGV); err != nil {
+		return nil, false, fmt.Errorf("store gosuto version: %w", err)
+	}
+	if err := h.store.PruneGosutoVersions(ctx, agentID, GosutoVersionsRetainN); err != nil {
+		slog.Warn("gosuto prune failed", "agent", agentID, "err", err)
+	}
+
+	return newGV, false, nil
+}
+
+// gosutoDiffSections inspects two Gosuto YAML blobs and returns a sentence
+// summarising which high-level sections (persona, instructions, or other)
+// have changed. Used by HandleGosutoDiff to annotate the output.
+func gosutoDiffSections(fromYAML, toYAML string) string {
+	var from, to gosuto.Config
+	fromOK := yaml.Unmarshal([]byte(fromYAML), &from) == nil
+	toOK := yaml.Unmarshal([]byte(toYAML), &to) == nil
+
+	if !fromOK || !toOK {
+		return "_Section analysis unavailable (YAML parse error)_"
+	}
+
+	// Serialise each section independently for comparison.
+	fromPersona, _ := yaml.Marshal(from.Persona)
+	toPersona, _ := yaml.Marshal(to.Persona)
+	fromInstr, _ := yaml.Marshal(from.Instructions)
+	toInstr, _ := yaml.Marshal(to.Instructions)
+
+	personaChanged := string(fromPersona) != string(toPersona)
+	instrChanged := string(fromInstr) != string(toInstr)
+
+	// Also detect changes outside persona/instructions (policy, trust, etc.)
+	from.Persona = gosuto.Persona{}
+	to.Persona = gosuto.Persona{}
+	from.Instructions = gosuto.Instructions{}
+	to.Instructions = gosuto.Instructions{}
+	fromRest, _ := yaml.Marshal(from)
+	toRest, _ := yaml.Marshal(to)
+	otherChanged := string(fromRest) != string(toRest)
+
+	var parts []string
+	if personaChanged {
+		parts = append(parts, "**persona**")
+	}
+	if instrChanged {
+		parts = append(parts, "**instructions**")
+	}
+	if otherChanged {
+		parts = append(parts, "**policy/trust/other**")
+	}
+
+	if len(parts) == 0 {
+		return "_No section differences detected._"
+	}
+	return "Changed sections: " + strings.Join(parts, ", ")
 }
 
 // diffLines computes a simple unified-style diff of two YAML strings.

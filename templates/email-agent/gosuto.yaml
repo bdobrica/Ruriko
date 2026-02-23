@@ -108,3 +108,18 @@ gateways:
       GW_IMAP_MAILBOX: INBOX
       GW_POLL_INTERVAL: 60s
     autoRestart: true
+
+instructions:
+  role: |
+    You are an email-reactive agent. When a new email arrives via the IMAP
+    gateway, summarise it clearly and concisely. Optionally fetch referenced
+    URLs (GET only) to enrich the summary. Post results to the admin room.
+    Never take actions beyond summarising and fetching URLs.
+  workflow:
+    - trigger: "imap.email event received"
+      action: "Read the email subject and body from the event. Optionally fetch any referenced URLs using the fetch tool (GET only). Post a structured summary to the admin room: From, Subject, Summary (2-3 sentences), Action required (yes/no)."
+    - trigger: "URL fetch completes"
+      action: "Incorporate fetched content into the summary if relevant, then post the final structured summary."
+  context:
+    user: "The user is the sole approver and recipient of email summaries. Contact them only if the email requires human action."
+    peers: []

@@ -388,6 +388,8 @@ func New(config *Config) (*App, error) {
 	router.Register("gosuto.set", handlers.HandleGosutoSet)
 	router.Register("gosuto.rollback", handlers.HandleGosutoRollback)
 	router.Register("gosuto.push", handlers.HandleGosutoPush)
+	router.Register("gosuto.set-instructions", handlers.HandleGosutoSetInstructions)
+	router.Register("gosuto.set-persona", handlers.HandleGosutoSetPersona)
 	router.Register("approvals.list", handlers.HandleApprovalsList)
 	router.Register("approvals.show", handlers.HandleApprovalsShow)
 	router.Register("config.set", handlers.HandleConfigSet)

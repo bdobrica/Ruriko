@@ -234,10 +234,12 @@ func (h *Handlers) HandleHelp(ctx context.Context, cmd *Command, evt *event.Even
 • /ruriko trace <trace_id> - Show all events for a trace
 
 **Gosuto Commands:**
-• /ruriko gosuto show <agent> [--version <n>] - Show current (or specific) Gosuto config
+• /ruriko gosuto show <agent> [--version <n>] - Show current (or specific) Gosuto config with persona and instructions sections clearly labelled
 • /ruriko gosuto versions <agent> - List all stored versions
-• /ruriko gosuto diff <agent> --from <v1> --to <v2> - Diff between two versions
-• /ruriko gosuto set <agent> --content <base64yaml> - Store new Gosuto version
+• /ruriko gosuto diff <agent> --from <v1> --to <v2> - Diff between two versions (annotates which sections changed)
+• /ruriko gosuto set <agent> --content <base64yaml> - Store new Gosuto version (full config)
+• /ruriko gosuto set-instructions <agent> --content <base64yaml> - Update only the instructions section (persona unchanged)
+• /ruriko gosuto set-persona <agent> --content <base64yaml> - Update only the persona section (instructions unchanged)
 • /ruriko gosuto rollback <agent> --to <version> - Revert to previous version
 • /ruriko gosuto push <agent> - Push current config to running agent
 
