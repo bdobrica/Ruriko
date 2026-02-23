@@ -38,6 +38,10 @@ type Config struct {
 
 	// Persona defines the agent's LLM persona. Non-authoritative.
 	Persona Persona `yaml:"persona,omitempty" json:"persona,omitempty"`
+
+	// Instructions defines the agent's operational workflow. Authoritative:
+	// Ruriko audits and versions instructions as part of the control plane.
+	Instructions Instructions `yaml:"instructions,omitempty" json:"instructions,omitempty"`
 }
 
 // Metadata holds descriptive information about a Gosuto config.
@@ -204,6 +208,55 @@ type SecretRef struct {
 	// Required indicates whether the agent should refuse to start if this
 	// secret is unavailable.
 	Required bool `yaml:"required,omitempty" json:"required,omitempty"`
+}
+
+// Instructions defines the agent's operational workflow. Unlike Persona,
+// instructions are operational and authoritative — they define workflow steps,
+// peer awareness, and user context injected into the LLM system prompt.
+// Instructions are versioned and diffable as part of the Gosuto.
+type Instructions struct {
+	// Role is a free-text operational role description injected into the LLM
+	// system prompt. It describes what the agent is functionally responsible for.
+	Role string `yaml:"role,omitempty" json:"role,omitempty"`
+
+	// Workflow is an ordered list of trigger → action pairs that define the
+	// agent's operational workflow steps.
+	Workflow []WorkflowStep `yaml:"workflow,omitempty" json:"workflow,omitempty"`
+
+	// Context provides additional contextual information injected into the
+	// LLM prompt (user role, known peer agents).
+	Context InstructionsContext `yaml:"context,omitempty" json:"context,omitempty"`
+}
+
+// WorkflowStep is a single trigger → action pair in an agent's workflow.
+type WorkflowStep struct {
+	// Trigger describes the condition that initiates this step
+	// (e.g. "on message from Saito or cron event").
+	Trigger string `yaml:"trigger" json:"trigger"`
+
+	// Action describes what the agent should do when the trigger fires
+	// (e.g. "Retrieve portfolio data via finnhub MCP, analyse market state.").
+	Action string `yaml:"action" json:"action"`
+}
+
+// InstructionsContext provides contextual information about the human user
+// and known peer agents, injected into the LLM system prompt.
+type InstructionsContext struct {
+	// User describes the human user's role (e.g. sole approver, report recipient).
+	User string `yaml:"user,omitempty" json:"user,omitempty"`
+
+	// Peers is the list of known peer agents and their roles in the workflow.
+	Peers []PeerRef `yaml:"peers,omitempty" json:"peers,omitempty"`
+}
+
+// PeerRef describes a known peer agent and its role in the current agent's workflow.
+type PeerRef struct {
+	// Name is the peer agent's identifier (e.g. "kumo", "saito").
+	Name string `yaml:"name" json:"name"`
+
+	// Role describes the peer's functional role from this agent's perspective
+	// (e.g. "News/search agent — ask it for news on specific tickers.").
+	Role string `yaml:"role" json:"role"`
 }
 
 // Persona defines the agent's LLM persona. This is purely cosmetic —

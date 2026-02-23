@@ -1048,3 +1048,177 @@ limits:
 		t.Fatal("expected error for negative maxEventsPerMinute, got nil")
 	}
 }
+
+// ── Instructions section tests ────────────────────────────────────────────────
+
+const instructionsBase = `
+apiVersion: gosuto/v1
+metadata:
+  name: kairo
+trust:
+  allowedRooms:
+    - "!admin:example.com"
+  allowedSenders:
+    - "*"
+`
+
+const instructionsFullValid = `
+apiVersion: gosuto/v1
+metadata:
+  name: kairo
+trust:
+  allowedRooms:
+    - "!admin:example.com"
+  allowedSenders:
+    - "*"
+
+persona:
+  systemPrompt: "You are Kairo, a meticulous financial analyst."
+  llmProvider: openai
+  model: gpt-4o
+  temperature: 0.3
+
+instructions:
+  role: |
+    You are responsible for portfolio analysis and market data interpretation.
+    You work with Kumo (news agent) and report to the user.
+  workflow:
+    - trigger: "on message from Saito or cron event"
+      action: "Retrieve portfolio data via finnhub MCP, analyse market state."
+    - trigger: "after analysis"
+      action: "Send relevant tickers to Kumo via matrix.send_message for news lookup."
+    - trigger: "after receiving Kumo's news response"
+      action: "Revise analysis incorporating news, send final report to user."
+  context:
+    user: "The user (Bogdan) is the sole approver and the intended recipient of final reports."
+    peers:
+      - name: "saito"
+        role: "Cron/trigger agent — sends you scheduled wake-up messages."
+      - name: "kumo"
+        role: "News/search agent — you can ask it for news on specific tickers or topics."
+`
+
+func TestParse_Instructions_FullValid(t *testing.T) {
+	cfg, err := gosuto.Parse([]byte(instructionsFullValid))
+	if err != nil {
+		t.Fatalf("Parse: unexpected error: %v", err)
+	}
+
+	ins := cfg.Instructions
+	if ins.Role == "" {
+		t.Error("instructions.role should not be empty")
+	}
+	if len(ins.Workflow) != 3 {
+		t.Errorf("workflow step count: got %d, want 3", len(ins.Workflow))
+	}
+	if ins.Workflow[0].Trigger != "on message from Saito or cron event" {
+		t.Errorf("workflow[0].trigger: got %q", ins.Workflow[0].Trigger)
+	}
+	if ins.Workflow[0].Action != "Retrieve portfolio data via finnhub MCP, analyse market state." {
+		t.Errorf("workflow[0].action: got %q", ins.Workflow[0].Action)
+	}
+	if ins.Context.User == "" {
+		t.Error("instructions.context.user should not be empty")
+	}
+	if len(ins.Context.Peers) != 2 {
+		t.Errorf("peers count: got %d, want 2", len(ins.Context.Peers))
+	}
+	if ins.Context.Peers[0].Name != "saito" {
+		t.Errorf("peers[0].name: got %q, want %q", ins.Context.Peers[0].Name, "saito")
+	}
+	if ins.Context.Peers[1].Name != "kumo" {
+		t.Errorf("peers[1].name: got %q, want %q", ins.Context.Peers[1].Name, "kumo")
+	}
+}
+
+func TestParse_Instructions_Empty(t *testing.T) {
+	// Empty instructions is valid — agents default to no operational workflow.
+	_, err := gosuto.Parse([]byte(instructionsBase))
+	if err != nil {
+		t.Fatalf("empty instructions should be valid: %v", err)
+	}
+}
+
+func TestParse_Instructions_RoleOnly(t *testing.T) {
+	_, err := gosuto.Parse([]byte(instructionsBase + `
+instructions:
+  role: "You handle portfolio analysis."
+`))
+	if err != nil {
+		t.Fatalf("instructions with only a role should be valid: %v", err)
+	}
+}
+
+func TestParse_Instructions_NoPeers(t *testing.T) {
+	_, err := gosuto.Parse([]byte(instructionsBase + `
+instructions:
+  role: "Analyse the market."
+  context:
+    user: "Bogdan is the sole approver."
+`))
+	if err != nil {
+		t.Fatalf("instructions with no peers should be valid: %v", err)
+	}
+}
+
+func TestValidate_Instructions_WorkflowMissingTrigger(t *testing.T) {
+	_, err := gosuto.Parse([]byte(instructionsBase + `
+instructions:
+  workflow:
+    - trigger: ""
+      action: "Do something."
+`))
+	if err == nil {
+		t.Fatal("expected error for workflow step with empty trigger, got nil")
+	}
+	if !strings.Contains(err.Error(), "trigger") {
+		t.Errorf("error should mention 'trigger', got: %v", err)
+	}
+}
+
+func TestValidate_Instructions_WorkflowMissingAction(t *testing.T) {
+	_, err := gosuto.Parse([]byte(instructionsBase + `
+instructions:
+  workflow:
+    - trigger: "on cron event"
+      action: ""
+`))
+	if err == nil {
+		t.Fatal("expected error for workflow step with empty action, got nil")
+	}
+	if !strings.Contains(err.Error(), "action") {
+		t.Errorf("error should mention 'action', got: %v", err)
+	}
+}
+
+func TestValidate_Instructions_PeerMissingName(t *testing.T) {
+	_, err := gosuto.Parse([]byte(instructionsBase + `
+instructions:
+  context:
+    peers:
+      - name: ""
+        role: "Some agent."
+`))
+	if err == nil {
+		t.Fatal("expected error for peer with empty name, got nil")
+	}
+	if !strings.Contains(err.Error(), "name") {
+		t.Errorf("error should mention 'name', got: %v", err)
+	}
+}
+
+func TestValidate_Instructions_PeerMissingRole(t *testing.T) {
+	_, err := gosuto.Parse([]byte(instructionsBase + `
+instructions:
+  context:
+    peers:
+      - name: "kumo"
+        role: ""
+`))
+	if err == nil {
+		t.Fatal("expected error for peer with empty role, got nil")
+	}
+	if !strings.Contains(err.Error(), "role") {
+		t.Errorf("error should mention 'role', got: %v", err)
+	}
+}

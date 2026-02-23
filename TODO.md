@@ -130,7 +130,7 @@ The MVP is ready when **all** of the following are true:
 
 ### R14.1 Gosuto Schema — Instructions Section
 
-- [ ] Add `instructions` section to Gosuto schema, separate from `persona`:
+- [x] Add `instructions` section to Gosuto schema, separate from `persona`:
   ```yaml
   persona:
     systemPrompt: "You are Kairo, a meticulous financial analyst."
@@ -157,14 +157,14 @@ The MVP is ready when **all** of the following are true:
         - name: "kumo"
           role: "News/search agent — you can ask it for news on specific tickers or topics."
   ```
-- [ ] Validate `instructions` schema in Gosuto validation pipeline
-- [ ] `instructions.role` — free-text operational role description (injected into LLM system prompt)
-- [ ] `instructions.workflow` — structured workflow steps (trigger → action pairs)
-- [ ] `instructions.context.user` — description of the user's role (sole approver, report recipient)
-- [ ] `instructions.context.peers` — list of known peer agents with roles (injected into LLM context)
-- [ ] Default: empty instructions (agent has no operational workflow — only responds to direct messages)
-- [ ] Test: Valid instructions config passes validation
-- [ ] Test: Missing or malformed instructions config is rejected
+- [x] Validate `instructions` schema in Gosuto validation pipeline
+- [x] `instructions.role` — free-text operational role description (injected into LLM system prompt)
+- [x] `instructions.workflow` — structured workflow steps (trigger → action pairs)
+- [x] `instructions.context.user` — description of the user's role (sole approver, report recipient)
+- [x] `instructions.context.peers` — list of known peer agents with roles (injected into LLM context)
+- [x] Default: empty instructions (agent has no operational workflow — only responds to direct messages)
+- [x] Test: Valid instructions config passes validation
+- [x] Test: Missing or malformed instructions config is rejected
 
 ### R14.2 Invariant Update — Persona vs Instructions
 
@@ -217,7 +217,7 @@ The MVP is ready when **all** of the following are true:
 
 ### R14.5 Template Updates — Add Instructions to Canonical Agents
 
-- [ ] Update `templates/saito-agent/gosuto.yaml`:
+- [x] Update `templates/saito-agent/gosuto.yaml`:
   ```yaml
   instructions:
     role: "You are a scheduling coordinator. On each cron trigger, message the appropriate agents to begin their workflows."
@@ -228,7 +228,8 @@ The MVP is ready when **all** of the following are true:
       user: "The user is the sole approver and oversees all workflows."
       peers: []  # populated at provision time by Ruriko
   ```
-- [ ] Update `templates/kumo-agent/gosuto.yaml` with search-focused instructions
+- [x] Update `templates/kairo-agent/gosuto.yaml` with finance/analysis instructions
+- [x] Update `templates/kumo-agent/gosuto.yaml` with search-focused instructions
 - [ ] Add instructions to all other templates (browser-agent, email-agent, cron-agent)
 - [ ] Test: Updated templates pass validation
 - [ ] Test: Instructions render correctly in the system prompt

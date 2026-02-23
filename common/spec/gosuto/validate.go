@@ -91,6 +91,11 @@ func Validate(cfg *Config) error {
 		return fmt.Errorf("persona: %w", err)
 	}
 
+	// ── Instructions ─────────────────────────────────────────────────────────
+	if err := validateInstructions(cfg.Instructions); err != nil {
+		return fmt.Errorf("instructions: %w", err)
+	}
+
 	return nil
 }
 
@@ -185,6 +190,26 @@ func validateGateway(g Gateway) error {
 		}
 	}
 
+	return nil
+}
+
+func validateInstructions(ins Instructions) error {
+	for i, step := range ins.Workflow {
+		if strings.TrimSpace(step.Trigger) == "" {
+			return fmt.Errorf("workflow[%d]: trigger must not be empty", i)
+		}
+		if strings.TrimSpace(step.Action) == "" {
+			return fmt.Errorf("workflow[%d]: action must not be empty", i)
+		}
+	}
+	for i, peer := range ins.Context.Peers {
+		if strings.TrimSpace(peer.Name) == "" {
+			return fmt.Errorf("context.peers[%d]: name must not be empty", i)
+		}
+		if strings.TrimSpace(peer.Role) == "" {
+			return fmt.Errorf("context.peers[%d]: role must not be empty", i)
+		}
+	}
 	return nil
 }
 
