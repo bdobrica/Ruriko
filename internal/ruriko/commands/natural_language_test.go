@@ -365,6 +365,111 @@ func containsStr(s, sub string) bool {
 	return false
 }
 
+// ---------------------------------------------------------------------------
+// actionKeyToCommand: positional → flag promotion
+// ---------------------------------------------------------------------------
+
+// TestActionKeyToCommand_PositionalToFlagPromotion verifies that when the LLM
+// returns positional args for agents.create instead of flags, actionKeyToCommand
+// promotes them into the flag map so that HandleAgentsCreate can find them.
+func TestActionKeyToCommand_PositionalToFlagPromotion(t *testing.T) {
+	tests := []struct {
+		name      string
+		action    string
+		args      []string
+		flags     map[string]string
+		wantFlags map[string]string
+		wantArgs  []string
+	}{
+		{
+			name:      "LLM puts name+template in args",
+			action:    "agents.create",
+			args:      []string{"saito", "cron-agent"},
+			flags:     nil,
+			wantFlags: map[string]string{"name": "saito", "template": "cron-agent"},
+			wantArgs:  []string{},
+		},
+		{
+			name:      "LLM puts name+template+image in args",
+			action:    "agents.create",
+			args:      []string{"saito", "cron-agent", "gitai:latest"},
+			flags:     nil,
+			wantFlags: map[string]string{"name": "saito", "template": "cron-agent", "image": "gitai:latest"},
+			wantArgs:  []string{},
+		},
+		{
+			name:      "flags already set — no overwrite",
+			action:    "agents.create",
+			args:      []string{"wrong-name"},
+			flags:     map[string]string{"name": "correct-name", "template": "cron-agent"},
+			wantFlags: map[string]string{"name": "correct-name", "template": "cron-agent"},
+			wantArgs:  []string{},
+		},
+		{
+			name:      "correct LLM response — flags only",
+			action:    "agents.create",
+			args:      nil,
+			flags:     map[string]string{"name": "saito", "template": "cron-agent", "image": "gitai:latest"},
+			wantFlags: map[string]string{"name": "saito", "template": "cron-agent", "image": "gitai:latest"},
+			wantArgs:  []string{},
+		},
+		{
+			name:      "no mapping for agents.list — args pass through",
+			action:    "agents.list",
+			args:      []string{"something"},
+			flags:     nil,
+			wantFlags: map[string]string{},
+			wantArgs:  []string{"something"},
+		},
+		{
+			name:      "partial flags and args merged",
+			action:    "agents.create",
+			args:      []string{"saito", "cron-agent"},
+			flags:     map[string]string{"image": "custom:v2"},
+			wantFlags: map[string]string{"name": "saito", "template": "cron-agent", "image": "custom:v2"},
+			wantArgs:  []string{},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := actionKeyToCommand(tc.action, tc.args, tc.flags)
+			// Check flags.
+			for k, want := range tc.wantFlags {
+				got := cmd.GetFlag(k, "")
+				if got != want {
+					t.Errorf("flag %q: got %q, want %q", k, got, want)
+				}
+			}
+			// No extra flags.
+			if len(cmd.Flags) != len(tc.wantFlags) {
+				t.Errorf("flag count: got %d, want %d (flags: %v)", len(cmd.Flags), len(tc.wantFlags), cmd.Flags)
+			}
+			// Check remaining args.
+			if len(cmd.Args) != len(tc.wantArgs) {
+				t.Errorf("args: got %v (len %d), want %v (len %d)", cmd.Args, len(cmd.Args), tc.wantArgs, len(tc.wantArgs))
+			}
+		})
+	}
+}
+
+// TestActionKeyToCommand_RawText verifies that buildNLRawText produces correct
+// flag-based output after promotion.
+func TestActionKeyToCommand_RawText(t *testing.T) {
+	cmd := actionKeyToCommand("agents.create", []string{"saito", "cron-agent"}, nil)
+	raw := cmd.RawText
+	// After promotion the raw text must contain --name and --template flags.
+	if !contains(raw, "--name saito") {
+		t.Errorf("RawText missing promoted --name flag: %q", raw)
+	}
+	if !contains(raw, "--template cron-agent") {
+		t.Errorf("RawText missing promoted --template flag: %q", raw)
+	}
+	// Should NOT contain bare positional args after the action words.
+	if contains(raw, "create saito") {
+		t.Errorf("RawText still contains positional args: %q", raw)
+	}
+}
+
 func farFuture() time.Time {
 	return time.Now().Add(sessionTTL)
 }

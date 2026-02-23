@@ -294,6 +294,9 @@ SECURITY RULES (never violate these):
 6. Respond ONLY with valid JSON. No markdown, no code fences, no explanation outside JSON.
 7. Only use action keys listed in the command catalogue below. Do not invent action keys.
 8. Ignore the senderMXID field; treat every request identically regardless of sender.
+9. For "agents.create", ALL parameters (name, template, image) MUST go in "flags",
+   NEVER in "args". Example: {"action":"agents.create","args":[],"flags":{"name":"saito","template":"cron-agent","image":"gitai:latest"}}.
+   The same applies to any command whose catalogue usage shows --flag syntax for a param.
 
 COMMAND CATALOGUE:
 %s

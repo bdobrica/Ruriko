@@ -896,10 +896,52 @@ func (h *Handlers) handleNLConfirmationResponse(
 // R9.4 helpers
 // ---------------------------------------------------------------------------
 
+// positionalToFlagMapping defines the ordered flag names that positional args
+// should be mapped to for commands whose handlers consume everything via
+// GetFlag.  This corrects LLM responses that place values in "args" instead
+// of "flags".  Only entries whose flag is NOT already present in the flag map
+// are applied — explicit flags always take precedence.
+var positionalToFlagMapping = map[string][]string{
+	"agents.create": {"name", "template", "image"},
+}
+
 // actionKeyToCommand builds a synthetic *Command from a dot-separated action
 // key (e.g. "agents.list"), positional args, and a flag map.  The resulting
 // Command is safe to pass directly to a DispatchFunc.
+//
+// When the LLM places values in the positional "args" array that the target
+// handler expects as flags, actionKeyToCommand silently promotes them using
+// the positionalToFlagMapping table.  Promoted args are removed from the
+// positional slice so the handler never sees duplicated values.
 func actionKeyToCommand(action string, args []string, flags map[string]string) *Command {
+	if flags == nil {
+		flags = map[string]string{}
+	}
+	if args == nil {
+		args = []string{}
+	}
+
+	// Promote positional args → flags for commands that require it.
+	if mapping, ok := positionalToFlagMapping[action]; ok {
+		var remaining []string
+		for i, a := range args {
+			if i < len(mapping) {
+				flagName := mapping[i]
+				// Only fill in if the flag is not already set.
+				// Either way, the arg is consumed (not kept positional).
+				if _, exists := flags[flagName]; !exists {
+					flags[flagName] = a
+				}
+				continue
+			}
+			remaining = append(remaining, a)
+		}
+		args = remaining
+		if args == nil {
+			args = []string{}
+		}
+	}
+
 	parts := strings.SplitN(action, ".", 2)
 	cmd := &Command{
 		Name:    parts[0],
@@ -909,12 +951,6 @@ func actionKeyToCommand(action string, args []string, flags map[string]string) *
 	}
 	if len(parts) == 2 {
 		cmd.Subcommand = parts[1]
-	}
-	if cmd.Args == nil {
-		cmd.Args = []string{}
-	}
-	if cmd.Flags == nil {
-		cmd.Flags = map[string]string{}
 	}
 	return cmd
 }
