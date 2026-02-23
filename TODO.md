@@ -319,14 +319,14 @@ The MVP is ready when **all** of the following are true:
 
 ### R15.4 Provisioning Pipeline — Mesh Topology
 
-- [ ] When Ruriko provisions a multi-agent workflow, populate `messaging.allowedTargets` in each agent's Gosuto:
+- [x] When Ruriko provisions a multi-agent workflow, populate `messaging.allowedTargets` in each agent's Gosuto:
   - Saito gets targets: `[kairo, user]`
   - Kairo gets targets: `[kumo, user]`
   - Kumo gets targets: `[kairo, user]`
-- [ ] Room IDs resolved from Ruriko's agent inventory (each agent's admin room is known)
-- [ ] Mesh topology is defined at provision time and versioned with the Gosuto
-- [ ] Test: Provisioned agents have correct messaging targets
-- [ ] Test: Gosuto update changes messaging topology
+- [x] Room IDs resolved from Ruriko's agent inventory (each agent's admin room is known)
+- [x] Mesh topology is defined at provision time and versioned with the Gosuto
+- [x] Test: Provisioned agents have correct messaging targets
+- [x] Test: Gosuto update changes messaging topology
 
 ### R15.5 Audit and Observability
 

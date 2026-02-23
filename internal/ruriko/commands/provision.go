@@ -162,6 +162,19 @@ func (h *Handlers) runProvisioningPipeline(ctx context.Context, args provisionAr
 		return
 	}
 
+	// --- R15.4: inject mesh topology (messaging.allowedTargets) -----------
+	// Resolve peer admin rooms from the agent inventory and inject the
+	// messaging targets into the rendered Gosuto YAML before hashing and
+	// storing the version. This ensures the mesh topology is versioned with
+	// the Gosuto config.
+	renderedYAML, err = InjectMeshTopology(ctx, renderedYAML, h.store, args.roomID)
+	if err != nil {
+		// Non-fatal: proceed without mesh targets. The agent will have an
+		// empty messaging section (deny-all) which is the safe default.
+		slog.Warn("provision: mesh topology injection failed (proceeding without targets)",
+			"agent", agentID, "err", err)
+	}
+
 	sum := sha256.Sum256(renderedYAML)
 	hash := fmt.Sprintf("%x", sum)
 
