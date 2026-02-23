@@ -21,6 +21,7 @@ import (
 	"github.com/bdobrica/Ruriko/common/trace"
 	"github.com/bdobrica/Ruriko/common/version"
 	"github.com/bdobrica/Ruriko/internal/gitai/approvals"
+	"github.com/bdobrica/Ruriko/internal/gitai/builtin"
 	"github.com/bdobrica/Ruriko/internal/gitai/control"
 	"github.com/bdobrica/Ruriko/internal/gitai/gateway"
 	"github.com/bdobrica/Ruriko/internal/gitai/gosuto"
@@ -125,6 +126,9 @@ type App struct {
 	// cancelCh is signalled when Ruriko sends a POST /tasks/cancel request.
 	// The currently running turn should watch this channel and abort early.
 	cancelCh chan struct{}
+	// builtinReg holds the registry of non-MCP built-in tools exposed to the
+	// LLM. Currently contains matrix.send_message (R15.2).
+	builtinReg *builtin.Registry
 }
 
 // New creates and initialises all Gitai subsystems. It does NOT start any
@@ -174,6 +178,10 @@ func New(cfg *Config) (*App, error) {
 	restartCh := make(chan struct{}, 1)
 	cancelCh := make(chan struct{}, 1)
 
+	// Built-in tool registry — populate before any turn can run.
+	builtinReg := builtin.New()
+	builtinReg.Register(builtin.NewMatrixSendTool(gosutoLdr, matrixCli))
+
 	app := &App{
 		cfg:         cfg,
 		db:          db,
@@ -188,6 +196,7 @@ func New(cfg *Config) (*App, error) {
 		startedAt:   time.Now(),
 		restartCh:   restartCh,
 		cancelCh:    cancelCh,
+		builtinReg:  builtinReg,
 	}
 
 	// Approval gate (needs matrix sender for posting to approvals room).
@@ -454,11 +463,14 @@ func (a *App) runTurn(ctx context.Context, roomID, sender, userText, replyToEven
 		return "", 0, fmt.Errorf("LLM provider not configured")
 	}
 
-	// Build system prompt from persona + instructions (R14.3).
-	// Messaging targets and memory context are nil/"" until R15/R18 are wired.
-	systemPrompt := buildSystemPrompt(cfg, nil, "")
+	// Build messaging targets summary for the system prompt (R15.2).
+	messagingTargets := buildMessagingTargets(cfg)
 
-	// Gather available tools across all running MCP servers.
+	// Build system prompt from persona + instructions + messaging targets (R14.3, R15.2).
+	// Memory context is "" until R18 is wired.
+	systemPrompt := buildSystemPrompt(cfg, messagingTargets, "")
+
+	// Gather available tools: MCP servers + built-in tools (R15.2).
 	toolDefs, _ := a.gatherTools(ctx)
 
 	// Initial message history.
@@ -514,7 +526,14 @@ func (a *App) runTurn(ctx context.Context, roomID, sender, userText, replyToEven
 }
 
 // executeToolCall performs policy evaluation and invokes a tool.
+// Built-in tools (registered in a.builtinReg) are dispatched to
+// executeBuiltinTool; all other tool calls route through MCP clients.
 func (a *App) executeToolCall(ctx context.Context, roomID, sender string, tc llm.ToolCall) (string, error) {
+	// Built-in tools take priority — they do not use the MCP client path.
+	if a.builtinReg != nil && a.builtinReg.IsBuiltin(tc.Function.Name) {
+		return a.executeBuiltinTool(ctx, sender, tc)
+	}
+
 	log := observability.WithTrace(ctx)
 
 	// Parse tool name: "mcpServer__toolName"
@@ -689,8 +708,10 @@ func (a *App) rebuildLLMProvider() {
 	slog.Info("secrets: LLM provider rebuilt with refreshed API key", "ref", ref)
 }
 
-// gatherTools collects ToolDefinitions from all running MCP servers and returns
-// them along with a lookup map of composed tool name → (mcp, tool).
+// gatherTools collects ToolDefinitions from all running MCP servers plus
+// every registered built-in tool, and returns them along with a lookup map
+// of composed MCP tool name → (mcp, tool).  Built-in tools are added after
+// MCP tools; they are not included in the lookup map (dispatched separately).
 func (a *App) gatherTools(ctx context.Context) ([]llm.ToolDefinition, map[string][2]string) {
 	toolMap := make(map[string][2]string)
 	var defs []llm.ToolDefinition
@@ -718,7 +739,82 @@ func (a *App) gatherTools(ctx context.Context) ([]llm.ToolDefinition, map[string
 			})
 		}
 	}
+
+	// Append built-in tool definitions (R15.2). They are identified by their
+	// canonical name (e.g. "matrix.send_message") and dispatched via
+	// executeBuiltinTool, not through the MCP client.
+	if a.builtinReg != nil {
+		defs = append(defs, a.builtinReg.Definitions()...)
+	}
+
 	return defs, toolMap
+}
+
+// executeBuiltinTool evaluates policy and dispatches a tool call to the
+// appropriate built-in handler.
+//
+// Policy is evaluated using the "builtin" pseudo-MCP server namespace so that
+// Gosuto capability rules of the form (mcp: builtin, tool: <name>) apply with
+// the same first-match-wins semantics as MCP tool rules.
+func (a *App) executeBuiltinTool(ctx context.Context, sender string, tc llm.ToolCall) (string, error) {
+	log := observability.WithTrace(ctx)
+
+	// Parse args.
+	var args map[string]interface{}
+	if tc.Function.Arguments != "" {
+		if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+			return "", fmt.Errorf("invalid tool arguments: %w", err)
+		}
+	}
+
+	// Policy evaluation using "builtin" as the pseudo-MCP namespace.
+	result := a.policyEng.Evaluate(builtin.BuiltinMCPNamespace, tc.Function.Name, args)
+	log.Info("policy evaluation",
+		"mcp", builtin.BuiltinMCPNamespace,
+		"tool", tc.Function.Name,
+		"decision", result.Decision,
+		"rule", result.MatchedRule,
+	)
+
+	switch result.Decision {
+	case policy.DecisionDeny:
+		return "", fmt.Errorf("policy denied: %s", result.Violation.Message)
+
+	case policy.DecisionRequireApproval:
+		cfg := a.gosutoLdr.Config()
+		if !cfg.Approvals.Enabled || cfg.Approvals.Room == "" {
+			return "", fmt.Errorf("approval required but approvals not configured")
+		}
+		ttl := time.Duration(cfg.Approvals.TTLSeconds) * time.Second
+		log.Info("requesting approval", "mcp", builtin.BuiltinMCPNamespace, "tool", tc.Function.Name)
+		if err := a.approvalGt.Request(ctx, cfg.Approvals.Room, sender, "builtin.call", tc.Function.Name, args, ttl); err != nil {
+			return "", fmt.Errorf("approval: %w", err)
+		}
+		// Approved — fall through to execution.
+
+	case policy.DecisionAllow:
+		// Proceed immediately.
+	}
+
+	tool := a.builtinReg.Get(tc.Function.Name)
+	if tool == nil {
+		return "", fmt.Errorf("built-in tool %q not found in registry", tc.Function.Name)
+	}
+	return tool.Execute(ctx, args)
+}
+
+// buildMessagingTargets returns a slice of human-readable target strings
+// ("alias (roomID)") derived from cfg.Messaging.AllowedTargets, suitable for
+// injection into the LLM system prompt via buildSystemPrompt.
+func buildMessagingTargets(cfg *gosutospec.Config) []string {
+	if cfg == nil || len(cfg.Messaging.AllowedTargets) == 0 {
+		return nil
+	}
+	targets := make([]string, 0, len(cfg.Messaging.AllowedTargets))
+	for _, t := range cfg.Messaging.AllowedTargets {
+		targets = append(targets, fmt.Sprintf("%s (%s)", t.Alias, t.RoomID))
+	}
+	return targets
 }
 
 // splitToolName splits a composed tool name "mcpServer__toolName" into

@@ -276,11 +276,11 @@ The MVP is ready when **all** of the following are true:
 
 ### R15.2 Matrix Messaging Tool Implementation
 
-- [ ] **Create a built-in tool registry** in the Gitai runtime — currently all tools come exclusively from MCP servers via `gatherTools()`. There is no concept of non-MCP tools. This phase must:
+- [x] **Create a built-in tool registry** in the Gitai runtime — currently all tools come exclusively from MCP servers via `gatherTools()`. There is no concept of non-MCP tools. This phase must:
   - Define a `BuiltinTool` interface (name, description, parameters, handler)
   - Inject built-in tools alongside MCP tools into the LLM's `tools` parameter
   - Route tool call execution: MCP tools → MCP client, built-in tools → local handler
-- [ ] Register `matrix.send_message` as the first built-in tool:
+- [x] Register `matrix.send_message` as the first built-in tool:
   ```go
   // Tool definition exposed to LLM
   {
@@ -292,17 +292,17 @@ The MVP is ready when **all** of the following are true:
     }
   }
   ```
-- [ ] Implement tool handler:
+- [x] Implement tool handler:
   1. Resolve `target` alias to room ID from Gosuto `messaging.allowedTargets`
   2. Validate target is in the allowlist (reject unknown targets)
   3. Check rate limit (`messaging.maxMessagesPerMinute`)
   4. Send message via Matrix client to the target room
   5. Return success/failure to the LLM
-- [ ] Expose available targets in the LLM system prompt so the model knows who it can message
-- [ ] Test: Message sent to allowed target succeeds
-- [ ] Test: Message to unknown target is rejected
-- [ ] Test: Rate limit is enforced
-- [ ] Test: Tool is visible to LLM in tool list
+- [x] Expose available targets in the LLM system prompt so the model knows who it can message
+- [x] Test: Message sent to allowed target succeeds
+- [x] Test: Message to unknown target is rejected
+- [x] Test: Rate limit is enforced
+- [x] Test: Tool is visible to LLM in tool list
 
 ### R15.3 Policy Engine Integration
 
