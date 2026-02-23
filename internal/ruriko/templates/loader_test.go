@@ -6,6 +6,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	gosutospec "github.com/bdobrica/Ruriko/common/spec/gosuto"
 	"github.com/bdobrica/Ruriko/internal/ruriko/templates"
 )
 
@@ -286,4 +287,47 @@ func TestRegistry_Render_KairoAgent_MissingVar(t *testing.T) {
 		AdminRoom: "!admin:example.com",
 	})
 	_ = err
+}
+
+// ── R14.5: All canonical templates pass Gosuto validation and have instructions ──
+
+// TestRegistry_Render_AllTemplates_PassValidation renders every canonical
+// template with valid substitution variables, parses the result with
+// gosuto.Parse(), and verifies:
+//   - parsing succeeds (no validation errors)
+//   - instructions.role is populated
+//   - instructions.workflow has at least one step
+//   - instructions.context.user is populated
+func TestRegistry_Render_AllTemplates_PassValidation(t *testing.T) {
+	reg := newDiskRegistry(t)
+
+	templateNames, err := reg.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+
+	for _, name := range templateNames {
+		name := name
+		t.Run(name, func(t *testing.T) {
+			rendered, err := reg.Render(name, canonicalVars)
+			if err != nil {
+				t.Fatalf("Render %s: %v", name, err)
+			}
+
+			cfg, err := gosutospec.Parse(rendered)
+			if err != nil {
+				t.Fatalf("gosuto.Parse %s: %v", name, err)
+			}
+
+			if cfg.Instructions.Role == "" {
+				t.Errorf("%s: instructions.role must not be empty", name)
+			}
+			if len(cfg.Instructions.Workflow) == 0 {
+				t.Errorf("%s: instructions.workflow must have at least one step", name)
+			}
+			if cfg.Instructions.Context.User == "" {
+				t.Errorf("%s: instructions.context.user must not be empty", name)
+			}
+		})
+	}
 }

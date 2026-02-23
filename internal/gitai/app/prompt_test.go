@@ -328,6 +328,191 @@ func TestBuildSystemPrompt_EmptyMemoryContext_NoSection(t *testing.T) {
 	}
 }
 
+// ── R14.5: canonical template instructions render into the system prompt ────
+//
+// Each sub-test builds a Config that mirrors a canonical template's
+// instructions block (the fragments that matter for the LLM prompt) and
+// asserts that buildSystemPrompt surfaces them correctly.
+
+func TestBuildSystemPrompt_CanonicalTemplateInstructions(t *testing.T) {
+	cases := []struct {
+		name           string
+		persona        string
+		instructions   gosutospec.Instructions
+		mustContain    []string
+		mustNotContain []string
+	}{
+		{
+			name:    "saito-agent",
+			persona: "You are Saito, a scheduling and trigger agent.",
+			instructions: gosutospec.Instructions{
+				Role: "You are a scheduling coordinator. Your only job is to send trigger messages\nto the appropriate peer agents when the cron schedule fires.",
+				Workflow: []gosutospec.WorkflowStep{
+					{
+						Trigger: "cron.tick event received",
+						Action:  "Send a trigger message to each configured peer agent via matrix.send_message to start their workflows.",
+					},
+				},
+				Context: gosutospec.InstructionsContext{
+					User:  "The user is the sole approver and oversees all agent workflows.",
+					Peers: nil,
+				},
+			},
+			mustContain: []string{
+				"scheduling coordinator",
+				"cron.tick event received",
+				"matrix.send_message",
+				"sole approver",
+				"## Operational Role",
+				"## Workflow",
+			},
+			mustNotContain: []string{"### Peer Agents"},
+		},
+		{
+			name:    "kairo-agent",
+			persona: "You are Kairo, a meticulous financial analyst.",
+			instructions: gosutospec.Instructions{
+				Role: "You are responsible for portfolio analysis and market data interpretation.\nYou work with Kumo (news agent) to enrich analysis with news context.",
+				Workflow: []gosutospec.WorkflowStep{
+					{Trigger: "on message from Saito or a cron event", Action: "Retrieve portfolio data via finnhub MCP tools. Analyse market state."},
+					{Trigger: "after initial analysis", Action: "Send the relevant tickers to Kumo via matrix.send_message requesting a news summary."},
+					{Trigger: "after receiving Kumo's news response", Action: "Revise the analysis incorporating the news context."},
+					{Trigger: "if findings are material", Action: "Write structured analysis to the database, then send a concise final report to the user."},
+					{Trigger: "if findings are not material", Action: "Write analysis to the database. Do not notify the user."},
+				},
+				Context: gosutospec.InstructionsContext{
+					User: "The user is the sole approver and the intended recipient of final reports.",
+					Peers: []gosutospec.PeerRef{
+						{Name: "saito", Role: "Cron/trigger agent — sends you scheduled wake-up messages."},
+						{Name: "kumo", Role: "News/search agent — send it a list of tickers or company names."},
+					},
+				},
+			},
+			mustContain: []string{
+				"portfolio analysis",
+				"on message from Saito or a cron event",
+				"after initial analysis",
+				"matrix.send_message",
+				"sole approver",
+				"saito",
+				"kumo",
+				"### Peer Agents",
+			},
+		},
+		{
+			name:    "kumo-agent",
+			persona: "You are Kumo, a news and web search agent.",
+			instructions: gosutospec.Instructions{
+				Role: "You are a news and web search agent. When given a list of tickers, company\nnames, or topics, search for recent and relevant news using your tools.",
+				Workflow: []gosutospec.WorkflowStep{
+					{Trigger: "message received with tickers or topics to research", Action: "Use brave-search MCP to find recent news."},
+					{Trigger: "after gathering results", Action: "Summarise findings and send summary back to the requester via matrix.send_message."},
+				},
+				Context: gosutospec.InstructionsContext{
+					User:  "The user is the sole approver. Only contact them directly if explicitly instructed.",
+					Peers: []gosutospec.PeerRef{{Name: "kairo", Role: "Finance/analysis agent — primary requester."}},
+				},
+			},
+			mustContain: []string{
+				"news and web search",
+				"message received with tickers",
+				"brave-search",
+				"matrix.send_message",
+				"kairo",
+				"Finance/analysis agent",
+			},
+		},
+		{
+			name:    "browser-agent",
+			persona: "You are a controlled browser automation agent.",
+			instructions: gosutospec.Instructions{
+				Role: "You are a controlled browser automation agent. You only take browser actions\nat explicit operator request.",
+				Workflow: []gosutospec.WorkflowStep{
+					{Trigger: "operator message requesting a screenshot or page observation", Action: "Use playwright screenshot tool to capture the current page state."},
+					{Trigger: "operator message requesting navigation to a URL", Action: "Request approval via the approval workflow, then navigate to the URL."},
+					{Trigger: "operator message requesting a click action", Action: "Request approval, then perform the approved click action."},
+				},
+				Context: gosutospec.InstructionsContext{
+					User: "The user is the sole operator and approver. All browser actions require their explicit authorisation.",
+				},
+			},
+			mustContain: []string{
+				"browser automation",
+				"operator message requesting a screenshot",
+				"playwright screenshot",
+				"operator message requesting navigation",
+				"approval workflow",
+				"sole operator and approver",
+			},
+			mustNotContain: []string{"### Peer Agents"},
+		},
+		{
+			name:    "email-agent",
+			persona: "You are an email-reactive agent.",
+			instructions: gosutospec.Instructions{
+				Role: "You are an email-reactive agent. When a new email arrives via the IMAP\ngateway, summarise it clearly and concisely.",
+				Workflow: []gosutospec.WorkflowStep{
+					{Trigger: "imap.email event received", Action: "Read the email subject and body from the event. Optionally fetch any referenced URLs. Post a structured summary to the admin room."},
+					{Trigger: "URL fetch completes", Action: "Incorporate fetched content into the summary if relevant, then post the final structured summary."},
+				},
+				Context: gosutospec.InstructionsContext{
+					User: "The user is the sole approver and recipient of email summaries.",
+				},
+			},
+			mustContain: []string{
+				"email-reactive",
+				"imap.email event received",
+				"Post a structured summary",
+				"URL fetch completes",
+				"sole approver",
+			},
+			mustNotContain: []string{"### Peer Agents"},
+		},
+		{
+			name:    "cron-agent",
+			persona: "You are a scheduled task agent.",
+			instructions: gosutospec.Instructions{
+				Role: "You are a scheduled task agent. On each cron trigger, perform the\nconfigured periodic check using your search and fetch tools.",
+				Workflow: []gosutospec.WorkflowStep{
+					{Trigger: "cron.tick event received", Action: "Perform the scheduled check: search for relevant information using brave-search, optionally fetch URLs for detail, then summarise findings."},
+					{Trigger: "after gathering results", Action: "Post a concise, structured summary to the admin room."},
+				},
+				Context: gosutospec.InstructionsContext{
+					User: "The user is the sole approver and recipient of scheduled reports.",
+				},
+			},
+			mustContain: []string{
+				"scheduled task",
+				"cron.tick event received",
+				"brave-search",
+				"after gathering results",
+				"admin room",
+				"sole approver",
+			},
+			mustNotContain: []string{"### Peer Agents"},
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := withInstructions(withPersona(minimalConfig(tc.name, ""), tc.persona), tc.instructions)
+			got := buildSystemPrompt(cfg, nil, "")
+
+			for _, want := range tc.mustContain {
+				if !strings.Contains(got, want) {
+					t.Errorf("[%s] system prompt missing %q\ngot:\n%s", tc.name, want, got)
+				}
+			}
+			for _, notWant := range tc.mustNotContain {
+				if strings.Contains(got, notWant) {
+					t.Errorf("[%s] system prompt should NOT contain %q\ngot:\n%s", tc.name, notWant, got)
+				}
+			}
+		})
+	}
+}
+
 // ── determinism ──────────────────────────────────────────────────────────────
 
 func TestBuildSystemPrompt_IsDeterministic(t *testing.T) {
