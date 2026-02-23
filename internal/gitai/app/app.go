@@ -743,8 +743,19 @@ func (a *App) gatherTools(ctx context.Context) ([]llm.ToolDefinition, map[string
 	// Append built-in tool definitions (R15.2). They are identified by their
 	// canonical name (e.g. "matrix.send_message") and dispatched via
 	// executeBuiltinTool, not through the MCP client.
+	//
+	// R15.3: matrix.send_message is excluded from the tool list when no
+	// messaging targets are configured in Gosuto (default-deny: the tool is
+	// unavailable rather than visible-but-always-denied, which would cause the
+	// LLM to attempt calls that always fail).
 	if a.builtinReg != nil {
-		defs = append(defs, a.builtinReg.Definitions()...)
+		messagingConfigured := a.policyEng.IsMessagingConfigured()
+		for _, def := range a.builtinReg.Definitions() {
+			if def.Function.Name == builtin.MatrixSendToolName && !messagingConfigured {
+				continue
+			}
+			defs = append(defs, def)
+		}
 	}
 
 	return defs, toolMap

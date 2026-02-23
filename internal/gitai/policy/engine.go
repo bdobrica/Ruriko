@@ -160,6 +160,19 @@ func (e *Engine) IsRoomAllowed(roomID string) bool {
 	return matchesAny(cfg.Trust.AllowedRooms, roomID)
 }
 
+// IsMessagingConfigured returns true when the active Gosuto config declares at
+// least one allowed messaging target.  When this returns false the built-in
+// matrix.send_message tool must be treated as unavailable: it is excluded from
+// the tool list sent to the LLM and any stray call attempts are denied by the
+// default-deny policy.
+func (e *Engine) IsMessagingConfigured() bool {
+	cfg := e.loader.Config()
+	if cfg == nil {
+		return false
+	}
+	return len(cfg.Messaging.AllowedTargets) > 0
+}
+
 // checkConstraints validates args against the capability's constraint map.
 // Returns non-nil only when a constraint is violated.
 func checkConstraints(cap gosutospec.Capability, args map[string]interface{}) *Violation {

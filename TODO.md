@@ -306,16 +306,16 @@ The MVP is ready when **all** of the following are true:
 
 ### R15.3 Policy Engine Integration
 
-- [ ] Extend the policy engine to evaluate built-in tools — currently it only evaluates `(mcpServer, tool)` tuples. Options:
+- [x] Extend the policy engine to evaluate built-in tools — currently it only evaluates `(mcpServer, tool)` tuples. Options:
   - Add a `"builtin"` pseudo-MCP server namespace so existing rules work: `mcp: builtin, tool: matrix.send_message`
   - Or add a parallel rule type for built-in tools
-- [ ] Add `matrix.send_message` to the policy engine's capability evaluation:
+- [x] Add `matrix.send_message` to the policy engine's capability evaluation:
   - Subject to the same first-match-wins rule evaluation as MCP tools
   - Can be gated by approval if desired (e.g., `approval_required: true` for certain targets)
   - Constraints: target room allowlist, rate limits
-- [ ] Add `matrix.send_message` to default-deny: if no `messaging` section in Gosuto, tool is unavailable
-- [ ] Test: Policy engine correctly gates `matrix.send_message` calls
-- [ ] Test: Approval-gated messaging targets require human approval
+- [x] Add `matrix.send_message` to default-deny: if no `messaging` section in Gosuto, tool is unavailable
+- [x] Test: Policy engine correctly gates `matrix.send_message` calls
+- [x] Test: Approval-gated messaging targets require human approval
 
 ### R15.4 Provisioning Pipeline — Mesh Topology
 
