@@ -127,7 +127,7 @@ func TestRegistry_List_IncludesCanonicalTemplates(t *testing.T) {
 		t.Fatalf("List: %v", err)
 	}
 
-	want := []string{"kumo-agent", "saito-agent"}
+	want := []string{"kairo-agent", "kumo-agent", "saito-agent"}
 	for _, w := range want {
 		found := false
 		for _, n := range names {
@@ -234,6 +234,55 @@ func TestRegistry_Render_KumoAgent_MissingVar(t *testing.T) {
 	reg := newDiskRegistry(t)
 
 	_, err := reg.Render("kumo-agent", templates.TemplateVars{
+		AdminRoom: "!admin:example.com",
+	})
+	_ = err
+}
+
+func TestRegistry_Render_KairoAgent(t *testing.T) {
+	reg := newDiskRegistry(t)
+
+	rendered, err := reg.Render("kairo-agent", canonicalVars)
+	if err != nil {
+		t.Fatalf("Render kairo-agent: %v", err)
+	}
+
+	got := string(rendered)
+
+	checks := []string{
+		`name: "test-agent"`,
+		"!admin:example.com",
+		"template: kairo-agent",
+		"allow-finnhub-all",
+		"allow-database-read",
+		"allow-database-write",
+		"allow-database-update",
+		"allow-database-query",
+		"deny-all-others",
+		"finnhub",
+		"uv",
+		"stock_market_server.py",
+		"database",
+		"mcp-sqlite",
+		"test-agent.db",
+		"test-agent.openai-api-key",
+		"test-agent.finnhub-api-key",
+		"FINNHUB_API_KEY",
+		"gpt-4o",
+		"0.2",
+	}
+
+	for _, want := range checks {
+		if !strings.Contains(got, want) {
+			t.Errorf("kairo-agent rendered YAML should contain %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestRegistry_Render_KairoAgent_MissingVar(t *testing.T) {
+	reg := newDiskRegistry(t)
+
+	_, err := reg.Render("kairo-agent", templates.TemplateVars{
 		AdminRoom: "!admin:example.com",
 	})
 	_ = err

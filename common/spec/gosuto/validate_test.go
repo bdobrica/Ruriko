@@ -1,6 +1,7 @@
 package gosuto_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/bdobrica/Ruriko/common/spec/gosuto"
@@ -446,6 +447,319 @@ mcps:
     autoRestart: true
 `
 
+func TestParse_KumoAgentTemplate(t *testing.T) {
+	cfg, err := gosuto.Parse([]byte(kumoRendered))
+	if err != nil {
+		t.Fatalf("Parse kumo-agent: unexpected error: %v", err)
+	}
+
+	if cfg.Metadata.Name != "kumo" {
+		t.Errorf("name: got %q, want %q", cfg.Metadata.Name, "kumo")
+	}
+	if cfg.Metadata.Template != "kumo-agent" {
+		t.Errorf("template: got %q, want %q", cfg.Metadata.Template, "kumo-agent")
+	}
+	if len(cfg.Capabilities) != 3 {
+		t.Errorf("capabilities count: got %d, want 3", len(cfg.Capabilities))
+	}
+	if cfg.Capabilities[0].Name != "allow-brave-search" {
+		t.Errorf("capability[0] name: got %q, want %q", cfg.Capabilities[0].Name, "allow-brave-search")
+	}
+	if !cfg.Capabilities[0].Allow {
+		t.Error("allow-brave-search capability should have allow=true")
+	}
+	if cfg.Capabilities[1].Name != "allow-fetch-read" {
+		t.Errorf("capability[1] name: got %q, want %q", cfg.Capabilities[1].Name, "allow-fetch-read")
+	}
+	if cfg.Capabilities[1].Constraints["method"] != "GET" {
+		t.Errorf("fetch constraint method: got %q, want %q", cfg.Capabilities[1].Constraints["method"], "GET")
+	}
+	if cfg.Capabilities[2].Name != "deny-all-others" {
+		t.Errorf("capability[2] name: got %q, want %q", cfg.Capabilities[2].Name, "deny-all-others")
+	}
+	if cfg.Capabilities[2].Allow {
+		t.Error("deny-all-others capability should have allow=false")
+	}
+	if len(cfg.MCPs) != 2 {
+		t.Errorf("mcps count: got %d, want 2", len(cfg.MCPs))
+	}
+	if cfg.MCPs[0].Name != "brave-search" {
+		t.Errorf("mcp[0] name: got %q, want %q", cfg.MCPs[0].Name, "brave-search")
+	}
+	if !cfg.MCPs[0].AutoRestart {
+		t.Error("brave-search MCP should have autoRestart=true")
+	}
+	if cfg.MCPs[1].Name != "fetch" {
+		t.Errorf("mcp[1] name: got %q, want %q", cfg.MCPs[1].Name, "fetch")
+	}
+	if len(cfg.Secrets) != 2 {
+		t.Errorf("secrets count: got %d, want 2", len(cfg.Secrets))
+	}
+	if cfg.Secrets[0].Name != "kumo.openai-api-key" {
+		t.Errorf("secret[0] name: got %q, want %q", cfg.Secrets[0].Name, "kumo.openai-api-key")
+	}
+	if cfg.Secrets[1].Name != "kumo.brave-api-key" {
+		t.Errorf("secret[1] name: got %q, want %q", cfg.Secrets[1].Name, "kumo.brave-api-key")
+	}
+	if cfg.Persona.Model != "gpt-4o" {
+		t.Errorf("model: got %q, want %q", cfg.Persona.Model, "gpt-4o")
+	}
+	if cfg.Persona.Temperature == nil || *cfg.Persona.Temperature != 0.3 {
+		t.Errorf("temperature: got %v, want 0.3", cfg.Persona.Temperature)
+	}
+	if cfg.Limits.MaxRequestsPerMinute != 10 {
+		t.Errorf("maxRequestsPerMinute: got %d, want 10", cfg.Limits.MaxRequestsPerMinute)
+	}
+	if cfg.Limits.MaxMonthlyCostUSD != 10.00 {
+		t.Errorf("maxMonthlyCostUSD: got %g, want 10.00", cfg.Limits.MaxMonthlyCostUSD)
+	}
+}
+
+// ── Kairo agent template tests ────────────────────────────────────────────────
+
+// kairoRendered is the kairo-agent gosuto.yaml template with Go template vars
+// replaced by concrete values, as produced by the template loader at
+// provisioning time.
+const kairoRendered = `
+apiVersion: gosuto/v1
+metadata:
+  name: kairo
+  template: kairo-agent
+  description: >
+    Financial analysis agent. Queries stock market data via Finnhub, writes
+    structured analysis results to a local SQLite database, and delivers
+    concise reports to the user. Triggered by Saito on a schedule; works with
+    Kumo for news context enrichment.
+
+trust:
+  allowedRooms:
+    - "!admin:example.com"
+  allowedSenders:
+    - "*"
+  requireE2EE: false
+  adminRoom: "!admin:example.com"
+
+limits:
+  maxRequestsPerMinute: 10
+  maxTokensPerRequest: 16384
+  maxConcurrentRequests: 2
+  maxMonthlyCostUSD: 20.00
+
+capabilities:
+  - name: allow-finnhub-all
+    mcp: finnhub
+    tool: "*"
+    allow: true
+
+  - name: allow-database-read
+    mcp: database
+    tool: read_records
+    allow: true
+
+  - name: allow-database-write
+    mcp: database
+    tool: create_record
+    allow: true
+
+  - name: allow-database-update
+    mcp: database
+    tool: update_records
+    allow: true
+
+  - name: allow-database-query
+    mcp: database
+    tool: query
+    allow: true
+
+  - name: allow-database-schema
+    mcp: database
+    tool: get_table_schema
+    allow: true
+
+  - name: allow-database-info
+    mcp: database
+    tool: db_info
+    allow: true
+
+  - name: allow-database-tables
+    mcp: database
+    tool: list_tables
+    allow: true
+
+  - name: deny-all-others
+    mcp: "*"
+    tool: "*"
+    allow: false
+
+approvals:
+  requireApproval: false
+
+persona:
+  systemPrompt: |
+    You are Kairo, a meticulous financial analyst. Your responsibilities are:
+    1. Retrieve stock market data (prices, financials, news) using your finnhub tools.
+    2. Analyse portfolio performance and market conditions objectively and rigorously.
+    3. Store structured analysis results in the database for historical tracking.
+    4. Deliver concise, actionable reports to the user — only when there is something
+       meaningful to report (material price movements, significant news, or notable trends).
+    5. Collaborate with Kumo for news context when deeper narrative context is needed.
+
+    Principles:
+    - Focus on verifiable, data-backed facts. Never speculate beyond what the data supports.
+    - Always cite the data source and timestamp for every claim.
+    - Be conservative in assessments. "Unclear" is a valid conclusion.
+    - Persist every analysis run to the database before sending any report.
+    - Keep reports brief: headline finding, supporting data, confidence level.
+  llmProvider: openai
+  model: gpt-4o
+  temperature: 0.2
+  apiKeySecretRef: kairo.openai-api-key
+
+secrets:
+  - name: kairo.openai-api-key
+    envVar: OPENAI_API_KEY
+    required: true
+  - name: kairo.finnhub-api-key
+    envVar: FINNHUB_API_KEY
+    required: true
+
+mcps:
+  - name: finnhub
+    command: uv
+    args:
+      - "--directory"
+      - "/opt/mcps/stock-market-mcp-server"
+      - "run"
+      - "stock_market_server.py"
+    env:
+      FINNHUB_API_KEY: "${FINNHUB_API_KEY}"
+    autoRestart: true
+
+  - name: database
+    command: npx
+    args:
+      - "-y"
+      - "mcp-sqlite"
+      - "/data/kairo.db"
+    autoRestart: true
+`
+
+func TestParse_KairoAgentTemplate(t *testing.T) {
+	cfg, err := gosuto.Parse([]byte(kairoRendered))
+	if err != nil {
+		t.Fatalf("Parse kairo-agent: unexpected error: %v", err)
+	}
+
+	if cfg.Metadata.Name != "kairo" {
+		t.Errorf("name: got %q, want %q", cfg.Metadata.Name, "kairo")
+	}
+	if cfg.Metadata.Template != "kairo-agent" {
+		t.Errorf("template: got %q, want %q", cfg.Metadata.Template, "kairo-agent")
+	}
+
+	// ── Capabilities ─────────────────────────────────────────────────────────
+	if len(cfg.Capabilities) != 9 {
+		t.Errorf("capabilities count: got %d, want 9", len(cfg.Capabilities))
+	}
+	if cfg.Capabilities[0].Name != "allow-finnhub-all" {
+		t.Errorf("capability[0] name: got %q, want %q", cfg.Capabilities[0].Name, "allow-finnhub-all")
+	}
+	if !cfg.Capabilities[0].Allow {
+		t.Error("allow-finnhub-all capability should have allow=true")
+	}
+	if cfg.Capabilities[0].MCP != "finnhub" {
+		t.Errorf("capability[0] mcp: got %q, want %q", cfg.Capabilities[0].MCP, "finnhub")
+	}
+	// Last rule must deny everything else.
+	last := cfg.Capabilities[len(cfg.Capabilities)-1]
+	if last.Name != "deny-all-others" {
+		t.Errorf("last capability name: got %q, want %q", last.Name, "deny-all-others")
+	}
+	if last.Allow {
+		t.Error("deny-all-others capability should have allow=false")
+	}
+
+	// ── MCP servers ──────────────────────────────────────────────────────────
+	if len(cfg.MCPs) != 2 {
+		t.Fatalf("mcps count: got %d, want 2", len(cfg.MCPs))
+	}
+
+	finnhub := cfg.MCPs[0]
+	if finnhub.Name != "finnhub" {
+		t.Errorf("mcp[0] name: got %q, want %q", finnhub.Name, "finnhub")
+	}
+	if finnhub.Command != "uv" {
+		t.Errorf("mcp[0] command: got %q, want %q", finnhub.Command, "uv")
+	}
+	if len(finnhub.Args) < 4 {
+		t.Errorf("mcp[0] args: got %d args, want at least 4", len(finnhub.Args))
+	}
+	if finnhub.Env["FINNHUB_API_KEY"] == "" {
+		t.Error("mcp[0] env FINNHUB_API_KEY should not be empty")
+	}
+	if !finnhub.AutoRestart {
+		t.Error("finnhub MCP should have autoRestart=true")
+	}
+
+	database := cfg.MCPs[1]
+	if database.Name != "database" {
+		t.Errorf("mcp[1] name: got %q, want %q", database.Name, "database")
+	}
+	if database.Command != "npx" {
+		t.Errorf("mcp[1] command: got %q, want %q", database.Command, "npx")
+	}
+	// Args should include mcp-sqlite package name and database path.
+	argsStr := strings.Join(database.Args, " ")
+	if !strings.Contains(argsStr, "mcp-sqlite") {
+		t.Errorf("database MCP args should contain mcp-sqlite: %v", database.Args)
+	}
+	if !strings.Contains(argsStr, "kairo.db") {
+		t.Errorf("database MCP args should contain agent-specific db path: %v", database.Args)
+	}
+	if !database.AutoRestart {
+		t.Error("database MCP should have autoRestart=true")
+	}
+
+	// ── Secrets ───────────────────────────────────────────────────────────────
+	if len(cfg.Secrets) != 2 {
+		t.Fatalf("secrets count: got %d, want 2", len(cfg.Secrets))
+	}
+	if cfg.Secrets[0].Name != "kairo.openai-api-key" {
+		t.Errorf("secret[0] name: got %q, want %q", cfg.Secrets[0].Name, "kairo.openai-api-key")
+	}
+	if !cfg.Secrets[0].Required {
+		t.Error("openai-api-key secret should be required")
+	}
+	if cfg.Secrets[1].Name != "kairo.finnhub-api-key" {
+		t.Errorf("secret[1] name: got %q, want %q", cfg.Secrets[1].Name, "kairo.finnhub-api-key")
+	}
+	if !cfg.Secrets[1].Required {
+		t.Error("finnhub-api-key secret should be required")
+	}
+
+	// ── Persona ───────────────────────────────────────────────────────────────
+	if cfg.Persona.Model != "gpt-4o" {
+		t.Errorf("model: got %q, want %q", cfg.Persona.Model, "gpt-4o")
+	}
+	if cfg.Persona.Temperature == nil || *cfg.Persona.Temperature != 0.2 {
+		t.Errorf("temperature: got %v, want 0.2", cfg.Persona.Temperature)
+	}
+	if cfg.Persona.APIKeySecretRef != "kairo.openai-api-key" {
+		t.Errorf("apiKeySecretRef: got %q, want %q", cfg.Persona.APIKeySecretRef, "kairo.openai-api-key")
+	}
+
+	// ── Limits ────────────────────────────────────────────────────────────────
+	if cfg.Limits.MaxRequestsPerMinute != 10 {
+		t.Errorf("maxRequestsPerMinute: got %d, want 10", cfg.Limits.MaxRequestsPerMinute)
+	}
+	if cfg.Limits.MaxTokensPerRequest != 16384 {
+		t.Errorf("maxTokensPerRequest: got %d, want 16384", cfg.Limits.MaxTokensPerRequest)
+	}
+	if cfg.Limits.MaxMonthlyCostUSD != 20.00 {
+		t.Errorf("maxMonthlyCostUSD: got %g, want 20.00", cfg.Limits.MaxMonthlyCostUSD)
+	}
+}
+
 // ── Gateway round-trip tests ──────────────────────────────────────────────────
 
 const gatewayValid = `
@@ -732,73 +1046,5 @@ limits:
 `))
 	if err == nil {
 		t.Fatal("expected error for negative maxEventsPerMinute, got nil")
-	}
-}
-
-func TestParse_KumoAgentTemplate(t *testing.T) {
-	cfg, err := gosuto.Parse([]byte(kumoRendered))
-	if err != nil {
-		t.Fatalf("Parse kumo-agent: unexpected error: %v", err)
-	}
-
-	if cfg.Metadata.Name != "kumo" {
-		t.Errorf("name: got %q, want %q", cfg.Metadata.Name, "kumo")
-	}
-	if cfg.Metadata.Template != "kumo-agent" {
-		t.Errorf("template: got %q, want %q", cfg.Metadata.Template, "kumo-agent")
-	}
-	if len(cfg.Capabilities) != 3 {
-		t.Errorf("capabilities count: got %d, want 3", len(cfg.Capabilities))
-	}
-	if cfg.Capabilities[0].Name != "allow-brave-search" {
-		t.Errorf("capability[0] name: got %q, want %q", cfg.Capabilities[0].Name, "allow-brave-search")
-	}
-	if !cfg.Capabilities[0].Allow {
-		t.Error("allow-brave-search capability should have allow=true")
-	}
-	if cfg.Capabilities[1].Name != "allow-fetch-read" {
-		t.Errorf("capability[1] name: got %q, want %q", cfg.Capabilities[1].Name, "allow-fetch-read")
-	}
-	if cfg.Capabilities[1].Constraints["method"] != "GET" {
-		t.Errorf("fetch constraint method: got %q, want %q", cfg.Capabilities[1].Constraints["method"], "GET")
-	}
-	if cfg.Capabilities[2].Name != "deny-all-others" {
-		t.Errorf("capability[2] name: got %q, want %q", cfg.Capabilities[2].Name, "deny-all-others")
-	}
-	if cfg.Capabilities[2].Allow {
-		t.Error("deny-all-others capability should have allow=false")
-	}
-	if len(cfg.MCPs) != 2 {
-		t.Errorf("mcps count: got %d, want 2", len(cfg.MCPs))
-	}
-	if cfg.MCPs[0].Name != "brave-search" {
-		t.Errorf("mcp[0] name: got %q, want %q", cfg.MCPs[0].Name, "brave-search")
-	}
-	if !cfg.MCPs[0].AutoRestart {
-		t.Error("brave-search MCP should have autoRestart=true")
-	}
-	if cfg.MCPs[1].Name != "fetch" {
-		t.Errorf("mcp[1] name: got %q, want %q", cfg.MCPs[1].Name, "fetch")
-	}
-	if len(cfg.Secrets) != 2 {
-		t.Errorf("secrets count: got %d, want 2", len(cfg.Secrets))
-	}
-	if cfg.Secrets[0].Name != "kumo.openai-api-key" {
-		t.Errorf("secret[0] name: got %q, want %q", cfg.Secrets[0].Name, "kumo.openai-api-key")
-	}
-	if cfg.Secrets[1].Name != "kumo.brave-api-key" {
-		t.Errorf("secret[1] name: got %q, want %q", cfg.Secrets[1].Name, "kumo.brave-api-key")
-	}
-	if cfg.Persona.Model != "gpt-4o" {
-		t.Errorf("model: got %q, want %q", cfg.Persona.Model, "gpt-4o")
-	}
-	if cfg.Persona.Temperature == nil || *cfg.Persona.Temperature != 0.3 {
-		t.Errorf("temperature: got %v, want 0.3", cfg.Persona.Temperature)
-	}
-	if cfg.Limits.MaxRequestsPerMinute != 10 {
-		t.Errorf("maxRequestsPerMinute: got %d, want 10", cfg.Limits.MaxRequestsPerMinute)
-	}
-	if cfg.Limits.MaxMonthlyCostUSD != 10.00 {
-		t.Errorf("maxMonthlyCostUSD: got %g, want 10.00", cfg.Limits.MaxMonthlyCostUSD)
 	}
 }

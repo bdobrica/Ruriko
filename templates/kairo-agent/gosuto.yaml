@@ -1,0 +1,136 @@
+apiVersion: gosuto/v1
+metadata:
+  name: "{{.AgentName}}"
+  template: kairo-agent
+  description: >
+    Financial analysis agent. Queries stock market data via Finnhub, writes
+    structured analysis results to a local SQLite database, and delivers
+    concise reports to the user. Triggered by Saito on a schedule; works with
+    Kumo for news context enrichment.
+
+trust:
+  allowedRooms:
+    - "{{.AdminRoom}}"
+  allowedSenders:
+    - "*"
+  requireE2EE: false
+  adminRoom: "{{.AdminRoom}}"
+
+limits:
+  maxRequestsPerMinute: 10
+  maxTokensPerRequest: 16384
+  maxConcurrentRequests: 2
+  maxMonthlyCostUSD: 20.00
+
+capabilities:
+  # Finnhub: allow all market data tools
+  - name: allow-finnhub-all
+    mcp: finnhub
+    tool: "*"
+    allow: true
+
+  # Database: allow read queries
+  - name: allow-database-read
+    mcp: database
+    tool: read_records
+    allow: true
+
+  # Database: allow insert (analysis results are append-friendly)
+  - name: allow-database-write
+    mcp: database
+    tool: create_record
+    allow: true
+
+  # Database: allow in-place updates (e.g. mark a row as processed)
+  - name: allow-database-update
+    mcp: database
+    tool: update_records
+    allow: true
+
+  # Database: allow arbitrary SELECT queries for cross-table analysis
+  - name: allow-database-query
+    mcp: database
+    tool: query
+    allow: true
+
+  # Database: schema discovery tools (read-only)
+  - name: allow-database-schema
+    mcp: database
+    tool: get_table_schema
+    allow: true
+
+  - name: allow-database-info
+    mcp: database
+    tool: db_info
+    allow: true
+
+  - name: allow-database-tables
+    mcp: database
+    tool: list_tables
+    allow: true
+
+  # Deny everything else — including database deletes (analysis data is
+  # append-only for auditability) and any other MCP servers.
+  - name: deny-all-others
+    mcp: "*"
+    tool: "*"
+    allow: false
+
+approvals:
+  requireApproval: false
+
+persona:
+  systemPrompt: |
+    You are Kairo, a meticulous financial analyst. Your responsibilities are:
+    1. Retrieve stock market data (prices, financials, news) using your finnhub tools.
+    2. Analyse portfolio performance and market conditions objectively and rigorously.
+    3. Store structured analysis results in the database for historical tracking.
+    4. Deliver concise, actionable reports to the user — only when there is something
+       meaningful to report (material price movements, significant news, or notable trends).
+    5. Collaborate with Kumo for news context when deeper narrative context is needed.
+
+    Principles:
+    - Focus on verifiable, data-backed facts. Never speculate beyond what the data supports.
+    - Always cite the data source and timestamp for every claim.
+    - Be conservative in assessments. "Unclear" is a valid conclusion.
+    - Persist every analysis run to the database before sending any report.
+    - Keep reports brief: headline finding, supporting data, confidence level.
+  llmProvider: openai
+  model: gpt-4o
+  temperature: 0.2
+  apiKeySecretRef: "{{.AgentName}}.openai-api-key"
+
+secrets:
+  - name: "{{.AgentName}}.openai-api-key"
+    envVar: OPENAI_API_KEY
+    required: true
+  - name: "{{.AgentName}}.finnhub-api-key"
+    envVar: FINNHUB_API_KEY
+    required: true
+
+mcps:
+  # Finnhub stock market data MCP server (Python / uv).
+  # Source: https://github.com/sverze/stock-market-mcp-server
+  # Requires uv and a pre-cloned copy at /opt/mcps/stock-market-mcp-server
+  # inside the agent container (add to Dockerfile.gitai).
+  - name: finnhub
+    command: uv
+    args:
+      - "--directory"
+      - "/opt/mcps/stock-market-mcp-server"
+      - "run"
+      - "stock_market_server.py"
+    env:
+      FINNHUB_API_KEY: "{{`${FINNHUB_API_KEY}`}}"
+    autoRestart: true
+
+  # SQLite CRUD MCP server (Node.js / npx).
+  # Source: https://github.com/jparkerweb/mcp-sqlite (npm: mcp-sqlite)
+  # The database file is created automatically on first run.
+  - name: database
+    command: npx
+    args:
+      - "-y"
+      - "mcp-sqlite"
+      - "/data/{{.AgentName}}.db"
+    autoRestart: true

@@ -96,21 +96,21 @@ The MVP is ready when **all** of the following are true:
 
 ## 📋 Phase R5: Agent Provisioning UX — Remaining Work
 
-**Status**: 🔄 R5.2–R5.4 complete. Only the Kairo template from R5.1 remains.
+**Status**: ✅ Complete. R5.1–R5.4 all done.
 
-> R5.2 (provisioning pipeline), R5.3 (agent registry), and R5.4 (chat-driven
-> creation) are complete — see [CHANGELOG.md](CHANGELOG.md).
+> R5.1 (kairo template), R5.2 (provisioning pipeline), R5.3 (agent registry),
+> and R5.4 (chat-driven creation) are complete — see [CHANGELOG.md](CHANGELOG.md).
 
-### R5.1 Kairo Agent Template (deferred)
+### R5.1 Kairo Agent Template
 
-- [ ] Create `templates/kairo-agent/gosuto.yaml` — finance agent:
-  - [ ] MCP: finnhub, database
-  - [ ] Capabilities: query market data, write analysis to DB, report to Ruriko
-  - [ ] Persona: financial analyst
-  - [ ] Secret refs: `<agent>.finnhub-api-key`
+- [x] Create `templates/kairo-agent/gosuto.yaml` — finance agent:
+  - [x] MCP: finnhub (`sverze/stock-market-mcp-server`, Python/uv), database (`jparkerweb/mcp-sqlite`, npm)
+  - [x] Capabilities: allow all finnhub tools, allow database CRUD (no deletes — append-only), deny all others
+  - [x] Persona: financial analyst (`gpt-4o`, `temperature: 0.2`)
+  - [x] Secret refs: `<agent>.finnhub-api-key`, `<agent>.openai-api-key`
 
 ### Definition of done
-- Kairo template exists, validates, and provisions correctly via `/ruriko agents create`
+- [x] Kairo template exists, validates, and provisions correctly via `/ruriko agents create`
 
 ---
 
@@ -1023,7 +1023,7 @@ similarity and injects the relevant context.
 
 ### Active Phases
 
-- [ ] Phase R5: Agent Provisioning UX 🔄 *(kairo template remaining)*
+- [x] Phase R5: Agent Provisioning UX ✅ *complete*
 - [ ] Phase R14: Gosuto Persona / Instructions Separation ⬆️ **priority**
 - [ ] Phase R15: Built-in Matrix Messaging Tool — Peer-to-Peer Collaboration
 - [ ] Phase R10: Conversation Memory — Short-Term / Long-Term Architecture
