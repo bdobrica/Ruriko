@@ -4,7 +4,7 @@
 
 These invariants are the foundation of Ruriko's design. They must never be violated. When in doubt about implementation decisions, refer back to these principles.
 
-**Last Updated**: 2026-02-17  
+**Last Updated**: 2026-02-23  
 **Status**: Living Document (changes require architecture review)
 
 ---
@@ -32,23 +32,57 @@ These invariants are the foundation of Ruriko's design. They must never be viola
 
 ---
 
-### 2. Policy > Persona
+### 2. Policy > Instructions > Persona
 
-**Principle**: Gosuto's structured policy is authoritative; persona is cosmetic.
+**Principle**: Gosuto enforces a strict three-layer authority model. Policy is
+authoritative and enforced by code. Instructions are operational and auditable.
+Persona is cosmetic and non-authoritative.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  POLICY (authoritative)                                      │
+│  What the agent is *allowed* to do — enforced by code.       │
+│  Defined by: capabilities[], approvals, limits               │
+│  Changeable by: Ruriko operators only (via ACP)              │
+├─────────────────────────────────────────────────────────────┤
+│  INSTRUCTIONS (operational)                                  │
+│  What the agent *should* do — auditable workflow logic.      │
+│  Defined by: instructions.role, workflow, context            │
+│  Changeable by: Ruriko (versioned + diffable in Gosuto)      │
+├─────────────────────────────────────────────────────────────┤
+│  PERSONA (cosmetic)                                          │
+│  How the agent *sounds* — tone, style, name.                 │
+│  Defined by: persona.systemPrompt, model, temperature        │
+│  Changeable by: Ruriko operators (no security impact)        │
+└─────────────────────────────────────────────────────────────┘
+```
 
 **What this means**:
-- An agent's capabilities are defined by Gosuto YAML, not by prompt engineering
-- No amount of prompt injection can grant capabilities outside Gosuto rules
-- Persona text is for UX only; it doesn't affect security boundaries
+- An agent's capabilities are defined by Gosuto policy, not by prompt engineering
+- No amount of prompt injection — including via instructions — can grant
+  capabilities outside the Gosuto capability rules
+- Instructions define operational workflow (trigger → action) and peer awareness;
+  they are injected into the LLM system prompt but cannot supersede policy
+- Instructions cannot reference tools the agent is not permitted to use:
+  if workflow steps mention an MCP server excluded from capabilities, the agent
+  will be denied at runtime — this is flagged as a warning at validation time
+- Instructions are versioned and diffable as part of the Gosuto, making all
+  workflow logic changes auditable alongside capability changes
+- Persona text (tone, style, name) is for UX only and has no security impact
 
-**Rationale**: Trust must be based on enforced rules, not on instructing an LLM to "be careful."
+**Rationale**: Trust must be based on enforced rules, not on instructing an LLM
+to "be careful." Instructions improve agent coherence and auditability but must
+not be confused with a security boundary — only Policy is authoritative.
 
 **Enforcement**:
-- ✅ Policy evaluation happens BEFORE LLM sees requests
-- ✅ Tool calls are gated by explicit Gosuto capability rules
+- ✅ Policy evaluation happens BEFORE the LLM sees requests
+- ✅ Tool calls are gated by explicit Gosuto capability rules regardless of instructions
 - ✅ Default deny: if not in allowlist, operation is blocked
-- ❌ Never rely on system prompts for security
-- ❌ Never bypass policy checks based on LLM reasoning
+- ✅ Instructions are versioned with the Gosuto (same hash + diff pipeline as capabilities)
+- ✅ `gosuto.Warnings()` flags workflow steps that reference MCP servers not covered by an allow rule
+- ❌ Never rely on system prompts or instructions for security enforcement
+- ❌ Never bypass policy checks based on LLM reasoning or instruction content
+- ❌ Instructions cannot expand capabilities: they are advisory, not authoritative
 
 ---
 
@@ -284,7 +318,7 @@ amplification attack surfaces. The mesh must be explicitly defined and policy-en
 When implementing a new feature, verify:
 
 - [ ] Does this feature respect the deterministic control boundary?
-- [ ] Is policy enforcement separate from LLM logic?
+- [ ] Is policy enforcement separate from LLM logic? (Policy > Instructions > Persona)
 - [ ] Can agents self-modify in any way? (Should be NO)
 - [ ] Are secrets scoped appropriately?
 - [ ] Does this require approval? (If destructive/risky: YES)

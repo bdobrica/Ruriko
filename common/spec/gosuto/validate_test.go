@@ -1222,3 +1222,178 @@ instructions:
 		t.Errorf("error should mention 'role', got: %v", err)
 	}
 }
+
+// ── R14.2 Warnings — Policy > Instructions > Persona ─────────────────────────
+
+// warningsBase is a minimal config with an MCP server but no allow rule for it.
+const warningsBase = `
+apiVersion: gosuto/v1
+metadata:
+  name: test-agent
+trust:
+  allowedRooms:
+    - "!room:example.com"
+  allowedSenders:
+    - "*"
+mcps:
+  - name: brave-search
+    command: npx
+    args:
+      - "-y"
+      - "@modelcontextprotocol/server-brave-search"
+`
+
+// TestWarnings_NoWarningsWhenNoInstructions verifies that an agent with no
+// instructions section produces no warnings.
+func TestWarnings_NoWarningsWhenNoInstructions(t *testing.T) {
+	cfg, err := gosuto.Parse([]byte(warningsBase))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	ws := gosuto.Warnings(cfg)
+	if len(ws) != 0 {
+		t.Errorf("expected 0 warnings for config with no instructions, got %d: %v", len(ws), ws)
+	}
+}
+
+// TestWarnings_NoWarningsWhenMCPCovered verifies that no warning is emitted when
+// the workflow references an MCP server that has an allow:true capability rule.
+func TestWarnings_NoWarningsWhenMCPCovered(t *testing.T) {
+	cfg, err := gosuto.Parse([]byte(warningsBase + `
+capabilities:
+  - name: allow-search
+    mcp: brave-search
+    tool: "*"
+    allow: true
+instructions:
+  workflow:
+    - trigger: "on request"
+      action: "Search for news using brave-search and return the results."
+`))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	ws := gosuto.Warnings(cfg)
+	if len(ws) != 0 {
+		t.Errorf("expected 0 warnings when MCP is covered by allow rule, got %d: %v", len(ws), ws)
+	}
+}
+
+// TestWarnings_WarnWhenMCPNotInCapabilities verifies that a warning is emitted
+// when a workflow action references an MCP server name that has no allow rule.
+// This is the canonical Invariant §2 check: instructions cannot grant access
+// to tools outside the policy's capability rules.
+func TestWarnings_WarnWhenMCPNotInCapabilities(t *testing.T) {
+	cfg, err := gosuto.Parse([]byte(warningsBase + `
+capabilities:
+  - name: deny-all
+    mcp: "*"
+    tool: "*"
+    allow: false
+instructions:
+  workflow:
+    - trigger: "on request"
+      action: "Search for news using brave-search and return the results."
+`))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	ws := gosuto.Warnings(cfg)
+	if len(ws) == 0 {
+		t.Fatal("expected at least one warning for MCP referenced in instructions but denied by policy, got none")
+	}
+	if ws[0].Field != "instructions.workflow[0].action" {
+		t.Errorf("warning field: got %q, want %q", ws[0].Field, "instructions.workflow[0].action")
+	}
+	if !strings.Contains(ws[0].Message, "brave-search") {
+		t.Errorf("warning message should reference the MCP name, got: %q", ws[0].Message)
+	}
+	if !strings.Contains(ws[0].Message, "no allow:true capability rule") {
+		t.Errorf("warning message should explain the missing rule, got: %q", ws[0].Message)
+	}
+}
+
+// TestWarnings_WarnWhenMCPHasNoCapabilityAtAll verifies a warning when the MCP
+// is defined but there are no capability rules at all.
+func TestWarnings_WarnWhenMCPHasNoCapabilityAtAll(t *testing.T) {
+	cfg, err := gosuto.Parse([]byte(warningsBase + `
+instructions:
+  workflow:
+    - trigger: "on request"
+      action: "Use brave-search to find the latest news articles."
+`))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	ws := gosuto.Warnings(cfg)
+	if len(ws) == 0 {
+		t.Fatal("expected warning when MCP is defined but has no capability rule, got none")
+	}
+	if !strings.Contains(ws[0].Message, "brave-search") {
+		t.Errorf("warning should name the MCP, got: %q", ws[0].Message)
+	}
+}
+
+// TestWarnings_WildcardAllowSuppressesWarnings verifies that a wildcard
+// allow rule ("mcp: *") suppresses all MCP-related warnings.
+func TestWarnings_WildcardAllowSuppressesWarnings(t *testing.T) {
+	cfg, err := gosuto.Parse([]byte(warningsBase + `
+capabilities:
+  - name: allow-all
+    mcp: "*"
+    tool: "*"
+    allow: true
+instructions:
+  workflow:
+    - trigger: "on request"
+      action: "Use brave-search to find news."
+`))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	ws := gosuto.Warnings(cfg)
+	if len(ws) != 0 {
+		t.Errorf("wildcard allow rule should suppress all warnings, got %d: %v", len(ws), ws)
+	}
+}
+
+// TestWarnings_MultipleStepsMultipleWarnings verifies that warnings are emitted
+// for each workflow step that references an uncovered MCP server.
+func TestWarnings_MultipleStepsMultipleWarnings(t *testing.T) {
+	cfg, err := gosuto.Parse([]byte(`
+apiVersion: gosuto/v1
+metadata:
+  name: test-agent
+trust:
+  allowedRooms: ["*"]
+  allowedSenders: ["*"]
+mcps:
+  - name: finnhub
+    command: uv
+    args: ["run", "server.py"]
+  - name: brave-search
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-brave-search"]
+instructions:
+  workflow:
+    - trigger: "on cron"
+      action: "Fetch market data from finnhub and store it."
+    - trigger: "after analysis"
+      action: "Use brave-search to enrich the analysis with news."
+`))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	ws := gosuto.Warnings(cfg)
+	if len(ws) != 2 {
+		t.Errorf("expected 2 warnings (one per uncovered MCP per step), got %d: %v", len(ws), ws)
+	}
+}
+
+// TestWarnings_NilConfig verifies that Warnings handles a nil config gracefully.
+func TestWarnings_NilConfig(t *testing.T) {
+	ws := gosuto.Warnings(nil)
+	if ws != nil {
+		t.Errorf("expected nil for nil config, got %v", ws)
+	}
+}

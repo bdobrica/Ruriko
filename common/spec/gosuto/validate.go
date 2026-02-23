@@ -99,6 +99,86 @@ func Validate(cfg *Config) error {
 	return nil
 }
 
+// ── Warnings ─────────────────────────────────────────────────────────────────
+
+// Warning is a non-fatal advisory about a Gosuto configuration. Warnings
+// indicate potential misconfigurations or logical inconsistencies that do not
+// prevent the agent from running, but may indicate unintended behaviour.
+//
+// The canonical source of warnings is the three-layer authority model
+// (Invariant §2 — Policy > Instructions > Persona): instructions are
+// operational and advisory; they cannot grant capabilities outside policy.
+// If a workflow step references an MCP server not covered by an allow rule,
+// the agent will be denied access at runtime.
+type Warning struct {
+	// Field is the dotted path of the config field that triggered the warning
+	// (e.g. "instructions.workflow[1].action").
+	Field string
+
+	// Message is a human-readable description of the issue.
+	Message string
+}
+
+// Warnings inspects a validated Config for non-fatal advisory issues and
+// returns any warnings found. It assumes cfg has already passed Validate —
+// call Validate (or Parse) first; Warnings does not re-validate structure.
+//
+// Currently emitted warnings:
+//   - Instructions workflow steps whose Action text references an MCP server
+//     name that has no allow:true capability rule. Per Invariant §2
+//     (Policy > Instructions > Persona), instructions cannot grant access to
+//     tools outside the capability rules — requests will be denied at runtime.
+func Warnings(cfg *Config) []Warning {
+	if cfg == nil {
+		return nil
+	}
+
+	var ws []Warning
+
+	// Build the set of MCP server names covered by at least one allow:true rule.
+	allowed := make(map[string]bool, len(cfg.MCPs))
+	wildcardAllow := false
+	for _, cap := range cfg.Capabilities {
+		if !cap.Allow {
+			continue
+		}
+		if cap.MCP == "*" {
+			wildcardAllow = true
+			break
+		}
+		allowed[cap.MCP] = true
+	}
+
+	// If a wildcard allow rule covers all MCPs there is nothing to warn about.
+	if wildcardAllow {
+		return ws
+	}
+
+	// For each workflow step, check whether the action text mentions MCP server
+	// names that are not covered by an allow rule.
+	for i, step := range cfg.Instructions.Workflow {
+		actionLower := strings.ToLower(step.Action)
+		for _, mcp := range cfg.MCPs {
+			if allowed[mcp.Name] {
+				continue
+			}
+			if strings.Contains(actionLower, strings.ToLower(mcp.Name)) {
+				ws = append(ws, Warning{
+					Field: fmt.Sprintf("instructions.workflow[%d].action", i),
+					Message: fmt.Sprintf(
+						"references MCP server %q which has no allow:true capability rule; "+
+							"the agent will be denied access at runtime "+
+							"(Invariant §2: Policy > Instructions > Persona)",
+						mcp.Name,
+					),
+				})
+			}
+		}
+	}
+
+	return ws
+}
+
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 func validateTrust(t Trust) error {

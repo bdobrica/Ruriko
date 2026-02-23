@@ -168,13 +168,13 @@ The MVP is ready when **all** of the following are true:
 
 ### R14.2 Invariant Update — Persona vs Instructions
 
-- [ ] Update Invariant §2 ("Policy > Persona") to clarify the three-layer model:
+- [x] Update Invariant §2 ("Policy > Persona") to clarify the three-layer model:
   - **Policy** (authoritative): what the agent is *allowed* to do — enforced by code
   - **Instructions** (operational): what the agent *should* do — auditable workflow logic
   - **Persona** (cosmetic): how the agent *sounds* — tone, style, name
-- [ ] Policy > Instructions > Persona: instructions cannot grant capabilities outside policy
-- [ ] Instructions are versioned and diffable alongside the rest of the Gosuto
-- [ ] Test: Instructions that reference tools not in capabilities are flagged as warnings
+- [x] Policy > Instructions > Persona: instructions cannot grant capabilities outside policy
+- [x] Instructions are versioned and diffable alongside the rest of the Gosuto
+- [x] Test: Instructions that reference tools not in capabilities are flagged as warnings
 
 ### R14.3 System Prompt Assembly — Persona + Instructions
 
