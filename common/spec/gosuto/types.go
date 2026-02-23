@@ -42,6 +42,12 @@ type Config struct {
 	// Instructions defines the agent's operational workflow. Authoritative:
 	// Ruriko audits and versions instructions as part of the control plane.
 	Instructions Instructions `yaml:"instructions,omitempty" json:"instructions,omitempty"`
+
+	// Messaging defines the outbound messaging policy for this agent.
+	// It controls which Matrix rooms the agent is permitted to send messages to
+	// via the built-in matrix.send_message tool. Default is deny-all: if this
+	// section is absent the agent cannot send messages to anyone.
+	Messaging Messaging `yaml:"messaging,omitempty" json:"messaging,omitempty"`
 }
 
 // Metadata holds descriptive information about a Gosuto config.
@@ -257,6 +263,30 @@ type PeerRef struct {
 	// Role describes the peer's functional role from this agent's perspective
 	// (e.g. "News/search agent — ask it for news on specific tickers.").
 	Role string `yaml:"role" json:"role"`
+}
+
+// Messaging defines the outbound Matrix messaging policy for an agent.
+// Only rooms listed in AllowedTargets may be messaged via the built-in
+// matrix.send_message tool. If AllowedTargets is empty the tool is
+// effectively disabled regardless of capability rules.
+type Messaging struct {
+	// AllowedTargets is the list of Matrix rooms this agent may send messages
+	// to. Each entry provides a stable room ID plus a human-friendly alias
+	// used in LLM prompts and audit logs.
+	AllowedTargets []MessagingTarget `yaml:"allowedTargets,omitempty" json:"allowedTargets,omitempty"`
+
+	// MaxMessagesPerMinute caps outbound message throughput. 0 means unlimited.
+	MaxMessagesPerMinute int `yaml:"maxMessagesPerMinute,omitempty" json:"maxMessagesPerMinute,omitempty"`
+}
+
+// MessagingTarget is a single permitted outbound messaging destination.
+type MessagingTarget struct {
+	// RoomID is the full Matrix room ID (e.g. "!abc123:localhost").
+	RoomID string `yaml:"roomId" json:"roomId"`
+
+	// Alias is a short, friendly name used in LLM prompts and audit breadcrumbs
+	// (e.g. "kairo", "user"). Must be unique within the AllowedTargets list.
+	Alias string `yaml:"alias" json:"alias"`
 }
 
 // Persona defines the agent's LLM persona. This is purely cosmetic —

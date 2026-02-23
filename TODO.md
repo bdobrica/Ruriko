@@ -35,7 +35,7 @@ graph TD
     R17 --> R8
     R18 --> R8
 
-    style R14 fill:#f9a825,stroke:#f57f17,color:#000
+    style R14 fill:#43a047,stroke:#2e7d32,color:#fff
 ```
 
 ---
@@ -232,8 +232,8 @@ The MVP is ready when **all** of the following are true:
 - [x] Update `templates/kairo-agent/gosuto.yaml` with finance/analysis instructions
 - [x] Update `templates/kumo-agent/gosuto.yaml` with search-focused instructions
 - [x] Add instructions to all other templates (browser-agent, email-agent, cron-agent)
-- [ ] Test: Updated templates pass validation
-- [ ] Test: Instructions render correctly in the system prompt
+- [x] Test: Updated templates pass validation
+- [x] Test: Instructions render correctly in the system prompt
 
 ### Definition of done
 - Gosuto has separate `persona` (cosmetic) and `instructions` (operational) sections
@@ -259,7 +259,7 @@ The MVP is ready when **all** of the following are true:
 
 ### R15.1 Gosuto Schema Extension — Messaging Policy
 
-- [ ] Add `messaging` section to Gosuto schema:
+- [x] Add `messaging` section to Gosuto schema:
   ```yaml
   messaging:
     allowedTargets:
@@ -269,10 +269,10 @@ The MVP is ready when **all** of the following are true:
         alias: "user"
     maxMessagesPerMinute: 30                 # rate limit on outbound messages
   ```
-- [ ] Validate `messaging` schema in Gosuto validation pipeline
-- [ ] Default: empty `allowedTargets` (agents cannot message anyone unless configured)
-- [ ] Test: Valid messaging config passes validation
-- [ ] Test: Missing or malformed messaging config is rejected
+- [x] Validate `messaging` schema in Gosuto validation pipeline
+- [x] Default: empty `allowedTargets` (agents cannot message anyone unless configured)
+- [x] Test: Valid messaging config passes validation
+- [x] Test: Missing or malformed messaging config is rejected
 
 ### R15.2 Matrix Messaging Tool Implementation
 
@@ -1026,7 +1026,7 @@ similarity and injects the relevant context.
 ### Active Phases
 
 - [x] Phase R5: Agent Provisioning UX ✅ *complete*
-- [ ] Phase R14: Gosuto Persona / Instructions Separation ⬆️ **priority**
+- [x] Phase R14: Gosuto Persona / Instructions Separation ✅ *complete*
 - [ ] Phase R15: Built-in Matrix Messaging Tool — Peer-to-Peer Collaboration
 - [ ] Phase R10: Conversation Memory — Short-Term / Long-Term Architecture
 - [ ] Phase R16: Canonical Agent Knowledge & NLP Planning Layer
@@ -1038,5 +1038,5 @@ similarity and injects the relevant context.
 
 ---
 
-**Last Updated**: 2025-02-23
-**Current Focus**: Phase R14 — Gosuto Persona / Instructions Separation (priority gate for peer-to-peer model)
+**Last Updated**: 2026-02-23
+**Current Focus**: Phase R15 — Built-in Matrix Messaging Tool (peer-to-peer collaboration enabler; depends on R14 ✅)

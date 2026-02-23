@@ -1397,3 +1397,205 @@ func TestWarnings_NilConfig(t *testing.T) {
 		t.Errorf("expected nil for nil config, got %v", ws)
 	}
 }
+
+// ── Messaging validation tests ───────────────────────────────────────────────
+
+const messagingBase = `
+apiVersion: gosuto/v1
+metadata:
+  name: test-agent
+trust:
+  allowedRooms:
+    - "!room:example.com"
+  allowedSenders:
+    - "@alice:example.com"
+`
+
+// TestMessaging_AbsentIsValid verifies that omitting the messaging section is
+// valid — the default is deny-all (empty allowedTargets).
+func TestMessaging_AbsentIsValid(t *testing.T) {
+	cfg, err := gosuto.Parse([]byte(messagingBase))
+	if err != nil {
+		t.Fatalf("Parse: unexpected error: %v", err)
+	}
+	if len(cfg.Messaging.AllowedTargets) != 0 {
+		t.Errorf("expected empty allowedTargets, got %v", cfg.Messaging.AllowedTargets)
+	}
+}
+
+// TestMessaging_EmptyAllowedTargetsIsValid verifies that an explicit empty
+// allowedTargets list is valid.
+func TestMessaging_EmptyAllowedTargetsIsValid(t *testing.T) {
+	_, err := gosuto.Parse([]byte(messagingBase + `
+messaging:
+  allowedTargets: []
+  maxMessagesPerMinute: 10
+`))
+	if err != nil {
+		t.Fatalf("Parse: unexpected error: %v", err)
+	}
+}
+
+// TestMessaging_ValidSingleTarget verifies a single valid messaging target.
+func TestMessaging_ValidSingleTarget(t *testing.T) {
+	cfg, err := gosuto.Parse([]byte(messagingBase + `
+messaging:
+  allowedTargets:
+    - roomId: "!kairo-admin:localhost"
+      alias: "kairo"
+  maxMessagesPerMinute: 30
+`))
+	if err != nil {
+		t.Fatalf("Parse: unexpected error: %v", err)
+	}
+	if len(cfg.Messaging.AllowedTargets) != 1 {
+		t.Fatalf("allowedTargets count: got %d, want 1", len(cfg.Messaging.AllowedTargets))
+	}
+	if cfg.Messaging.AllowedTargets[0].RoomID != "!kairo-admin:localhost" {
+		t.Errorf("roomId: got %q, want %q", cfg.Messaging.AllowedTargets[0].RoomID, "!kairo-admin:localhost")
+	}
+	if cfg.Messaging.AllowedTargets[0].Alias != "kairo" {
+		t.Errorf("alias: got %q, want %q", cfg.Messaging.AllowedTargets[0].Alias, "kairo")
+	}
+	if cfg.Messaging.MaxMessagesPerMinute != 30 {
+		t.Errorf("maxMessagesPerMinute: got %d, want 30", cfg.Messaging.MaxMessagesPerMinute)
+	}
+}
+
+// TestMessaging_ValidMultipleTargets verifies multiple distinct valid targets.
+func TestMessaging_ValidMultipleTargets(t *testing.T) {
+	cfg, err := gosuto.Parse([]byte(messagingBase + `
+messaging:
+  allowedTargets:
+    - roomId: "!kairo-admin:localhost"
+      alias: "kairo"
+    - roomId: "!user-dm:localhost"
+      alias: "user"
+  maxMessagesPerMinute: 20
+`))
+	if err != nil {
+		t.Fatalf("Parse: unexpected error: %v", err)
+	}
+	if len(cfg.Messaging.AllowedTargets) != 2 {
+		t.Fatalf("allowedTargets count: got %d, want 2", len(cfg.Messaging.AllowedTargets))
+	}
+}
+
+// TestMessaging_InvalidRoomIDMissingBang verifies that a roomId not starting
+// with '!' is rejected.
+func TestMessaging_InvalidRoomIDMissingBang(t *testing.T) {
+	_, err := gosuto.Parse([]byte(messagingBase + `
+messaging:
+  allowedTargets:
+    - roomId: "kairo-admin:localhost"
+      alias: "kairo"
+`))
+	if err == nil {
+		t.Fatal("expected error for roomId not starting with '!', got nil")
+	}
+	if !strings.Contains(err.Error(), "roomId") {
+		t.Errorf("error should mention roomId, got: %v", err)
+	}
+}
+
+// TestMessaging_InvalidRoomIDEmpty verifies that an empty roomId is rejected.
+func TestMessaging_InvalidRoomIDEmpty(t *testing.T) {
+	_, err := gosuto.Parse([]byte(messagingBase + `
+messaging:
+  allowedTargets:
+    - roomId: ""
+      alias: "kairo"
+`))
+	if err == nil {
+		t.Fatal("expected error for empty roomId, got nil")
+	}
+	if !strings.Contains(err.Error(), "roomId") {
+		t.Errorf("error should mention roomId, got: %v", err)
+	}
+}
+
+// TestMessaging_InvalidAliasEmpty verifies that an empty alias is rejected.
+func TestMessaging_InvalidAliasEmpty(t *testing.T) {
+	_, err := gosuto.Parse([]byte(messagingBase + `
+messaging:
+  allowedTargets:
+    - roomId: "!kairo-admin:localhost"
+      alias: ""
+`))
+	if err == nil {
+		t.Fatal("expected error for empty alias, got nil")
+	}
+	if !strings.Contains(err.Error(), "alias") {
+		t.Errorf("error should mention alias, got: %v", err)
+	}
+}
+
+// TestMessaging_InvalidAliasWithWhitespace verifies that an alias containing
+// whitespace is rejected.
+func TestMessaging_InvalidAliasWithWhitespace(t *testing.T) {
+	_, err := gosuto.Parse([]byte(messagingBase + `
+messaging:
+  allowedTargets:
+    - roomId: "!kairo-admin:localhost"
+      alias: "kairo agent"
+`))
+	if err == nil {
+		t.Fatal("expected error for alias containing whitespace, got nil")
+	}
+	if !strings.Contains(err.Error(), "alias") {
+		t.Errorf("error should mention alias, got: %v", err)
+	}
+}
+
+// TestMessaging_InvalidDuplicateAlias verifies that two targets sharing the
+// same alias are rejected.
+func TestMessaging_InvalidDuplicateAlias(t *testing.T) {
+	_, err := gosuto.Parse([]byte(messagingBase + `
+messaging:
+  allowedTargets:
+    - roomId: "!kairo-admin:localhost"
+      alias: "kairo"
+    - roomId: "!kairo-other:localhost"
+      alias: "kairo"
+`))
+	if err == nil {
+		t.Fatal("expected error for duplicate alias, got nil")
+	}
+	if !strings.Contains(err.Error(), "duplicate alias") {
+		t.Errorf("error should mention duplicate alias, got: %v", err)
+	}
+}
+
+// TestMessaging_InvalidDuplicateRoomID verifies that two targets with the same
+// roomId are rejected.
+func TestMessaging_InvalidDuplicateRoomID(t *testing.T) {
+	_, err := gosuto.Parse([]byte(messagingBase + `
+messaging:
+  allowedTargets:
+    - roomId: "!kairo-admin:localhost"
+      alias: "kairo"
+    - roomId: "!kairo-admin:localhost"
+      alias: "kairo-backup"
+`))
+	if err == nil {
+		t.Fatal("expected error for duplicate roomId, got nil")
+	}
+	if !strings.Contains(err.Error(), "duplicate roomId") {
+		t.Errorf("error should mention duplicate roomId, got: %v", err)
+	}
+}
+
+// TestMessaging_InvalidNegativeRateLimit verifies that a negative
+// maxMessagesPerMinute is rejected.
+func TestMessaging_InvalidNegativeRateLimit(t *testing.T) {
+	_, err := gosuto.Parse([]byte(messagingBase + `
+messaging:
+  maxMessagesPerMinute: -1
+`))
+	if err == nil {
+		t.Fatal("expected error for negative maxMessagesPerMinute, got nil")
+	}
+	if !strings.Contains(err.Error(), "maxMessagesPerMinute") {
+		t.Errorf("error should mention maxMessagesPerMinute, got: %v", err)
+	}
+}

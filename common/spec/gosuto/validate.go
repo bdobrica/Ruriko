@@ -96,6 +96,11 @@ func Validate(cfg *Config) error {
 		return fmt.Errorf("instructions: %w", err)
 	}
 
+	// ── Messaging ─────────────────────────────────────────────────────────────
+	if err := validateMessaging(cfg.Messaging); err != nil {
+		return fmt.Errorf("messaging: %w", err)
+	}
+
 	return nil
 }
 
@@ -289,6 +294,37 @@ func validateInstructions(ins Instructions) error {
 		if strings.TrimSpace(peer.Role) == "" {
 			return fmt.Errorf("context.peers[%d]: role must not be empty", i)
 		}
+	}
+	return nil
+}
+
+func validateMessaging(m Messaging) error {
+	if m.MaxMessagesPerMinute < 0 {
+		return fmt.Errorf("maxMessagesPerMinute must be >= 0")
+	}
+	aliases := make(map[string]struct{}, len(m.AllowedTargets))
+	roomIDs := make(map[string]struct{}, len(m.AllowedTargets))
+	for i, target := range m.AllowedTargets {
+		if strings.TrimSpace(target.RoomID) == "" {
+			return fmt.Errorf("allowedTargets[%d]: roomId must not be empty", i)
+		}
+		if !strings.HasPrefix(target.RoomID, "!") {
+			return fmt.Errorf("allowedTargets[%d]: roomId %q must start with '!'", i, target.RoomID)
+		}
+		if strings.TrimSpace(target.Alias) == "" {
+			return fmt.Errorf("allowedTargets[%d]: alias must not be empty", i)
+		}
+		if strings.ContainsAny(target.Alias, " \t\n\r") {
+			return fmt.Errorf("allowedTargets[%d]: alias %q must not contain whitespace", i, target.Alias)
+		}
+		if _, dup := aliases[target.Alias]; dup {
+			return fmt.Errorf("allowedTargets[%d]: duplicate alias %q", i, target.Alias)
+		}
+		aliases[target.Alias] = struct{}{}
+		if _, dup := roomIDs[target.RoomID]; dup {
+			return fmt.Errorf("allowedTargets[%d]: duplicate roomId %q", i, target.RoomID)
+		}
+		roomIDs[target.RoomID] = struct{}{}
 	}
 	return nil
 }
