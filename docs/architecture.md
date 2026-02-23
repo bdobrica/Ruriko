@@ -25,16 +25,18 @@
 
 ## Overview
 
-Ruriko is a distributed control plane for managing secure, capability-scoped AI agents over Matrix. The system follows a **control plane + data plane** architecture:
+Ruriko is a distributed control plane for managing secure, capability-scoped AI agents over Matrix. The system follows a **control plane + data plane** architecture with a **peer-to-peer execution model**:
 
-- **Ruriko (Control Plane)**: Manages agent lifecycle, secrets, policy, and approvals
-- **Gitai (Data Plane)**: Individual agent runtimes that execute under policy constraints
+- **Ruriko (Control Plane)**: Plans workflows, manages agent lifecycle, secrets, policy, and approvals. Ruriko drafts agent configurations and knows the mesh topology, but does not relay agent-to-agent interactions.
+- **Gitai (Data Plane)**: Individual agent runtimes that execute under policy constraints and **collaborate peer-to-peer by messaging each other directly over Matrix**.
 
 **Key Design Principles**:
 - Separation of control logic from agent logic
 - Centralized secrets and policy management
 - Deterministic, non-LLM control decisions
 - Defense in depth with multiple security layers
+- **Peer-to-peer agent collaboration** — Ruriko plans, agents execute
+- **Built-in Matrix messaging** as a first-class agent capability
 
 ---
 
@@ -69,18 +71,22 @@ Ruriko is a distributed control plane for managing secure, capability-scoped AI 
 
 **Responsibilities**:
 - Matrix message handling and response
+- **Peer-to-peer agent collaboration via built-in Matrix messaging tool**
 - Policy enforcement (Gosuto rules)
 - LLM interaction (OpenAI, local models)
 - MCP tool supervision and execution
+- Event gateway supervision and event processing
 - Approval request generation
 - Local audit logging
 
 **Key Subsystems**:
 - Matrix Client: Message ingestion and sending
+- **Matrix Messaging Tool**: Built-in tool for sending messages to other agents' rooms or users (policy-gated)
 - Policy Engine: Capability-based authorization
 - Envelope Parser: Structured agent-to-agent communication
 - LLM Interface: Provider abstraction
 - MCP Supervisor: Tool process lifecycle
+- Gateway Supervisor: Event gateway process lifecycle
 - Agent Control Protocol Server: HTTP server for Ruriko commands
 
 **State Storage**:
@@ -443,6 +449,14 @@ flowchart LR
 - Restarts external gateway processes on crash (when `autoRestart: true`)
 - Exposes gateway status alongside MCP status via `/status` endpoint
 
+#### Matrix Messaging Tool (`internal/gitai/matrix/`)
+- Built-in tool available to all LLM-powered agents: `matrix.send_message`
+- Allows agents to send messages to other agents' rooms or to users
+- Policy-gated: room must be in Gosuto `trust.allowedRooms` or a dedicated messaging allowlist
+- Rate-limited: subject to Gosuto `limits` configuration
+- Enables peer-to-peer agent collaboration without Ruriko relaying messages
+- Audit logged: target room, message hash, and trace ID recorded (never content at INFO level)
+
 #### Envelope Parser (`internal/gitai/envelope/`)
 - Extracts JSON envelope from Matrix message
 - Validates schema (version, structure)
@@ -551,6 +565,30 @@ Response sent to Matrix room
     ↓
 Audit logged (source, type, status — never payload content)
 ```
+
+### 5. Inter-Agent Collaboration Flow (Peer-to-Peer)
+
+```
+Agent A decides it needs Agent B's help (LLM reasoning)
+    ↓
+LLM proposes tool call: matrix.send_message(room=B's room, message="...")
+    ↓
+Policy engine checks: is B's room in A's allowed messaging targets?
+    ↓
+Rate limit check: has A exceeded its messaging rate?
+    ↓
+If ALLOWED: Matrix client sends message to B's room
+    ↓
+Agent B receives the message (normal Matrix message flow)
+    ↓
+B processes, reasons, and may reply to A or send results to the user
+    ↓
+Audit logged on both sides (sender, target room, trace ID)
+```
+
+This is the **peer-to-peer model**: Ruriko configured both agents and their
+policies (which rooms they can message, what tools they have), but the actual
+collaboration happens directly between agents over Matrix.
 
 ---
 
@@ -738,7 +776,7 @@ systemd services:
 
 - **Ruriko HA**: Leader election (etcd, Consul)
 - **Database**: PostgreSQL or distributed SQLite (LiteFS)
-- **Agent-to-Agent**: Direct communication (no Ruriko hop)
+- **Agent Mesh**: Agents already communicate peer-to-peer over Matrix; scaling is inherent
 - **Sharding**: Group agents by function/team
 
 ---

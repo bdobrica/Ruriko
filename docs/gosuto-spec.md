@@ -285,12 +285,13 @@ References to Ruriko secrets the agent expects to be injected at runtime. Secret
 
 LLM persona configuration. **Non-authoritative** — all access control is enforced via capability rules, not the system prompt.
 
-| Field          | Type    | Default | Description                                         |
-|----------------|---------|---------|-----------------------------------------------------|
-| `systemPrompt` | string  | —       | LLM system prompt prepended to every context window |
-| `llmProvider`  | string  | —       | Backend identifier: `"openai"`, `"anthropic"`, etc. |
-| `model`        | string  | —       | Model name: `"gpt-4o"`, `"claude-3-5-sonnet"`, etc. |
-| `temperature`  | float64 | 0.0     | Sampling temperature; must be in `[0.0, 2.0]`       |
+| Field              | Type    | Default | Description                                                      |
+|--------------------|---------|---------|------------------------------------------------------------------|
+| `systemPrompt`     | string  | —       | LLM system prompt prepended to every context window              |
+| `llmProvider`      | string  | —       | Backend identifier: `"openai"`, `"anthropic"`, etc.              |
+| `model`            | string  | —       | Model name: `"gpt-4o"`, `"claude-3-5-sonnet"`, etc.             |
+| `temperature`      | float64 | 0.0     | Sampling temperature; must be in `[0.0, 2.0]`                   |
+| `apiKeySecretRef`  | string  | —       | Secret ref for the LLM API key (resolved via Kuze/secrets store) |
 
 ---
 

@@ -253,6 +253,32 @@ is not a secrets vault.
 
 ---
 
+### 12. Inter-Agent Communication Is Policy-Gated
+
+**Principle**: Agents can only message rooms explicitly allowed by their Gosuto policy.
+Ruriko defines the mesh topology; agents cannot expand it.
+
+**What this means**:
+- The built-in `matrix.send_message` tool is subject to Gosuto capability rules
+- Agents can only send messages to rooms listed in their outbound messaging allowlist
+- The agent mesh topology (which agents can talk to which) is defined by Ruriko at provision time
+- Rate limits on outbound messages prevent amplification spirals
+- Inter-agent messages are treated as untrusted input by the receiving agent (same threat model as user messages)
+
+**Rationale**: Unrestricted inter-agent communication creates prompt injection and
+amplification attack surfaces. The mesh must be explicitly defined and policy-enforced.
+
+**Enforcement**:
+- ✅ `matrix.send_message` tool gated by Gosuto `capabilities` rules
+- ✅ Target room validated against an allowlist before sending
+- ✅ Per-agent rate limits on outbound messages
+- ✅ Receiving agent applies its own full policy evaluation on incoming messages
+- ✅ All inter-agent messages audit logged (source, target room, trace ID)
+- ❌ Agents never discover or message rooms outside their Gosuto allowlist
+- ❌ Agents never relay messages to bypass another agent's policy constraints
+
+---
+
 ## Enforcement Checklist
 
 When implementing a new feature, verify:
@@ -268,6 +294,7 @@ When implementing a new feature, verify:
 - [ ] Could this feature cause a secret value to appear in a Matrix room or message? (Should be NO)
 - [ ] Are trust contexts checked? (Should be YES)
 - [ ] Is configuration versioned? (Should be YES)
+- [ ] Does this feature allow inter-agent messaging? If so, is it policy-gated with room allowlists and rate limits? (Should be YES)
 
 ---
 

@@ -480,6 +480,28 @@ The MVP targets a **single-host deployment** with the following security propert
 
 ---
 
+### Scenario 10: Inter-Agent Message Amplification and Prompt Injection
+
+**Attack Flow**:
+1. Agent A is compromised or manipulated via prompt injection
+2. Agent A uses its built-in `matrix.send_message` tool to send crafted messages to Agent B
+3. Messages contain prompt injection instructions that attempt to manipulate Agent B
+4. Agent B processes the message and potentially chains the attack to Agent C
+5. Amplification loop: agents keep messaging each other with escalating requests
+
+**Mitigations**:
+- ✅ **Policy-first architecture**: Each agent’s `matrix.send_message` is gated by Gosuto policy — agents can only message rooms explicitly listed in their allowed targets
+- ✅ **Rate limiting**: `limits.maxMessagesPerMinute` (or equivalent) caps outbound messages per agent, preventing amplification spirals
+- ✅ **Room allowlists**: Agents cannot message arbitrary rooms; the mesh topology is defined by Ruriko at provision time
+- ✅ **Independent policy evaluation**: Each agent evaluates incoming messages through its own policy engine — prompt injection from Agent A still cannot bypass Agent B’s tool constraints
+- ✅ **Audit trail**: All inter-agent messages are logged with source agent, target room, and trace ID
+- ⚠️ **Content inspection**: Future — detect and flag repetitive or escalating inter-agent message patterns
+- ⚠️ **Circuit breaker**: Future — automatically throttle or halt an agent that exceeds abnormal messaging patterns
+
+**Residual Risk**: LOW (rate limits + per-agent policy + independent policy evaluation make amplification attacks impractical)
+
+---
+
 ## Mitigations
 
 ### Summary of Mitigations by Threat Type
@@ -493,6 +515,7 @@ The MVP targets a **single-host deployment** with the following security propert
 | Denial of Service            | Rate limits, resource quotas, token budgets      | LOW           |
 | Elevation of Privilege       | Policy enforcement, approval gates, isolation    | LOW           |
 | Gateway Payload Injection    | Policy-first arch, capability rules, rate limits | LOW           |
+| Inter-Agent Amplification    | Room allowlists, rate limits, per-agent policy    | LOW           |
 | Webhook Spoofing             | HMAC auth, Ruriko proxy, rate limiting           | LOW           |
 
 ---
@@ -690,6 +713,30 @@ The MVP targets a **single-host deployment** with the following security propert
 
 ---
 
+### 9. Inter-Agent Messaging Security Controls
+
+**C9.1: Room Allowlists for Outbound Messages**
+- Agents can only send messages to rooms explicitly listed in their Gosuto policy
+- The mesh topology (which agents can talk to which) is defined by Ruriko at provision time
+- Agents cannot discover or message rooms outside their allowlist
+
+**C9.2: Rate Limiting on Outbound Messages**
+- Per-agent rate limit on `matrix.send_message` calls (configurable in Gosuto `limits`)
+- Prevents message amplification spirals between agents
+- Exceeded rate limits are logged and the tool call is denied
+
+**C9.3: Independent Policy Evaluation**
+- Each agent evaluates incoming messages through its own policy engine
+- A compromised agent’s messages are treated identically to any other Matrix message
+- Prompt injection via inter-agent messages cannot bypass the receiving agent’s tool constraints
+
+**C9.4: Audit Trail for Inter-Agent Communication**
+- All `matrix.send_message` calls are logged: source agent, target room, message hash, trace ID
+- Message content is never logged at INFO level (only at DEBUG with redaction)
+- Enables post-incident analysis of inter-agent communication patterns
+
+---
+
 ## Incident Response
 
 ### Detection
@@ -849,11 +896,17 @@ Use this checklist when deploying Ruriko:
    - Integration with SOC workflows
 
 5. **Zero-Trust Networking**
-   - mTLS for all agent-to-agent communication
+   - mTLS for all control-plane communication
    - Service mesh integration (Istio, Linkerd)
    - Certificate rotation
 
-6. **Formal Verification**
+6. **Inter-Agent Communication Hardening**
+   - Content inspection on inter-agent messages (detect prompt injection patterns)
+   - Circuit breaker for abnormal messaging patterns
+   - Graph-based analysis of agent communication topology for anomaly detection
+   - Signed inter-agent messages for non-repudiation
+
+7. **Formal Verification**
    - Policy engine correctness proofs
    - Constraint solver verification
    - Model checking critical paths

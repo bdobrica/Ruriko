@@ -3,7 +3,7 @@
 
 ## Why this project exists
 
-Ruriko is a self-hosted, conversational control-plane for secure agentic automation. A human user talks to Ruriko over Matrix, and Ruriko coordinates a set of specialized LLM-powered agents (“Gitai”) that collaborate like a small team.
+Ruriko is a self-hosted, conversational control-plane for secure agentic automation. A human user talks to Ruriko over Matrix, and Ruriko plans and configures a set of specialized LLM-powered agents ("Gitai") that collaborate **peer-to-peer** like a small team — messaging each other directly over Matrix to accomplish tasks.
 
 The goal is to make agentic AI usable by regular non-technical people:
 
@@ -23,9 +23,11 @@ This project is explicitly designed to avoid the two common failures of agent sy
 The system behaves like a small team of virtual humans:
 
 * The user speaks to **Ruriko** as the main entry point.
-* Ruriko spawns/configures specialist agents (“Gitai”) for tasks.
-* Agents talk to each other and to the user in natural language.
+* Ruriko plans the workflow, spawns/configures specialist agents ("Gitai"), and drafts their personalities, instructions, and mesh topology.
+* Agents execute **peer-to-peer**: they message each other directly over Matrix using a built-in messaging tool, without Ruriko relaying every interaction.
+* Ruriko remains the **policy authority** — it defines what agents are allowed to do, which agents exist, and which rooms they can message — but it does not sit in the hot path of agent-to-agent collaboration.
 * The user can read the collaboration, correct assumptions, and stop tasks.
+* Smart (LLM-powered) agents can also be interacted with directly by the user — they are not exclusively controlled through Ruriko.
 
 However, the system is **not** a chat-based DevOps tool. We keep a strict separation between:
 
@@ -52,14 +54,18 @@ Ruriko responds by creating and configuring the relevant agents:
 
 A typical cycle looks like:
 
-1. Saito triggers a scheduled check.
-2. Kairo retrieves portfolio data and market state, writes analysis to the DB.
-3. Ruriko summarizes Kairo's output and asks Kumo for related news.
-4. Kumo returns news highlights.
-5. Kairo revises analysis based on news.
-6. Ruriko sends Bogdan a concise report and optionally offers deeper detail or follow-up actions.
+1. **Saito** triggers a scheduled check (cron tick).
+2. Saito sends a Matrix message to **Kairo**: "Time for a portfolio check."
+3. Kairo retrieves portfolio data and market state, writes analysis to the DB.
+4. Kairo sends a Matrix message to **Kumo**: "Pull news for these tickers: AAPL, MSFT, TSLA."
+5. Kumo searches for news and sends results back to **Kairo** via Matrix.
+6. Kairo revises analysis based on news and sends a final report to **Bogdan** via Matrix DM.
 
-Agents can ask Bogdan clarifying questions directly when needed (e.g., missing portfolio), and Ruriko remains the coordinator and policy authority.
+Note the **peer-to-peer** nature: Ruriko is not in the hot loop. Ruriko planned this topology (which agents exist, what they are allowed to do, which rooms they can message), but the agents execute collaboratively by messaging each other directly.
+
+Agents can ask Bogdan clarifying questions directly when needed (e.g., missing portfolio). Ruriko remains the **planner and policy authority** — it drafted the agent configurations, knows the mesh topology, and can intervene or reconfigure at any time.
+
+Canonical agents (**Saito**, **Kairo**, **Kumo**) are **singleton identities** — each has a distinct personality, role, and set of capabilities. They are not interchangeable worker instances; they are named team members.
 
 This scenario is the **canonical reference**: architecture decisions and implementation must support this flow without requiring the user to become a sysadmin.
 
@@ -91,8 +97,11 @@ This model optimizes for:
 Matrix is used for:
 
 * user ↔ Ruriko conversation
-* agent ↔ agent discussion (human-relevant reasoning, clarifications, summaries)
+* agent ↔ agent **peer-to-peer collaboration** (task delegation, result sharing, clarifications)
+* agent → user direct messages (reports, questions)
 * audit breadcrumbs (non-sensitive state changes)
+
+**Built-in Matrix messaging** is a first-class tool available to all LLM-powered Gitai agents. Agents can send messages to other agents' rooms or to the user, subject to Gosuto policy (room allowlists, rate limits). This is what enables the peer-to-peer collaboration model.
 
 Matrix is not used for:
 
@@ -183,16 +192,16 @@ An individual LLM-powered worker agent. Each Gitai runs as its own process/conta
 The agent’s personality + role + tool permissions packaged as configuration. A Gosuto defines what a Gitai is allowed to do (MCPs, tools, DB access, prompts, constraints). In practice: the “job description” and guardrails for an agent.
 
 **Saito (Cron / Trigger Agent)**
-A canonical Gitai role responsible for scheduling and emitting periodic triggers. Saito is intentionally deterministic and low-intelligence: it should not reason, only schedule and notify.
+A canonical singleton Gitai identity responsible for scheduling and emitting periodic triggers. Saito fires cron events and **sends Matrix messages to other agents** to initiate workflows. Saito is intentionally deterministic and low-intelligence: it should not reason deeply, only schedule and coordinate.
 
 **Kairo (Finance Agent)**
-A canonical Gitai role responsible for portfolio analysis, market data retrieval (e.g., finnhub MCP), and writing structured findings into the database. Kairo can ask the user for missing inputs and produces reports.
+A canonical singleton Gitai identity responsible for portfolio analysis, market data retrieval (e.g., finnhub MCP), and writing structured findings into the database. Kairo can ask the user for missing inputs, **delegate sub-tasks to other agents via Matrix messages** (e.g., asking Kumo for news), and produces reports that are sent directly to the user.
 
 **Kumo (News/Search Agent)**
-A canonical Gitai role responsible for retrieving news and public information (e.g., Brave Search API/MCP) related to tickers, companies, or topics requested by Ruriko or other agents.
+A canonical singleton Gitai identity responsible for retrieving news and public information (e.g., Brave Search API/MCP) related to tickers, companies, or topics. Kumo **receives requests from other agents via Matrix** and sends results back to the requesting agent or to the user.
 
 **Matrix (Conversation Layer)**
-The communication fabric used for human interaction and agent-to-agent discussion. Matrix carries only human-relevant dialogue and non-sensitive audit breadcrumbs. It must never carry secret values.
+The communication fabric used for human interaction and **agent-to-agent peer-to-peer collaboration**. All LLM-powered agents have a built-in Matrix messaging tool that lets them send messages to other agents' rooms or to the user — subject to Gosuto policy constraints (room allowlists, rate limits). Matrix carries task delegation, result sharing, and non-sensitive audit breadcrumbs. It must never carry secret values.
 
 **Tuwunel (Bundled Matrix Homeserver)**
 The default Matrix homeserver used for the MVP deployment. It is lightweight, single-binary, and intended to run on the same host as Ruriko and the agents. Federation and registration are disabled by default.

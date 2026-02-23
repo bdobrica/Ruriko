@@ -2,7 +2,7 @@
 
 > A conversational control plane for secure, capability-scoped AI agents over Matrix.
 
-Ruriko is a self-hosted system where a human talks to **Ruriko** over Matrix, and Ruriko coordinates specialized LLM-powered agents (**Gitai**) that collaborate like a small team — with secrets handled securely and control operations kept off the conversation layer.
+Ruriko is a self-hosted system where a human talks to **Ruriko** over Matrix, and Ruriko plans and configures specialized LLM-powered agents (**Gitai**) that collaborate **peer-to-peer** — messaging each other directly over Matrix, with secrets handled securely and control operations kept off the conversation layer.
 
 > 📖 **Full product story, UX contract, and canonical glossary:** [docs/preamble.md](docs/preamble.md)
 
@@ -40,15 +40,17 @@ Ruriko consists of two main components:
 
 ## 1️⃣ Ruriko (Control Plane)
 
+* Plans workflows and drafts agent configurations
 * Manages agent lifecycle
 * Provisions Matrix accounts
 * Stores and rotates secrets
 * Applies and versions agent configuration (*Gosuto*)
+* Defines the agent mesh topology (which agents can message which)
 * Enforces administrative approvals
 * Maintains audit logs
 * Integrates with Codex to generate new agent templates
 
-Ruriko is deterministic. It does **not** rely on LLM output for control decisions.
+Ruriko is the **planner and policy authority**. It does **not** sit in the hot path of agent-to-agent collaboration — it plans the topology and agents execute peer-to-peer.
 
 ---
 
@@ -57,6 +59,7 @@ Ruriko is deterministic. It does **not** rely on LLM output for control decision
 Each agent runs as a separate single binary:
 
 * Connects to Matrix via `mautrix-go`
+* **Sends messages to other agents and users via built-in Matrix messaging tool** (policy-gated)
 * Communicates via structured message envelopes
 * Calls LLM providers
 * Manages and supervises MCP tool processes
@@ -66,7 +69,7 @@ Each agent runs as a separate single binary:
 * Handles approvals
 * Executes tool calls within strict constraints
 
-Runtime is immutable. Behavior is controlled by structured configuration.
+Runtime is immutable. Behavior is controlled by structured configuration. Agents collaborate **peer-to-peer** over Matrix — Ruriko is not in the message path.
 
 ---
 
@@ -119,7 +122,7 @@ Ruriko uses **three distinct channels**:
 
 | Channel | Used for |
 |---------|----------|
-| **Matrix** (conversation) | Human ↔ Ruriko dialogue, agent ↔ agent discussion, audit breadcrumbs |
+| **Matrix** (conversation) | Human ↔ Ruriko dialogue, **agent ↔ agent peer-to-peer collaboration**, audit breadcrumbs |
 | **ACP** (Agent Control Protocol) | Lifecycle control, config apply, health checks, restarts, **inbound event delivery** (`POST /events/{source}`) — private to the Docker network |
 | **Kuze** (secret plane) | One-time secret entry (human) and one-time secret redemption (agents) — never through Matrix |
 | **Event Gateways** (inbound triggers) | Cron ticks, email arrivals, webhook deliveries — translated to event envelopes, posted to ACP |
@@ -162,8 +165,10 @@ Gateways are wired in Gosuto under `gateways:` and are supervised identically to
 
 ### Canonical agents
 
-* **Saito Agent** – deterministic cron/trigger agent; no tool calls, no reasoning; emits periodic triggers to coordinate other agents
-* **Kumo Agent** – news and web search via the Brave Search MCP; summarises news for tickers and topics on request
+* **Saito Agent** – deterministic cron/trigger agent; fires periodic triggers and **sends Matrix messages to other agents** to initiate workflows (e.g., tells Kairo to check the portfolio). Singleton identity.
+* **Kumo Agent** – news and web search via the Brave Search MCP; **receives requests from other agents via Matrix** and summarises news for tickers and topics. Singleton identity.
+
+Canonical agents are **named singleton identities** with distinct personalities and roles — not interchangeable worker instances.
 
 ### Generic templates
 
@@ -224,6 +229,9 @@ In progress:
 * [ ] Automated provisioning pipeline (R5.2 — container → ACP health → Gosuto apply)
 * [ ] Kairo (finnhub finance agent) template
 * [ ] Canonical Saito → Kairo → Kumo orchestration workflow (R6)
+* [ ] Built-in Matrix messaging tool for inter-agent collaboration
+* [ ] Canonical agent knowledge in NLP system prompt
+* [ ] Gosuto template customization at provision time
 
 ---
 
