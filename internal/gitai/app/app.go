@@ -454,11 +454,9 @@ func (a *App) runTurn(ctx context.Context, roomID, sender, userText, replyToEven
 		return "", 0, fmt.Errorf("LLM provider not configured")
 	}
 
-	// Build system prompt from persona.
-	systemPrompt := cfg.Persona.SystemPrompt
-	if systemPrompt == "" {
-		systemPrompt = fmt.Sprintf("You are %s. %s", cfg.Metadata.Name, cfg.Metadata.Description)
-	}
+	// Build system prompt from persona + instructions (R14.3).
+	// Messaging targets and memory context are nil/"" until R15/R18 are wired.
+	systemPrompt := buildSystemPrompt(cfg, nil, "")
 
 	// Gather available tools across all running MCP servers.
 	toolDefs, _ := a.gatherTools(ctx)

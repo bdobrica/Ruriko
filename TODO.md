@@ -178,7 +178,7 @@ The MVP is ready when **all** of the following are true:
 
 ### R14.3 System Prompt Assembly — Persona + Instructions
 
-- [ ] Update Gitai's LLM context assembly to construct system prompt from both sections:
+- [x] Update Gitai's LLM context assembly to construct system prompt from both sections:
   ```
   [persona.systemPrompt]               ← cosmetic identity
   [instructions.role]                   ← operational role
@@ -194,14 +194,15 @@ The MVP is ready when **all** of the following are true:
   > who it can contact, but the tool definitions themselves are already
   > exposed via the API's native tool mechanism.
   >
-  > Current baseline: `runTurn()` builds the system prompt as verbatim
-  > `persona.SystemPrompt` (with a `"You are {Name}. {Description}"`
-  > fallback). This phase replaces that with the layered assembly above.
-- [ ] Workflow steps rendered as structured text the LLM can follow
-- [ ] Peer agent names and roles injected so the LLM knows who to message
-- [ ] User context injected so the agent knows the user exists and is the approver
-- [ ] Test: System prompt includes both persona and instructions sections
-- [ ] Test: Peer agent context appears in the prompt
+  > Implemented in `internal/gitai/app/prompt.go` — `buildSystemPrompt()` is
+  > called from `runTurn()` in place of the former bare `persona.SystemPrompt`
+  > read. Messaging targets and memory context accept nil/"" and produce no
+  > section until R15/R18 wire them.
+- [x] Workflow steps rendered as structured text the LLM can follow
+- [x] Peer agent names and roles injected so the LLM knows who to message
+- [x] User context injected so the agent knows the user exists and is the approver
+- [x] Test: System prompt includes both persona and instructions sections
+- [x] Test: Peer agent context appears in the prompt
 
 ### R14.4 Ruriko — Instructions Authoring and Auditing
 
