@@ -1444,6 +1444,110 @@ via `/ruriko config get` and auditable.
 
 ---
 
+## 📋 Phase R10: Conversation Memory — Short-Term / Long-Term Architecture ✅
+
+**Goal**: Give Ruriko the ability to remember conversations naturally. Short-term memory keeps active discussions coherent; long-term memory lets Ruriko recall relevant past context on demand.
+
+> Depends on: R9 (NL interface — memory feeds context to the LLM classifier).
+> The memory layer is **pluggable**: R10 defines the interface and wires stubs
+> so that persistence and embedding backends can be swapped in later.
+
+### R10.0 Design Decisions
+
+Two-tier memory model:
+
+- **Sharp short-term memory** — the current "contiguous" conversation is kept whole in the LLM context window. As long as messages flow without significant delay, Ruriko maintains full conversational fidelity.
+- **Fuzzy long-term memory** — when a conversation cools down (no message for a configurable cooldown period), the session is *sealed*, summarised, and stored with an embedding vector. Future conversations search LTM by embedding similarity.
+
+### R10.1 Conversation Lifecycle and Contiguity Detection
+
+- [x] `internal/ruriko/memory/conversation.go` — `Conversation` and `Message` types, `estimateTokens()` helper
+- [x] `internal/ruriko/memory/tracker.go` — `ConversationTracker`:
+  - `RecordMessage(roomID, senderID, role, content)` — append or start new conversation
+  - `GetActiveConversation(roomID, senderID) *Conversation` — returns current buffer
+  - `SealExpired(now time.Time)` — seals conversations past cooldown, returns sealed list
+- [x] Contiguity detection: configurable cooldown (`MEMORY_COOLDOWN`, default 15 min)
+- [x] Short-term buffer limits: `MEMORY_STM_MAX_MESSAGES` (50), `MEMORY_STM_MAX_TOKENS` (8000)
+- [x] Sliding window with summary prepend when buffer overflows
+- [x] Test: Contiguous messages accumulate in the same conversation
+- [x] Test: Cooldown gap triggers seal + new conversation
+- [x] Test: Buffer size limits are enforced
+
+### R10.2 Long-Term Memory Interface (Pluggable)
+
+- [x] `internal/ruriko/memory/ltm.go` — `LongTermMemory` interface (`Store`, `Search`, `SearchByEmbedding`) + `MemoryEntry` type
+- [x] `internal/ruriko/memory/ltm_noop.go` — no-op stub (default backend)
+- [x] Test: Noop implementation satisfies interface
+- [x] Test: Interface is mockable for downstream tests
+
+### R10.3 Embedding and Summarisation Interface (Pluggable)
+
+- [x] `internal/ruriko/memory/embedder.go` — `Embedder` and `Summariser` interfaces
+- [x] `internal/ruriko/memory/embedder_noop.go` — noop stubs (nil vector, last-3-messages summary)
+- [x] Test: Noop embedder and summariser satisfy interfaces
+- [x] Test: Summariser stub produces reasonable output from sample messages
+
+### R10.4 Memory-Aware Context Assembly
+
+- [x] `internal/ruriko/memory/context.go` — `ContextAssembler` with `Assemble()` method:
+  1. Full STM buffer included (sharp recall)
+  2. If embedder is non-noop: embed current message → search LTM → inject relevant summaries
+  3. Token budget respected (STM prioritised over LTM)
+- [x] Wired into `HandleNaturalLanguage` in `internal/ruriko/commands/natural_language.go`:
+  - `Assemble()` called before `Classify()`; assistant response recorded after
+- [x] Test: Context includes full STM buffer
+- [x] Test: Context includes LTM results when embedder is available
+- [x] Test: Token budget is respected
+- [x] Test: Noop embedder means no LTM retrieval
+
+### R10.5 Conversation Seal and Archive Pipeline
+
+- [x] `internal/ruriko/memory/seal.go` — `SealPipeline` (summarise → embed → store) + `SealPipelineRunner` (timer-based, every 60s)
+- [x] Sealed conversations logged at INFO (no content); content only at DEBUG with redaction
+- [x] Test: Sealed conversation flows through full pipeline
+- [x] Test: Noop backends handle the pipeline without errors
+
+### R10.6 Configuration and Wiring
+
+- [x] Config fields in `internal/ruriko/app/app.go`: `MemoryCooldown`, `MemorySTMMaxMessages`, `MemorySTMMaxTokens`, `MemoryLTMTopK`, `MemoryEnabled`
+- [x] Env vars in `cmd/ruriko/main.go`: `MEMORY_COOLDOWN`, `MEMORY_STM_MAX_MESSAGES`, `MEMORY_STM_MAX_TOKENS`, `MEMORY_LTM_TOP_K`
+- [x] Wired in `app.New()`: tracker → noop LTM → noop embedder/summariser → context assembler → handlers
+- [x] `shouldEnableMemory()` guard + nil checks in NL handler
+- [x] Test: App starts cleanly with noop memory backends
+- [x] Test: App starts cleanly with memory disabled (nil assembler)
+
+### R10.7 Persistent Backends
+
+- [x] `internal/ruriko/memory/ltm_sqlite.go` — `SQLiteLTM`:
+  - SQLite-backed LTM with `ltm_conversations` table (migration `0012_ltm_conversations.sql`)
+  - `Store()` with JSON-encoded embeddings/messages/metadata, upsert semantics
+  - `Search()` with recency fallback (scoped by room+sender)
+  - `SearchByEmbedding()` with brute-force cosine similarity in Go
+- [x] `internal/ruriko/memory/embedder_openai.go` — `OpenAIEmbedder`:
+  - Calls OpenAI-compatible `/embeddings` endpoint (`text-embedding-3-small`, 1536-dim)
+  - Configurable base URL, model, timeout; API key with fallback to `RURIKO_NLP_API_KEY`
+- [x] `internal/ruriko/memory/summariser_llm.go` — `LLMSummariser`:
+  - Calls OpenAI-compatible `/chat/completions` for conversation summarisation
+  - System prompt: "Summarise this conversation in 2–3 sentences, focusing on decisions made and actions taken."
+  - Configurable model (`gpt-4o-mini` default), max tokens (256), timeout
+- [x] Config wiring: `MEMORY_LTM_BACKEND` (`sqlite`), `MEMORY_EMBEDDING_*`, `MEMORY_SUMMARISER_*` env vars
+- [x] Conditional backend selection in `app.New()`: defaults to noop, swaps when configured
+- [ ] `ltm_pgvector.go` — PostgreSQL + pgvector — deferred post-MVP
+- [x] Test: SQLiteLTM store/retrieve, upsert, scoped search, embedding similarity, topK
+- [x] Test: OpenAIEmbedder HTTP round-trip, error handling, custom model
+- [x] Test: LLMSummariser HTTP round-trip, error handling, transcript formatting
+
+### Definition of done
+- Active conversations are tracked per room+sender with contiguity detection
+- Short-term memory is included in every NL classifier call (full buffer)
+- Long-term memory interface exists with a noop stub
+- Cooldown triggers conversation seal → summarise → embed → store pipeline (noop endpoints)
+- All interfaces are pluggable — swapping SQLite/pgvector/OpenAI embeddings requires no structural changes
+- System works end-to-end with noop backends (no external dependencies required)
+- Memory is disabled gracefully when NLP provider is not configured
+
+---
+
 
 ---
 
@@ -1476,3 +1580,4 @@ via `/ruriko config get` and auditable.
 - [x] Phase R13: Ruriko-Side Gateway Wiring ✅
 - [x] Phase R14: Gosuto Persona / Instructions Separation ✅
 - [x] Phase R15: Built-in Matrix Messaging Tool ✅
+- [x] Phase R10: Conversation Memory — Short-Term / Long-Term Architecture ✅

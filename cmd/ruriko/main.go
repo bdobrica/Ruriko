@@ -130,6 +130,14 @@ func loadConfig() (*app.Config, error) {
 		NLPAPIKeySecretRef: environment.StringOr("NLP_API_KEY_ENV", ""),
 		NLPRateLimit:       environment.IntOr("NLP_RATE_LIMIT", 0),
 		NLPTokenBudget:     environment.IntOr("NLP_TOKEN_BUDGET", 0),
+		// --- R10.7: Persistent Memory Backends ---
+		MemoryLTMBackend:         environment.StringOr("MEMORY_LTM_BACKEND", ""),
+		MemoryEmbeddingAPIKey:    environment.StringOr("MEMORY_EMBEDDING_API_KEY", ""),
+		MemoryEmbeddingEndpoint:  environment.StringOr("MEMORY_EMBEDDING_ENDPOINT", ""),
+		MemoryEmbeddingModel:     environment.StringOr("MEMORY_EMBEDDING_MODEL", ""),
+		MemorySummariserAPIKey:   environment.StringOr("MEMORY_SUMMARISER_API_KEY", ""),
+		MemorySummariserEndpoint: environment.StringOr("MEMORY_SUMMARISER_ENDPOINT", ""),
+		MemorySummariserModel:    environment.StringOr("MEMORY_SUMMARISER_MODEL", ""),
 	}, nil
 }
 

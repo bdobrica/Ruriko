@@ -71,6 +71,7 @@ The following is built and functional:
 - ✅ **R11–R13**: Event gateways — schema/types, Gitai runtime integration, Ruriko-side wiring
 - ✅ **R14**: Gosuto persona/instructions separation — three-layer model, system prompt assembly, template updates
 - ✅ **R15**: Built-in Matrix messaging tool — `matrix.send_message`, policy engine integration, mesh topology provisioning, audit/breadcrumbs, template updates
+- ✅ **R10**: Conversation memory — STM tracker, LTM interface, seal pipeline, context assembly, SQLite/OpenAI/LLM persistent backends
 
 ---
 
@@ -92,7 +93,7 @@ The MVP is ready when **all** of the following are true:
 
 # 🔄 ACTIVE PHASES
 
-> The phases below complete the MVP. Phases 0–9 and R0–R4, R9, R11–R15 are
+> The phases below complete the MVP. Phases 0–9 and R0–R4, R9–R15 are
 > done — see [CHANGELOG.md](CHANGELOG.md).
 
 ---
@@ -118,230 +119,11 @@ The MVP is ready when **all** of the following are true:
 
 ---
 
-## 📋 Phase R10: Conversation Memory — Short-Term / Long-Term Architecture (2–5 days)
+## 📋 Phase R10: Conversation Memory — Short-Term / Long-Term Architecture ✅
 
-**Goal**: Give Ruriko the ability to remember conversations naturally. Short-term memory keeps active discussions coherent; long-term memory lets Ruriko recall relevant past context on demand.
+**Status**: ✅ Complete. R10.0–R10.7 all done (pgvector deferred post-MVP).
 
-> Depends on: R9 (NL interface — memory feeds context to the LLM classifier).
-> The memory layer is **pluggable**: R10 defines the interface and wires stubs
-> so that persistence and embedding backends can be swapped in later.
-
-### R10.0 Design Decisions
-
-Humans expect conversation partners to remember what was said. LLMs don't —
-they only see what's in the context window. This phase introduces a two-tier
-memory model:
-
-**Sharp short-term memory** — the current "contiguous" conversation is kept
-whole in the LLM context window. As long as messages flow without significant
-delay, Ruriko maintains full conversational fidelity.
-
-**Fuzzy long-term memory** — when a conversation cools down (no message for a
-configurable cooldown period), the session is *sealed*, summarised, and stored
-with an embedding vector. When a future conversation seems to reference
-something from the past, Ruriko searches long-term memory by embedding
-similarity and injects the relevant context.
-
-```
-┌──────────────────────────────────────────────────────┐
-│  Matrix message arrives                               │
-│                                                       │
-│  1. Resolve active conversation (room + sender)       │
-│  2. Is it contiguous? (last msg < cooldown)           │
-│     YES → append to short-term buffer                 │
-│     NO  → seal previous conversation → store LTM      │
-│           start new short-term buffer                 │
-│  3. Assemble LLM context:                             │
-│     [system prompt]                                   │
-│     [retrieved LTM snippets, if relevant]             │
-│     [full short-term buffer]                          │
-│     [current message]                                 │
-│  4. Send to NL classifier (R9)                        │
-└──────────────────────────────────────────────────────┘
-```
-
-**Why this split matters**:
-- Short-term: high fidelity, low cost (only the current exchange)
-- Long-term: lossy but cheap (embeddings + summaries, not raw transcripts)
-- Context window stays bounded regardless of total conversation history
-- Cost scales with *active* conversation length, not *total* history
-
-### R10.1 Conversation Lifecycle and Contiguity Detection
-
-- [x] Create `internal/ruriko/memory/conversation.go`:
-  ```go
-  type Conversation struct {
-      ID        string           // unique conversation ID (UUID)
-      RoomID    string
-      SenderID  string
-      Messages  []Message        // ordered message buffer
-      StartedAt time.Time
-      LastMsgAt time.Time
-      Sealed    bool             // true once cooldown expires
-  }
-
-  type Message struct {
-      Role      string           // "user" | "assistant"
-      Content   string
-      Timestamp time.Time
-  }
-  ```
-- [x] Create `internal/ruriko/memory/tracker.go` — conversation lifecycle manager:
-  - `RecordMessage(roomID, senderID, role, content)` — append or start new conversation
-  - `GetActiveConversation(roomID, senderID) *Conversation` — returns current buffer
-  - `SealExpired(now time.Time)` — seals conversations past cooldown
-- [x] Contiguity detection:
-  - Configurable cooldown period (`MEMORY_COOLDOWN`, default: 15 minutes)
-  - If `now - lastMsgAt > cooldown` → seal previous conversation, start fresh
-  - Sealed conversations are handed to the long-term memory pipeline
-- [x] Short-term buffer size limit:
-  - Configurable max messages per conversation (`MEMORY_STM_MAX_MESSAGES`, default: 50)
-  - Configurable max token estimate (`MEMORY_STM_MAX_TOKENS`, default: 8000)
-  - When exceeded: oldest messages are dropped from the buffer (sliding window),
-    and a summary of dropped messages is prepended (when LTM summariser is available)
-- [x] In-memory storage initially (same pattern as `conversationStore` from R5.4)
-- [x] Test: Contiguous messages accumulate in the same conversation
-- [x] Test: Cooldown gap triggers seal + new conversation
-- [x] Test: Buffer size limits are enforced
-
-### R10.2 Long-Term Memory Interface (Pluggable)
-
-- [x] Create `internal/ruriko/memory/ltm.go` — long-term memory interface:
-  ```go
-  type LongTermMemory interface {
-      // Store persists a sealed conversation with its embedding and summary.
-      Store(ctx context.Context, entry MemoryEntry) error
-      // Search finds the top-k most relevant past conversations for the query.
-      Search(ctx context.Context, query string, roomID string, senderID string, topK int) ([]MemoryEntry, error)
-  }
-
-  type MemoryEntry struct {
-      ConversationID string
-      RoomID         string
-      SenderID       string
-      Summary        string    // human-readable summary of the conversation
-      Embedding      []float32 // vector embedding of the summary
-      Messages       []Message // optional: full transcript for high-fidelity recall
-      SealedAt       time.Time
-      Metadata       map[string]string // template used, agents mentioned, etc.
-  }
-  ```
-- [x] Create `internal/ruriko/memory/ltm_noop.go` — no-op stub implementation:
-  - `Store()` → logs and discards (conversation summary logged at DEBUG)
-  - `Search()` → returns empty slice
-  - This is the **default** until an embedding backend is wired
-- [x] Test: Noop implementation satisfies interface
-- [x] Test: Interface is mockable for downstream tests
-
-### R10.3 Embedding and Summarisation Interface (Pluggable)
-
-- [x] Create `internal/ruriko/memory/embedder.go`:
-  ```go
-  type Embedder interface {
-      // Embed produces a vector embedding for the given text.
-      Embed(ctx context.Context, text string) ([]float32, error)
-  }
-
-  type Summariser interface {
-      // Summarise produces a concise summary of a conversation transcript.
-      Summarise(ctx context.Context, messages []Message) (string, error)
-  }
-  ```
-- [x] Create `internal/ruriko/memory/embedder_noop.go` — stub implementations:
-  - `Embed()` → returns nil vector (disables similarity search)
-  - `Summarise()` → returns concatenation of last 3 messages (crude but functional)
-- [ ] Future implementations (not in this phase, but the interface supports them):
-  - `embedder_openai.go` — OpenAI `text-embedding-3-small` (cheap, 1536-dim)
-  - `summariser_llm.go` — LLM-based summarisation via same provider as R9
-  - `ltm_sqlite.go` — SQLite-backed storage with cosine similarity via an extension
-  - `ltm_pgvector.go` — PostgreSQL + pgvector for production-scale deployments
-- [x] Test: Noop embedder and summariser satisfy interfaces
-- [x] Test: Summariser stub produces reasonable output from sample messages
-
-### R10.4 Memory-Aware Context Assembly
-
-- [x] Create `internal/ruriko/memory/context.go` — context assembler:
-  ```go
-  type ContextAssembler struct {
-      STM       *ConversationTracker
-      LTM       LongTermMemory
-      Embedder  Embedder
-      MaxTokens int // total budget for memory in the LLM context window
-  }
-
-  // Assemble produces the memory block to inject into the LLM prompt.
-  func (a *ContextAssembler) Assemble(ctx context.Context, roomID, senderID, currentMsg string) ([]Message, error)
-  ```
-- [x] Assembly strategy:
-  1. Get active short-term conversation → include all messages (sharp recall)
-  2. If `Embedder` is available and non-noop:
-     - Embed `currentMsg`
-     - Search LTM for top-3 relevant past conversations (same room+sender)
-     - Inject retrieved summaries as `[system]` context: "Previous relevant conversation (from [date]): [summary]"
-  3. If `Embedder` is noop → skip LTM retrieval (no embedding = no search)
-  4. Respect `MaxTokens` budget: short-term has priority, LTM fills remaining space
-- [x] Wire `ContextAssembler` into R9's `HandleNaturalLanguage`:
-  - Before calling `Classify()`, call `Assemble()` to get conversation history
-  - Pass assembled messages as context to the LLM provider
-  - After getting the LLM response, call `RecordMessage(role: "assistant", content: response)`
-- [x] Test: Context includes full STM buffer
-- [x] Test: Context includes LTM results when embedder is available
-- [x] Test: Token budget is respected (STM prioritised over LTM)
-- [x] Test: Noop embedder means no LTM retrieval (graceful)
-
-### R10.5 Conversation Seal and Archive Pipeline
-
-- [x] On conversation seal (cooldown expired):
-  1. Call `Summariser.Summarise(messages)` → summary text
-  2. Call `Embedder.Embed(summary)` → embedding vector
-  3. Call `LTM.Store(MemoryEntry{...})` → persist
-  4. Clear the short-term buffer for that room+sender
-- [x] Run seal check on a timer (every 60 seconds) or lazily on next message arrival
-- [x] Log sealed conversations at INFO: "Conversation sealed (room=…, sender=…, messages=N, duration=…)"
-- [x] Never log message *content* at INFO — only at DEBUG and only when redacted
-- [x] Test: Sealed conversation flows through summarise → embed → store pipeline
-- [x] Test: Noop backends handle the pipeline without errors
-
-### R10.6 Configuration and Wiring
-
-- [x] Add config fields to `app.Config`:
-  - `MemoryCooldown` (duration, default: 15 min)
-  - `MemorySTMMaxMessages` (int, default: 50)
-  - `MemorySTMMaxTokens` (int, default: 8000)
-  - `MemoryLTMTopK` (int, default: 3)
-  - `MemoryEnabled` (bool, default: true when NLP provider is configured)
-- [x] Wire in `app.New()`:
-  - Create `ConversationTracker` (always, when NLP is enabled)
-  - Create `LongTermMemory` (noop stub by default)
-  - Create `Embedder` + `Summariser` (noop stubs by default)
-  - Create `ContextAssembler` → inject into `HandlersConfig`
-- [x] Add `HandlersConfig.Memory *memory.ContextAssembler` field
-- [x] Test: App starts cleanly with noop memory backends
-- [x] Test: App starts cleanly with memory disabled (nil assembler)
-
-### R10.7 Future: Persistent Backends (stubs only in this phase)
-
-> These items are **documented but not implemented** in R10. The interfaces
-> from R10.2 and R10.3 are designed to accommodate them.
-
-- [ ] `ltm_sqlite.go` — SQLite with JSON1 and a custom cosine-similarity function
-  - Conversations table: id, room_id, sender_id, summary, embedding (BLOB), sealed_at, metadata
-  - Search: brute-force cosine similarity (fine for hundreds of conversations)
-- [ ] `embedder_openai.go` — calls OpenAI Embeddings API (`text-embedding-3-small`)
-  - Same API key as R9 NLP provider (or separate `RURIKO_EMBEDDING_API_KEY`)
-  - 1536-dimensional vectors, ~$0.02 per 1M tokens
-- [ ] `summariser_llm.go` — uses R9's LLM provider to summarise sealed conversations
-  - System prompt: "Summarise this conversation in 2–3 sentences, focusing on decisions made and actions taken."
-- [ ] `ltm_pgvector.go` — PostgreSQL + pgvector (for larger deployments)
-
-### Definition of done
-- Active conversations are tracked per room+sender with contiguity detection
-- Short-term memory is included in every NL classifier call (full buffer)
-- Long-term memory interface exists with a noop stub
-- Cooldown triggers conversation seal → summarise → embed → store pipeline (noop endpoints)
-- All interfaces are pluggable — swapping SQLite/pgvector/OpenAI embeddings requires no structural changes
-- System works end-to-end with noop backends (no external dependencies required)
-- Memory is disabled gracefully when NLP provider is not configured
+> ✅ Complete — see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -747,9 +529,9 @@ similarity and injects the relevant context.
 - [ ] Codex integration (template generation)
 - [ ] Advanced MCP tool ecosystem
 - [ ] Enhanced observability (distributed tracing, Prometheus)
-- [ ] Persistent LTM backends (SQLite cosine similarity, pgvector) — see R10/R18 for interfaces
-- [ ] OpenAI Embeddings integration for long-term memory search — see R10/R18 for interfaces
-- [ ] LLM-powered conversation summarisation for memory archival — see R10/R18 for interfaces
+- [x] Persistent LTM backends (SQLite cosine similarity, pgvector) — SQLite done in R10.7; pgvector deferred
+- [x] OpenAI Embeddings integration for long-term memory search — done in R10.7
+- [x] LLM-powered conversation summarisation for memory archival — done in R10.7
 - [ ] Multi-user memory isolation and per-room memory scoping
 - [ ] Voice-to-text Matrix messages → NL pipeline
 - [ ] IMAP gateway — actual IMAP/TLS implementation (current `ruriko-gw-imap` is a stub that validates config and lifecycle but never connects)
@@ -788,7 +570,7 @@ similarity and injects the relevant context.
 - [x] Phase R5: Agent Provisioning UX ✅ *complete*
 - [x] Phase R14: Gosuto Persona / Instructions Separation ✅ *complete*
 - [x] Phase R15: Built-in Matrix Messaging Tool — Peer-to-Peer Collaboration ✅ *complete*
-- [ ] Phase R10: Conversation Memory — Short-Term / Long-Term Architecture
+- [x] Phase R10: Conversation Memory — Short-Term / Long-Term Architecture ✅ *complete*
 - [ ] Phase R16: Canonical Agent Knowledge & NLP Planning Layer
 - [ ] Phase R6: Canonical Workflow — Saito → Kairo → Kumo
 - [ ] Phase R17: Gosuto Template Customization at Provision Time
@@ -799,4 +581,4 @@ similarity and injects the relevant context.
 ---
 
 **Last Updated**: 2026-02-24
-**Current Focus**: Phase R10 — Conversation Memory (short-term / long-term architecture; depends on R15 ✅)
+**Current Focus**: Phase R16 — Canonical Agent Knowledge & NLP Planning Layer (depends on R9 ✅, R15 ✅)

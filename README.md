@@ -232,10 +232,10 @@ Completed:
 * [x] Gosuto persona / instructions separation — three-layer authority model (R14)
 * [x] Built-in `matrix.send_message` tool — policy-gated peer-to-peer messaging (R15)
 * [x] Mesh topology provisioning — Ruriko injects allowed messaging targets at provision time
+* [x] Conversation memory — STM tracker, LTM interface, seal pipeline, context assembly, pluggable SQLite/OpenAI/LLM backends (R10)
 
 In progress / up next:
 
-* [ ] Conversation memory — short-term buffer + long-term embedding recall (R10)
 * [ ] Canonical Saito → Kairo → Kumo end-to-end workflow (R6)
 * [ ] NLP planning layer — Ruriko drafts agent configs from natural language (R16)
 * [ ] Gosuto template variable customization at provision time (R17)

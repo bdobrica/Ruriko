@@ -139,6 +139,41 @@ type Config struct {
 	// classification call when an embedding-capable backend is configured.
 	// Defaults to 3 when zero.
 	MemoryLTMTopK int
+
+	// --- R10.7: Persistent Memory Backends ---
+
+	// MemoryLTMBackend selects the long-term memory storage backend.
+	// Supported values: "noop" (default), "sqlite".
+	// When "sqlite", the Ruriko database is used for LTM storage.
+	MemoryLTMBackend string
+
+	// MemoryEmbeddingAPIKey is the API key for the OpenAI-compatible
+	// embedding provider. When non-empty, enables real embedding-based
+	// similarity search in LTM. Uses the same key as the NLP provider by
+	// default (read from RURIKO_MEMORY_EMBEDDING_API_KEY or fallback to
+	// RURIKO_NLP_API_KEY).
+	MemoryEmbeddingAPIKey string
+
+	// MemoryEmbeddingEndpoint overrides the embedding API base URL.
+	// Defaults to https://api.openai.com/v1 when empty.
+	MemoryEmbeddingEndpoint string
+
+	// MemoryEmbeddingModel overrides the embedding model name.
+	// Defaults to "text-embedding-3-small" when empty.
+	MemoryEmbeddingModel string
+
+	// MemorySummariserAPIKey is the API key for the LLM-based summariser.
+	// When non-empty, enables LLM-powered conversation summarisation.
+	// Falls back to MemoryEmbeddingAPIKey, then RURIKO_NLP_API_KEY.
+	MemorySummariserAPIKey string
+
+	// MemorySummariserEndpoint overrides the summariser API base URL.
+	// Defaults to https://api.openai.com/v1 when empty.
+	MemorySummariserEndpoint string
+
+	// MemorySummariserModel overrides the summariser model name.
+	// Defaults to "gpt-4o-mini" when empty.
+	MemorySummariserModel string
 }
 
 // App is the main Ruriko application
@@ -427,9 +462,49 @@ func New(config *Config) (*App, error) {
 			}
 
 			tracker := memory.NewTracker(trackerCfg)
-			summariser := memory.NoopSummariser{}
-			embedder := memory.NoopEmbedder{}
-			ltm := memory.NewNoopLTM(slog.Default())
+
+			// --- Select memory backends (R10.7) ---
+			var summariser memory.Summariser = memory.NoopSummariser{}
+			var embedder memory.Embedder = memory.NoopEmbedder{}
+			var ltm memory.LongTermMemory = memory.NewNoopLTM(slog.Default())
+
+			backendLabel := "noop"
+
+			// LTM backend: SQLite uses the existing Ruriko database.
+			if config.MemoryLTMBackend == "sqlite" {
+				ltm = memory.NewSQLiteLTM(store.DB(), slog.Default())
+				backendLabel = "sqlite"
+				slog.Info("ltm backend: sqlite (using Ruriko database)")
+			}
+
+			// Embedder: OpenAI-compatible API when a key is available.
+			embAPIKey := resolveMemoryAPIKey(config.MemoryEmbeddingAPIKey, config.NLPAPIKeySecretRef)
+			if embAPIKey != "" {
+				embedder = memory.NewOpenAIEmbedder(memory.OpenAIEmbedderConfig{
+					APIKey:  embAPIKey,
+					BaseURL: config.MemoryEmbeddingEndpoint,
+					Model:   config.MemoryEmbeddingModel,
+				})
+				slog.Info("embedder backend: openai",
+					"model", orDefault(config.MemoryEmbeddingModel, "text-embedding-3-small"),
+				)
+			}
+
+			// Summariser: LLM-based when a key is available.
+			sumAPIKey := resolveMemoryAPIKey(config.MemorySummariserAPIKey, config.NLPAPIKeySecretRef)
+			if sumAPIKey == "" {
+				sumAPIKey = embAPIKey // fall back to embedding key
+			}
+			if sumAPIKey != "" {
+				summariser = memory.NewLLMSummariser(memory.LLMSummariserConfig{
+					APIKey:  sumAPIKey,
+					BaseURL: config.MemorySummariserEndpoint,
+					Model:   config.MemorySummariserModel,
+				})
+				slog.Info("summariser backend: llm",
+					"model", orDefault(config.MemorySummariserModel, "gpt-4o-mini"),
+				)
+			}
 
 			assembler := &memory.ContextAssembler{
 				STM:       tracker,
@@ -444,7 +519,8 @@ func New(config *Config) (*App, error) {
 			handlersCfg.SealPipeline = pipeline
 
 			sealRunner = memory.NewSealPipelineRunner(tracker, pipeline, 60*time.Second, slog.Default())
-			slog.Info("conversation memory ready (noop backends)",
+			slog.Info("conversation memory ready",
+				"ltm_backend", backendLabel,
 				"cooldown", trackerCfg.Cooldown,
 				"stm_max_messages", trackerCfg.MaxMessages,
 				"stm_max_tokens", trackerCfg.MaxTokens,
@@ -790,4 +866,29 @@ func replaceDelimited(s, delim, open, close string) string {
 		s = s[end+len(delim):]
 	}
 	return b.String()
+}
+
+// resolveMemoryAPIKey returns the first non-empty value from: the explicit
+// key, the environment variable named by envRef, or the RURIKO_NLP_API_KEY
+// environment variable. This provides a natural fallback chain so users
+// only need to configure one API key when the same provider serves NLP,
+// embeddings, and summarisation.
+func resolveMemoryAPIKey(explicit, envRef string) string {
+	if explicit != "" {
+		return explicit
+	}
+	if envRef != "" {
+		if v := os.Getenv(envRef); v != "" {
+			return v
+		}
+	}
+	return os.Getenv("RURIKO_NLP_API_KEY")
+}
+
+// orDefault returns s if non-empty, otherwise fallback.
+func orDefault(s, fallback string) string {
+	if s != "" {
+		return s
+	}
+	return fallback
 }
