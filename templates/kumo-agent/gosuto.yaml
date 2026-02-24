@@ -34,10 +34,23 @@ capabilities:
     constraints:
       method: GET
 
+  - name: allow-matrix-send
+    mcp: builtin
+    tool: matrix.send_message
+    allow: true
+
   - name: deny-all-others
     mcp: "*"
     tool: "*"
     allow: false
+
+messaging:
+  allowedTargets:
+    - roomId: "{{.KairoAdminRoom}}"
+      alias: kairo
+    - roomId: "{{.UserRoom}}"
+      alias: user
+  maxMessagesPerMinute: 30
 
 persona:
   systemPrompt: |

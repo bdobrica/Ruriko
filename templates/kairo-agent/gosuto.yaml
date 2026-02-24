@@ -69,6 +69,12 @@ capabilities:
     tool: list_tables
     allow: true
 
+  # Built-in matrix.send_message tool — used to contact Kumo and the user.
+  - name: allow-matrix-send
+    mcp: builtin
+    tool: matrix.send_message
+    allow: true
+
   # Deny everything else — including database deletes (analysis data is
   # append-only for auditability) and any other MCP servers.
   - name: deny-all-others
@@ -78,6 +84,14 @@ capabilities:
 
 approvals:
   requireApproval: false
+
+messaging:
+  allowedTargets:
+    - roomId: "{{.KumoAdminRoom}}"
+      alias: kumo
+    - roomId: "{{.UserRoom}}"
+      alias: user
+  maxMessagesPerMinute: 30
 
 persona:
   systemPrompt: |

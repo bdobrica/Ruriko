@@ -36,6 +36,7 @@ graph TD
     R18 --> R8
 
     style R14 fill:#43a047,stroke:#2e7d32,color:#fff
+    style R15 fill:#43a047,stroke:#2e7d32,color:#fff
 ```
 
 ---
@@ -68,6 +69,8 @@ The following is built and functional:
 - ✅ **R0–R4**: Config alignment, Tuwunel switch, ACP hardening, Kuze secret entry, token-based secret distribution
 - ✅ **R9**: Natural language interface — LLM-powered command translation, NLP rate limiting, runtime config store, lazy provider rebuild
 - ✅ **R11–R13**: Event gateways — schema/types, Gitai runtime integration, Ruriko-side wiring
+- ✅ **R14**: Gosuto persona/instructions separation — three-layer model, system prompt assembly, template updates
+- ✅ **R15**: Built-in Matrix messaging tool — `matrix.send_message`, policy engine integration, mesh topology provisioning, audit/breadcrumbs, template updates
 
 ---
 
@@ -340,13 +343,13 @@ The MVP is ready when **all** of the following are true:
 
 ### R15.6 Template Updates — Canonical Agents
 
-- [ ] Update `templates/saito-agent/gosuto.yaml`:
+- [x] Update `templates/saito-agent/gosuto.yaml`:
   - Add `messaging.allowedTargets` with placeholder for Kairo and user rooms
   - Update persona to mention ability to message other agents
-- [ ] Update `templates/kumo-agent/gosuto.yaml`:
+- [x] Update `templates/kumo-agent/gosuto.yaml`:
   - Add `messaging.allowedTargets` with placeholder for Kairo and user rooms
-- [ ] Create documentation for configuring agent mesh topology
-- [ ] Test: Updated templates pass validation
+- [x] Create documentation for configuring agent mesh topology
+- [x] Test: Updated templates pass validation
 
 ### Definition of done
 - Agents can send messages to other agents' rooms via `matrix.send_message` tool
@@ -1027,7 +1030,7 @@ similarity and injects the relevant context.
 
 - [x] Phase R5: Agent Provisioning UX ✅ *complete*
 - [x] Phase R14: Gosuto Persona / Instructions Separation ✅ *complete*
-- [ ] Phase R15: Built-in Matrix Messaging Tool — Peer-to-Peer Collaboration
+- [x] Phase R15: Built-in Matrix Messaging Tool — Peer-to-Peer Collaboration ✅ *complete*
 - [ ] Phase R10: Conversation Memory — Short-Term / Long-Term Architecture
 - [ ] Phase R16: Canonical Agent Knowledge & NLP Planning Layer
 - [ ] Phase R6: Canonical Workflow — Saito → Kairo → Kumo
@@ -1038,5 +1041,5 @@ similarity and injects the relevant context.
 
 ---
 
-**Last Updated**: 2026-02-23
-**Current Focus**: Phase R15 — Built-in Matrix Messaging Tool (peer-to-peer collaboration enabler; depends on R14 ✅)
+**Last Updated**: 2026-02-24
+**Current Focus**: Phase R10 — Conversation Memory (short-term / long-term architecture; depends on R15 ✅)

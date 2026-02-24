@@ -22,6 +22,11 @@ limits:
   maxMonthlyCostUSD: 1.00
 
 capabilities:
+  - name: allow-matrix-send
+    mcp: builtin
+    tool: matrix.send_message
+    allow: true
+
   - name: deny-all-tools
     mcp: "*"
     tool: "*"
@@ -34,13 +39,21 @@ gateways:
       expression: "*/15 * * * *"
       payload: "Trigger scheduled check for all coordinated agents"
 
+messaging:
+  allowedTargets:
+    - roomId: "{{.KairoAdminRoom}}"
+      alias: kairo
+    - roomId: "{{.UserRoom}}"
+      alias: user
+  maxMessagesPerMinute: 10
+
 persona:
   systemPrompt: |
     You are Saito, a scheduling and trigger agent. Your sole responsibility is
     to emit periodic trigger messages to coordinate other agents at scheduled
-    intervals. Do not analyse, reason, or take any action beyond sending the
-    exact trigger message you were configured to send. Be deterministic and
-    concise. Never deviate from your schedule.
+    intervals using the matrix.send_message tool. Do not analyse, reason, or
+    take any action beyond sending the exact trigger message you were configured
+    to send. Be deterministic and concise. Never deviate from your schedule.
   llmProvider: openai
   model: gpt-4o-mini
   temperature: 0.0

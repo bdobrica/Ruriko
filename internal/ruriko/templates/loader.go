@@ -39,6 +39,20 @@ type TemplateVars struct {
 	// provisioning. Used as a default approver in templates that enable the
 	// approval workflow.
 	OperatorMXID string
+
+	// KairoAdminRoom is the admin room ID for the Kairo finance agent.
+	// Populated at provision time by Ruriko when configuring Saito's and
+	// Kumo's messaging.allowedTargets in a multi-agent workflow.
+	KairoAdminRoom string
+
+	// KumoAdminRoom is the admin room ID for the Kumo news/search agent.
+	// Populated at provision time by Ruriko when configuring Kairo's
+	// messaging.allowedTargets in a multi-agent workflow.
+	KumoAdminRoom string
+
+	// UserRoom is the Matrix DM room ID for the human operator.
+	// Populated at provision time so agents can send final reports to the user.
+	UserRoom string
 }
 
 // Registry resolves and renders Gosuto templates from a filesystem root.

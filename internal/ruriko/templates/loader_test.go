@@ -113,11 +113,14 @@ func newDiskRegistry(t *testing.T) *templates.Registry {
 }
 
 var canonicalVars = templates.TemplateVars{
-	AgentName:    "test-agent",
-	DisplayName:  "Test Agent",
-	AdminRoom:    "!admin:example.com",
-	AgentMXID:    "@test-agent:example.com",
-	OperatorMXID: "@operator:example.com",
+	AgentName:      "test-agent",
+	DisplayName:    "Test Agent",
+	AdminRoom:      "!admin:example.com",
+	AgentMXID:      "@test-agent:example.com",
+	OperatorMXID:   "@operator:example.com",
+	KairoAdminRoom: "!kairo-admin:example.com",
+	KumoAdminRoom:  "!kumo-admin:example.com",
+	UserRoom:       "!user-dm:example.com",
 }
 
 func TestRegistry_List_IncludesCanonicalTemplates(t *testing.T) {
@@ -161,12 +164,19 @@ func TestRegistry_Render_SaitoAgent(t *testing.T) {
 		{"admin room substituted", "!admin:example.com"},
 		{"correct template tag", "template: saito-agent"},
 		{"deny-all-tools capability present", "deny-all-tools"},
+		{"allow-matrix-send capability present", "allow-matrix-send"},
 		{"openai secret present", "test-agent.openai-api-key"},
 		{"gpt-4o-mini model", "gpt-4o-mini"},
 		{"no MCP servers", "mcps:"},
 		{"cron gateway block present", "gateways:"},
 		{"scheduler gateway name", "scheduler"},
 		{"cron expression", "*/15 * * * *"},
+		{"messaging section present", "messaging:"},
+		{"kairo target alias", "alias: kairo"},
+		{"user target alias", "alias: user"},
+		{"kairo room id substituted", "!kairo-admin:example.com"},
+		{"user room id substituted", "!user-dm:example.com"},
+		{"matrix.send_message in persona", "matrix.send_message"},
 	}
 
 	for _, c := range checks {
@@ -199,6 +209,7 @@ func TestRegistry_Render_KumoAgent(t *testing.T) {
 		"template: kumo-agent",
 		"allow-brave-search",
 		"allow-fetch-read",
+		"allow-matrix-send",
 		"deny-all-others",
 		"brave-search",
 		"@modelcontextprotocol/server-brave-search",
@@ -208,6 +219,11 @@ func TestRegistry_Render_KumoAgent(t *testing.T) {
 		"test-agent.brave-api-key",
 		"gpt-4o",
 		"${BRAVE_API_KEY}",
+		"messaging:",
+		"alias: kairo",
+		"alias: user",
+		"!kairo-admin:example.com",
+		"!user-dm:example.com",
 	}
 
 	for _, want := range checks {
@@ -259,6 +275,7 @@ func TestRegistry_Render_KairoAgent(t *testing.T) {
 		"allow-database-write",
 		"allow-database-update",
 		"allow-database-query",
+		"allow-matrix-send",
 		"deny-all-others",
 		"finnhub",
 		"uv",
@@ -271,6 +288,11 @@ func TestRegistry_Render_KairoAgent(t *testing.T) {
 		"FINNHUB_API_KEY",
 		"gpt-4o",
 		"0.2",
+		"messaging:",
+		"alias: kumo",
+		"alias: user",
+		"!kumo-admin:example.com",
+		"!user-dm:example.com",
 	}
 
 	for _, want := range checks {
@@ -327,6 +349,97 @@ func TestRegistry_Render_AllTemplates_PassValidation(t *testing.T) {
 			}
 			if cfg.Instructions.Context.User == "" {
 				t.Errorf("%s: instructions.context.user must not be empty", name)
+			}
+		})
+	}
+}
+
+// ── R15.6: Canonical messaging-capable templates pass validation and have messaging ──
+
+// TestRegistry_Render_MessagingAgents_HaveAllowedTargets verifies that the
+// three canonical agents that participate in the peer-to-peer mesh (saito,
+// kairo, kumo) each render with:
+//   - a non-empty messaging.allowedTargets list
+//   - a capability rule allowing the builtin matrix.send_message tool
+//   - Gosuto validation passing end-to-end for the rendered config
+func TestRegistry_Render_MessagingAgents_HaveAllowedTargets(t *testing.T) {
+	reg := newDiskRegistry(t)
+
+	agents := []struct {
+		name        string
+		wantAliases []string
+		wantRoomIDs []string
+	}{
+		{
+			name:        "saito-agent",
+			wantAliases: []string{"kairo", "user"},
+			wantRoomIDs: []string{"!kairo-admin:example.com", "!user-dm:example.com"},
+		},
+		{
+			name:        "kairo-agent",
+			wantAliases: []string{"kumo", "user"},
+			wantRoomIDs: []string{"!kumo-admin:example.com", "!user-dm:example.com"},
+		},
+		{
+			name:        "kumo-agent",
+			wantAliases: []string{"kairo", "user"},
+			wantRoomIDs: []string{"!kairo-admin:example.com", "!user-dm:example.com"},
+		},
+	}
+
+	for _, tc := range agents {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			rendered, err := reg.Render(tc.name, canonicalVars)
+			if err != nil {
+				t.Fatalf("Render %s: %v", tc.name, err)
+			}
+
+			// Full Gosuto validation must pass.
+			cfg, err := gosutospec.Parse(rendered)
+			if err != nil {
+				t.Fatalf("gosuto.Parse %s: %v", tc.name, err)
+			}
+
+			// messaging.allowedTargets must be non-empty.
+			if len(cfg.Messaging.AllowedTargets) == 0 {
+				t.Errorf("%s: messaging.allowedTargets must not be empty", tc.name)
+			}
+
+			// Each expected alias must appear.
+			aliasSet := make(map[string]bool, len(cfg.Messaging.AllowedTargets))
+			for _, target := range cfg.Messaging.AllowedTargets {
+				aliasSet[target.Alias] = true
+			}
+			for _, want := range tc.wantAliases {
+				if !aliasSet[want] {
+					t.Errorf("%s: expected alias %q in messaging.allowedTargets, got %v",
+						tc.name, want, cfg.Messaging.AllowedTargets)
+				}
+			}
+
+			// Each expected room ID must appear.
+			roomSet := make(map[string]bool, len(cfg.Messaging.AllowedTargets))
+			for _, target := range cfg.Messaging.AllowedTargets {
+				roomSet[target.RoomID] = true
+			}
+			for _, want := range tc.wantRoomIDs {
+				if !roomSet[want] {
+					t.Errorf("%s: expected roomId %q in messaging.allowedTargets, got %v",
+						tc.name, want, cfg.Messaging.AllowedTargets)
+				}
+			}
+
+			// A capability rule allowing builtin/matrix.send_message must exist.
+			found := false
+			for _, cap := range cfg.Capabilities {
+				if cap.MCP == "builtin" && cap.Tool == "matrix.send_message" && cap.Allow {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("%s: no allow:true capability rule for mcp=builtin tool=matrix.send_message", tc.name)
 			}
 		})
 	}
