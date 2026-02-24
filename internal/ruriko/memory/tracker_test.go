@@ -1,5 +1,4 @@
 package memory
-package memory
 
 import (
 	"strings"
@@ -222,8 +221,8 @@ func TestTracker_BufferLimitMessages(t *testing.T) {
 func TestTracker_BufferLimitTokens(t *testing.T) {
 	tracker := NewTracker(TrackerConfig{
 		Cooldown:    15 * time.Minute,
-		MaxMessages: 1000,   // large enough to not interfere
-		MaxTokens:   50,     // very tight token budget
+		MaxMessages: 1000, // large enough to not interfere
+		MaxTokens:   50,   // very tight token budget
 	})
 
 	now := time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)

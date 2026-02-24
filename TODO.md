@@ -206,7 +206,7 @@ similarity and injects the relevant context.
 
 ### R10.2 Long-Term Memory Interface (Pluggable)
 
-- [ ] Create `internal/ruriko/memory/ltm.go` — long-term memory interface:
+- [x] Create `internal/ruriko/memory/ltm.go` — long-term memory interface:
   ```go
   type LongTermMemory interface {
       // Store persists a sealed conversation with its embedding and summary.
@@ -226,12 +226,12 @@ similarity and injects the relevant context.
       Metadata       map[string]string // template used, agents mentioned, etc.
   }
   ```
-- [ ] Create `internal/ruriko/memory/ltm_noop.go` — no-op stub implementation:
+- [x] Create `internal/ruriko/memory/ltm_noop.go` — no-op stub implementation:
   - `Store()` → logs and discards (conversation summary logged at DEBUG)
   - `Search()` → returns empty slice
   - This is the **default** until an embedding backend is wired
-- [ ] Test: Noop implementation satisfies interface
-- [ ] Test: Interface is mockable for downstream tests
+- [x] Test: Noop implementation satisfies interface
+- [x] Test: Interface is mockable for downstream tests
 
 ### R10.3 Embedding and Summarisation Interface (Pluggable)
 
