@@ -235,7 +235,7 @@ similarity and injects the relevant context.
 
 ### R10.3 Embedding and Summarisation Interface (Pluggable)
 
-- [ ] Create `internal/ruriko/memory/embedder.go`:
+- [x] Create `internal/ruriko/memory/embedder.go`:
   ```go
   type Embedder interface {
       // Embed produces a vector embedding for the given text.
@@ -247,7 +247,7 @@ similarity and injects the relevant context.
       Summarise(ctx context.Context, messages []Message) (string, error)
   }
   ```
-- [ ] Create `internal/ruriko/memory/embedder_noop.go` — stub implementations:
+- [x] Create `internal/ruriko/memory/embedder_noop.go` — stub implementations:
   - `Embed()` → returns nil vector (disables similarity search)
   - `Summarise()` → returns concatenation of last 3 messages (crude but functional)
 - [ ] Future implementations (not in this phase, but the interface supports them):
@@ -255,8 +255,8 @@ similarity and injects the relevant context.
   - `summariser_llm.go` — LLM-based summarisation via same provider as R9
   - `ltm_sqlite.go` — SQLite-backed storage with cosine similarity via an extension
   - `ltm_pgvector.go` — PostgreSQL + pgvector for production-scale deployments
-- [ ] Test: Noop embedder and summariser satisfy interfaces
-- [ ] Test: Summariser stub produces reasonable output from sample messages
+- [x] Test: Noop embedder and summariser satisfy interfaces
+- [x] Test: Summariser stub produces reasonable output from sample messages
 
 ### R10.4 Memory-Aware Context Assembly
 
