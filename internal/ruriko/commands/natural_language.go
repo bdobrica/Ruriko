@@ -1073,15 +1073,25 @@ func (h *Handlers) recordAssistantMessage(roomID, senderMXID, content string) {
 	h.memory.STM.RecordMessage(roomID, senderMXID, "assistant", content)
 }
 
-// handleSealedConversation is a placeholder hook for the R10.5 seal pipeline.
-// When a conversation is sealed (cooldown expired), this function will
-// orchestrate: summarise → embed → store in LTM. Until R10.5 is wired, it
-// logs the event at DEBUG level.
-func (h *Handlers) handleSealedConversation(_ context.Context, conv memory.Conversation) {
-	slog.Debug("memory: conversation sealed (R10.5 pipeline not yet wired)",
-		"conversation_id", conv.ID,
-		"room_id", conv.RoomID,
-		"sender_id", conv.SenderID,
-		"messages", len(conv.Messages),
-	)
+// handleSealedConversation runs the seal pipeline for a single sealed
+// conversation: summarise → embed → store in LTM.  When the seal pipeline
+// is not configured, the event is logged at DEBUG level and discarded.
+func (h *Handlers) handleSealedConversation(ctx context.Context, conv memory.Conversation) {
+	if h.sealPipeline == nil {
+		slog.Debug("memory: conversation sealed (seal pipeline not configured)",
+			"conversation_id", conv.ID,
+			"room_id", conv.RoomID,
+			"sender_id", conv.SenderID,
+			"messages", len(conv.Messages),
+		)
+		return
+	}
+	if err := h.sealPipeline.Seal(ctx, conv); err != nil {
+		slog.Warn("memory: seal pipeline failed",
+			"conversation_id", conv.ID,
+			"room_id", conv.RoomID,
+			"sender_id", conv.SenderID,
+			"err", err,
+		)
+	}
 }

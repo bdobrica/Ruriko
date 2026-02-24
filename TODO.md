@@ -291,16 +291,16 @@ similarity and injects the relevant context.
 
 ### R10.5 Conversation Seal and Archive Pipeline
 
-- [ ] On conversation seal (cooldown expired):
+- [x] On conversation seal (cooldown expired):
   1. Call `Summariser.Summarise(messages)` → summary text
   2. Call `Embedder.Embed(summary)` → embedding vector
   3. Call `LTM.Store(MemoryEntry{...})` → persist
   4. Clear the short-term buffer for that room+sender
-- [ ] Run seal check on a timer (every 60 seconds) or lazily on next message arrival
-- [ ] Log sealed conversations at INFO: "Conversation sealed (room=…, sender=…, messages=N, duration=…)"
-- [ ] Never log message *content* at INFO — only at DEBUG and only when redacted
-- [ ] Test: Sealed conversation flows through summarise → embed → store pipeline
-- [ ] Test: Noop backends handle the pipeline without errors
+- [x] Run seal check on a timer (every 60 seconds) or lazily on next message arrival
+- [x] Log sealed conversations at INFO: "Conversation sealed (room=…, sender=…, messages=N, duration=…)"
+- [x] Never log message *content* at INFO — only at DEBUG and only when redacted
+- [x] Test: Sealed conversation flows through summarise → embed → store pipeline
+- [x] Test: Noop backends handle the pipeline without errors
 
 ### R10.6 Configuration and Wiring
 

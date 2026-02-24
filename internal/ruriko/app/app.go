@@ -21,6 +21,7 @@ import (
 	rurikoconfig "github.com/bdobrica/Ruriko/internal/ruriko/config"
 	"github.com/bdobrica/Ruriko/internal/ruriko/kuze"
 	"github.com/bdobrica/Ruriko/internal/ruriko/matrix"
+	"github.com/bdobrica/Ruriko/internal/ruriko/memory"
 	"github.com/bdobrica/Ruriko/internal/ruriko/nlp"
 	"github.com/bdobrica/Ruriko/internal/ruriko/provisioning"
 	"github.com/bdobrica/Ruriko/internal/ruriko/runtime"
@@ -125,6 +126,7 @@ type App struct {
 	healthServer *HealthServer
 	kuzeServer   *kuze.Server
 	webhookProxy *webhook.Proxy
+	sealRunner   *memory.SealPipelineRunner
 }
 
 // kuzeTokenAdapter bridges *kuze.Server → secrets.TokenIssuer, breaking the
@@ -355,6 +357,34 @@ func New(config *Config) (*App, error) {
 	// Wire the default agent image for the natural-language wizard (R5.4).
 	handlersCfg.DefaultAgentImage = config.DefaultAgentImage
 
+	// --- R10: Conversation memory -------------------------------------------
+	// Wire the memory subsystem when the NLP provider is available (or will
+	// become available via lazy rebuild).  The memory layer uses noop backends
+	// by default — summarisation, embedding, and LTM persistence are pluggable
+	// and will produce meaningful results when real backends are configured.
+	var sealRunner *memory.SealPipelineRunner
+	{
+		tracker := memory.NewTracker(memory.DefaultTrackerConfig())
+		summariser := memory.NoopSummariser{}
+		embedder := memory.NoopEmbedder{}
+		ltm := memory.NewNoopLTM(slog.Default())
+
+		assembler := &memory.ContextAssembler{
+			STM:       tracker,
+			LTM:       ltm,
+			Embedder:  embedder,
+			MaxTokens: memory.DefaultMaxTokens,
+			LTMTopK:   memory.DefaultLTMTopK,
+		}
+		handlersCfg.Memory = assembler
+
+		pipeline := memory.NewSealPipeline(summariser, embedder, ltm, slog.Default())
+		handlersCfg.SealPipeline = pipeline
+
+		sealRunner = memory.NewSealPipelineRunner(tracker, pipeline, 60*time.Second, slog.Default())
+		slog.Info("conversation memory ready (noop backends)")
+	}
+
 	handlers := commands.NewHandlers(handlersCfg)
 
 	// Register command handlers
@@ -433,6 +463,7 @@ func New(config *Config) (*App, error) {
 		healthServer: healthServer,
 		kuzeServer:   kuzeServer,
 		webhookProxy: webhookProxy,
+		sealRunner:   sealRunner,
 	}, nil
 }
 
@@ -457,6 +488,13 @@ func (a *App) Run() error {
 	// Start reconciler in background if configured
 	if a.reconciler != nil {
 		go a.reconciler.Run(ctx)
+	}
+
+	// Start conversation seal-check runner (R10.5).  Periodically scans for
+	// conversations past their cooldown and processes them through the
+	// summarise → embed → store LTM pipeline.
+	if a.sealRunner != nil {
+		go a.sealRunner.Run(ctx)
 	}
 
 	// Start Kuze token-pruning loop.  Expired tokens are detected, Matrix

@@ -85,6 +85,11 @@ type HandlersConfig struct {
 	// history (short-term + long-term) to the NLP classifier.  When nil,
 	// classification calls proceed without conversation context.
 	Memory *memory.ContextAssembler // optional — enables memory-aware NLP
+
+	// SealPipeline, when non-nil, processes sealed conversations through the
+	// summarise → embed → store pipeline.  When nil, sealed conversations are
+	// logged at DEBUG level and discarded.
+	SealPipeline *memory.SealPipeline // optional — enables conversation archival
 }
 
 // RoomSender is the subset of the Matrix client needed for posting breadcrumb
@@ -130,6 +135,10 @@ type Handlers struct {
 	// (STM + LTM) to the NLP classifier.  Nil when memory is disabled.
 	memory *memory.ContextAssembler
 
+	// sealPipeline processes sealed conversations through the archive flow.
+	// Nil when memory archival is disabled.
+	sealPipeline *memory.SealPipeline
+
 	// nlpProviderMu guards nlpProviderCache for concurrent-safe lazy rebuilds.
 	nlpProviderMu sync.RWMutex
 
@@ -171,6 +180,7 @@ func NewHandlers(cfg HandlersConfig) *Handlers {
 		configStore:       cfg.ConfigStore,
 		nlpEnvAPIKey:      cfg.NLPEnvAPIKey,
 		memory:            cfg.Memory,
+		sealPipeline:      cfg.SealPipeline,
 	}
 }
 
