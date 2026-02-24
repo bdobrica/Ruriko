@@ -168,7 +168,7 @@ similarity and injects the relevant context.
 
 ### R10.1 Conversation Lifecycle and Contiguity Detection
 
-- [ ] Create `internal/ruriko/memory/conversation.go`:
+- [x] Create `internal/ruriko/memory/conversation.go`:
   ```go
   type Conversation struct {
       ID        string           // unique conversation ID (UUID)
@@ -186,23 +186,23 @@ similarity and injects the relevant context.
       Timestamp time.Time
   }
   ```
-- [ ] Create `internal/ruriko/memory/tracker.go` — conversation lifecycle manager:
+- [x] Create `internal/ruriko/memory/tracker.go` — conversation lifecycle manager:
   - `RecordMessage(roomID, senderID, role, content)` — append or start new conversation
   - `GetActiveConversation(roomID, senderID) *Conversation` — returns current buffer
   - `SealExpired(now time.Time)` — seals conversations past cooldown
-- [ ] Contiguity detection:
+- [x] Contiguity detection:
   - Configurable cooldown period (`MEMORY_COOLDOWN`, default: 15 minutes)
   - If `now - lastMsgAt > cooldown` → seal previous conversation, start fresh
   - Sealed conversations are handed to the long-term memory pipeline
-- [ ] Short-term buffer size limit:
+- [x] Short-term buffer size limit:
   - Configurable max messages per conversation (`MEMORY_STM_MAX_MESSAGES`, default: 50)
   - Configurable max token estimate (`MEMORY_STM_MAX_TOKENS`, default: 8000)
   - When exceeded: oldest messages are dropped from the buffer (sliding window),
     and a summary of dropped messages is prepended (when LTM summariser is available)
-- [ ] In-memory storage initially (same pattern as `conversationStore` from R5.4)
-- [ ] Test: Contiguous messages accumulate in the same conversation
-- [ ] Test: Cooldown gap triggers seal + new conversation
-- [ ] Test: Buffer size limits are enforced
+- [x] In-memory storage initially (same pattern as `conversationStore` from R5.4)
+- [x] Test: Contiguous messages accumulate in the same conversation
+- [x] Test: Cooldown gap triggers seal + new conversation
+- [x] Test: Buffer size limits are enforced
 
 ### R10.2 Long-Term Memory Interface (Pluggable)
 
