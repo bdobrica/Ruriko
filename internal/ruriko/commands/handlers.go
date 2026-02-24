@@ -216,6 +216,13 @@ func (h *Handlers) NLPProviderStatus() string {
 	}
 }
 
+// MemoryEnabled reports whether the conversation memory subsystem is wired.
+// Returns true when a non-nil ContextAssembler was provided via
+// HandlersConfig.Memory; false when the memory layer is disabled.
+func (h *Handlers) MemoryEnabled() bool {
+	return h.memory != nil
+}
+
 // HandleHelp shows available commands
 func (h *Handlers) HandleHelp(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	help := `**Ruriko Control Plane**

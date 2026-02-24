@@ -304,20 +304,20 @@ similarity and injects the relevant context.
 
 ### R10.6 Configuration and Wiring
 
-- [ ] Add config fields to `app.Config`:
+- [x] Add config fields to `app.Config`:
   - `MemoryCooldown` (duration, default: 15 min)
   - `MemorySTMMaxMessages` (int, default: 50)
   - `MemorySTMMaxTokens` (int, default: 8000)
   - `MemoryLTMTopK` (int, default: 3)
   - `MemoryEnabled` (bool, default: true when NLP provider is configured)
-- [ ] Wire in `app.New()`:
+- [x] Wire in `app.New()`:
   - Create `ConversationTracker` (always, when NLP is enabled)
   - Create `LongTermMemory` (noop stub by default)
   - Create `Embedder` + `Summariser` (noop stubs by default)
   - Create `ContextAssembler` → inject into `HandlersConfig`
-- [ ] Add `HandlersConfig.Memory *memory.ContextAssembler` field
-- [ ] Test: App starts cleanly with noop memory backends
-- [ ] Test: App starts cleanly with memory disabled (nil assembler)
+- [x] Add `HandlersConfig.Memory *memory.ContextAssembler` field
+- [x] Test: App starts cleanly with noop memory backends
+- [x] Test: App starts cleanly with memory disabled (nil assembler)
 
 ### R10.7 Future: Persistent Backends (stubs only in this phase)
 

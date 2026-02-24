@@ -111,6 +111,34 @@ type Config struct {
 	// per UTC day.  Defaults to nlp.DefaultTokenBudget (50 000) when zero.
 	// Set the NLP_TOKEN_BUDGET environment variable to override.
 	NLPTokenBudget int
+
+	// --- R10: Conversation Memory ---
+
+	// MemoryEnabled, when true, forces the conversation memory subsystem on
+	// even when no NLP provider is configured.  When false (the default), memory
+	// is automatically enabled whenever an NLP provider is available (either via
+	// NLPProvider or an API key in the environment).
+	MemoryEnabled bool
+
+	// MemoryCooldown is the duration of inactivity after which a conversation
+	// is sealed and archived to long-term memory.  Defaults to 15 minutes when
+	// zero.
+	MemoryCooldown time.Duration
+
+	// MemorySTMMaxMessages is the maximum number of messages retained in the
+	// short-term buffer per conversation.  When exceeded, the oldest messages
+	// are dropped (sliding window).  Defaults to 50 when zero.
+	MemorySTMMaxMessages int
+
+	// MemorySTMMaxTokens is the estimated token budget for the short-term
+	// buffer per conversation.  When exceeded, the oldest messages are dropped
+	// until the estimate is under budget.  Defaults to 8000 when zero.
+	MemorySTMMaxTokens int
+
+	// MemoryLTMTopK is the number of long-term memory entries retrieved per
+	// classification call when an embedding-capable backend is configured.
+	// Defaults to 3 when zero.
+	MemoryLTMTopK int
 }
 
 // App is the main Ruriko application
@@ -359,30 +387,70 @@ func New(config *Config) (*App, error) {
 
 	// --- R10: Conversation memory -------------------------------------------
 	// Wire the memory subsystem when the NLP provider is available (or will
-	// become available via lazy rebuild).  The memory layer uses noop backends
-	// by default — summarisation, embedding, and LTM persistence are pluggable
-	// and will produce meaningful results when real backends are configured.
+	// become available via lazy rebuild), or when explicitly enabled via
+	// Config.MemoryEnabled. The memory layer uses noop backends by default —
+	// summarisation, embedding, and LTM persistence are pluggable and will
+	// produce meaningful results when real backends are configured.
+	//
+	// Auto-detection: if an NLP API key or provider is present in the config
+	// the memory subsystem is initialised automatically, matching the
+	// documented default of "true when NLP provider is configured".
 	var sealRunner *memory.SealPipelineRunner
 	{
-		tracker := memory.NewTracker(memory.DefaultTrackerConfig())
-		summariser := memory.NoopSummariser{}
-		embedder := memory.NoopEmbedder{}
-		ltm := memory.NewNoopLTM(slog.Default())
-
-		assembler := &memory.ContextAssembler{
-			STM:       tracker,
-			LTM:       ltm,
-			Embedder:  embedder,
-			MaxTokens: memory.DefaultMaxTokens,
-			LTMTopK:   memory.DefaultLTMTopK,
+		// Determine the NLP env-var name so we can check availability.
+		nlpEnvVar := config.NLPAPIKeySecretRef
+		if nlpEnvVar == "" {
+			nlpEnvVar = "RURIKO_NLP_API_KEY"
 		}
-		handlersCfg.Memory = assembler
+		nlpAvailable := config.NLPProvider != nil || os.Getenv(nlpEnvVar) != ""
 
-		pipeline := memory.NewSealPipeline(summariser, embedder, ltm, slog.Default())
-		handlersCfg.SealPipeline = pipeline
+		shouldEnableMemory := config.MemoryEnabled || nlpAvailable
 
-		sealRunner = memory.NewSealPipelineRunner(tracker, pipeline, 60*time.Second, slog.Default())
-		slog.Info("conversation memory ready (noop backends)")
+		if !shouldEnableMemory {
+			slog.Info("conversation memory disabled (no NLP provider configured; set MemoryEnabled to force on)")
+			// handlersCfg.Memory and handlersCfg.SealPipeline remain nil.
+		} else {
+			trackerCfg := memory.DefaultTrackerConfig()
+			if config.MemoryCooldown > 0 {
+				trackerCfg.Cooldown = config.MemoryCooldown
+			}
+			if config.MemorySTMMaxMessages > 0 {
+				trackerCfg.MaxMessages = config.MemorySTMMaxMessages
+			}
+			if config.MemorySTMMaxTokens > 0 {
+				trackerCfg.MaxTokens = config.MemorySTMMaxTokens
+			}
+
+			ltmTopK := memory.DefaultLTMTopK
+			if config.MemoryLTMTopK > 0 {
+				ltmTopK = config.MemoryLTMTopK
+			}
+
+			tracker := memory.NewTracker(trackerCfg)
+			summariser := memory.NoopSummariser{}
+			embedder := memory.NoopEmbedder{}
+			ltm := memory.NewNoopLTM(slog.Default())
+
+			assembler := &memory.ContextAssembler{
+				STM:       tracker,
+				LTM:       ltm,
+				Embedder:  embedder,
+				MaxTokens: memory.DefaultMaxTokens,
+				LTMTopK:   ltmTopK,
+			}
+			handlersCfg.Memory = assembler
+
+			pipeline := memory.NewSealPipeline(summariser, embedder, ltm, slog.Default())
+			handlersCfg.SealPipeline = pipeline
+
+			sealRunner = memory.NewSealPipelineRunner(tracker, pipeline, 60*time.Second, slog.Default())
+			slog.Info("conversation memory ready (noop backends)",
+				"cooldown", trackerCfg.Cooldown,
+				"stm_max_messages", trackerCfg.MaxMessages,
+				"stm_max_tokens", trackerCfg.MaxTokens,
+				"ltm_top_k", ltmTopK,
+			)
+		}
 	}
 
 	handlers := commands.NewHandlers(handlersCfg)
