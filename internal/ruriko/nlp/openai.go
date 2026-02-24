@@ -109,12 +109,18 @@ type oaiChoice struct {
 func (p *openAIProvider) Classify(ctx context.Context, req ClassifyRequest) (*ClassifyResponse, error) {
 	system := BuildSystemPrompt(DefaultCatalogue(), req.KnownAgents, req.KnownTemplates)
 
+	// Build the messages array: system prompt, then conversation history
+	// (LTM context + STM turns), then the current user message.
+	msgs := make([]oaiMessage, 0, 2+len(req.ConversationHistory))
+	msgs = append(msgs, oaiMessage{Role: "system", Content: system})
+	for _, hm := range req.ConversationHistory {
+		msgs = append(msgs, oaiMessage{Role: hm.Role, Content: hm.Content})
+	}
+	msgs = append(msgs, oaiMessage{Role: "user", Content: req.Message})
+
 	body := oaiRequest{
-		Model: p.cfg.Model,
-		Messages: []oaiMessage{
-			{Role: "system", Content: system},
-			{Role: "user", Content: req.Message},
-		},
+		Model:          p.cfg.Model,
+		Messages:       msgs,
 		MaxTokens:      512,
 		ResponseFormat: &oaiFormat{Type: "json_object"},
 	}

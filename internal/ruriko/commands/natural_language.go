@@ -35,6 +35,7 @@ import (
 	"maunium.net/go/mautrix/event"
 
 	"github.com/bdobrica/Ruriko/common/trace"
+	"github.com/bdobrica/Ruriko/internal/ruriko/memory"
 	"github.com/bdobrica/Ruriko/internal/ruriko/nlp"
 	"github.com/bdobrica/Ruriko/internal/ruriko/store"
 )
@@ -648,6 +649,27 @@ func (h *Handlers) handleNLClassify(ctx context.Context, text, roomID, senderMXI
 		SenderMXID:       senderMXID,
 	}
 
+	// --- Memory: record user message and assemble history --------------------
+	if h.memory != nil && h.memory.STM != nil {
+		_, sealed := h.memory.STM.RecordMessage(roomID, senderMXID, "user", text)
+		// Hand sealed conversations to the LTM pipeline (fire-and-forget).
+		for _, s := range sealed {
+			h.handleSealedConversation(ctx, s)
+		}
+	}
+	if h.memory != nil {
+		history, assembleErr := h.memory.Assemble(ctx, roomID, senderMXID, text)
+		if assembleErr != nil {
+			slog.Warn("memory: context assembly failed; proceeding without history",
+				"err", assembleErr,
+				"room_id", roomID,
+				"sender_id", senderMXID,
+			)
+		} else {
+			req.ConversationHistory = memoryToNLPHistory(history)
+		}
+	}
+
 	resp, err := provider.Classify(ctx, req)
 	if err != nil {
 		switch {
@@ -700,17 +722,32 @@ func (h *Handlers) handleNLClassify(ctx context.Context, text, roomID, senderMXI
 
 	switch resp.Intent {
 	case nlp.IntentConversational:
+		var reply string
 		if len(resp.ReadQueries) > 0 {
-			return h.handleNLReadQueries(ctx, resp, senderMXID, evt)
+			reply, err = h.handleNLReadQueries(ctx, resp, senderMXID, evt)
+		} else {
+			// Pure conversational answer — return the LLM response directly.
+			reply = resp.Response
 		}
-		// Pure conversational answer — return the LLM response directly.
-		return resp.Response, nil
+		// Record assistant response in STM so follow-up messages have context.
+		if err == nil && reply != "" {
+			h.recordAssistantMessage(roomID, senderMXID, reply)
+		}
+		return reply, err
 
 	case nlp.IntentCommand:
-		return h.handleNLCommandIntent(ctx, resp, roomID, senderMXID)
+		reply, cmdErr := h.handleNLCommandIntent(ctx, resp, roomID, senderMXID)
+		// Record a brief note about the proposed command so STM has continuity.
+		if cmdErr == nil && reply != "" {
+			h.recordAssistantMessage(roomID, senderMXID, reply)
+		}
+		return reply, cmdErr
 
 	default:
 		// IntentUnknown or low-confidence — surface the clarification prompt.
+		if resp.Response != "" {
+			h.recordAssistantMessage(roomID, senderMXID, resp.Response)
+		}
 		return resp.Response, nil
 	}
 }
@@ -1004,4 +1041,47 @@ func (h *Handlers) buildCommandCatalogue(ctx context.Context, evt *event.Event) 
 		return ""
 	}
 	return text
+}
+
+// ---------------------------------------------------------------------------
+// R10.4 Memory helpers
+// ---------------------------------------------------------------------------
+
+// memoryToNLPHistory converts memory.Message slices to nlp.HistoryMessage
+// slices for injection into the ClassifyRequest.
+func memoryToNLPHistory(msgs []memory.Message) []nlp.HistoryMessage {
+	if len(msgs) == 0 {
+		return nil
+	}
+	out := make([]nlp.HistoryMessage, len(msgs))
+	for i, m := range msgs {
+		out[i] = nlp.HistoryMessage{
+			Role:    m.Role,
+			Content: m.Content,
+		}
+	}
+	return out
+}
+
+// recordAssistantMessage appends an assistant turn to the conversation
+// tracker so that subsequent messages have STM continuity. No-op when
+// memory is not configured.
+func (h *Handlers) recordAssistantMessage(roomID, senderMXID, content string) {
+	if h.memory == nil || h.memory.STM == nil {
+		return
+	}
+	h.memory.STM.RecordMessage(roomID, senderMXID, "assistant", content)
+}
+
+// handleSealedConversation is a placeholder hook for the R10.5 seal pipeline.
+// When a conversation is sealed (cooldown expired), this function will
+// orchestrate: summarise → embed → store in LTM. Until R10.5 is wired, it
+// logs the event at DEBUG level.
+func (h *Handlers) handleSealedConversation(_ context.Context, conv memory.Conversation) {
+	slog.Debug("memory: conversation sealed (R10.5 pipeline not yet wired)",
+		"conversation_id", conv.ID,
+		"room_id", conv.RoomID,
+		"sender_id", conv.SenderID,
+		"messages", len(conv.Messages),
+	)
 }

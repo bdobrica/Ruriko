@@ -44,6 +44,15 @@ const (
 	IntentUnknown Intent = "unknown"
 )
 
+// HistoryMessage is a single prior turn in the conversation, injected into
+// the LLM context window so the model has continuity across messages.
+type HistoryMessage struct {
+	// Role is "user", "assistant", or "system" (for LTM context entries).
+	Role string
+	// Content is the message text.
+	Content string
+}
+
 // ClassifyRequest is the input to a single NLP classification call.
 //
 // The caller is responsible for populating the context fields (command
@@ -67,6 +76,13 @@ type ClassifyRequest struct {
 	// SenderMXID is the Matrix user ID of the sender.  Present for
 	// traceability; the system prompt instructs the model to ignore it.
 	SenderMXID string
+
+	// ConversationHistory contains prior messages from the current conversation
+	// session (short-term memory) and optionally relevant past conversations
+	// (long-term memory).  These are injected between the system prompt and
+	// the current user message in the LLM call so the model has continuity.
+	// May be nil when memory is disabled or the conversation is fresh.
+	ConversationHistory []HistoryMessage
 }
 
 // ClassifyResponse is the structured output produced by the NLP provider.

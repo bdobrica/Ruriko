@@ -260,7 +260,7 @@ similarity and injects the relevant context.
 
 ### R10.4 Memory-Aware Context Assembly
 
-- [ ] Create `internal/ruriko/memory/context.go` — context assembler:
+- [x] Create `internal/ruriko/memory/context.go` — context assembler:
   ```go
   type ContextAssembler struct {
       STM       *ConversationTracker
@@ -272,7 +272,7 @@ similarity and injects the relevant context.
   // Assemble produces the memory block to inject into the LLM prompt.
   func (a *ContextAssembler) Assemble(ctx context.Context, roomID, senderID, currentMsg string) ([]Message, error)
   ```
-- [ ] Assembly strategy:
+- [x] Assembly strategy:
   1. Get active short-term conversation → include all messages (sharp recall)
   2. If `Embedder` is available and non-noop:
      - Embed `currentMsg`
@@ -280,14 +280,14 @@ similarity and injects the relevant context.
      - Inject retrieved summaries as `[system]` context: "Previous relevant conversation (from [date]): [summary]"
   3. If `Embedder` is noop → skip LTM retrieval (no embedding = no search)
   4. Respect `MaxTokens` budget: short-term has priority, LTM fills remaining space
-- [ ] Wire `ContextAssembler` into R9's `HandleNaturalLanguage`:
+- [x] Wire `ContextAssembler` into R9's `HandleNaturalLanguage`:
   - Before calling `Classify()`, call `Assemble()` to get conversation history
   - Pass assembled messages as context to the LLM provider
   - After getting the LLM response, call `RecordMessage(role: "assistant", content: response)`
-- [ ] Test: Context includes full STM buffer
-- [ ] Test: Context includes LTM results when embedder is available
-- [ ] Test: Token budget is respected (STM prioritised over LTM)
-- [ ] Test: Noop embedder means no LTM retrieval (graceful)
+- [x] Test: Context includes full STM buffer
+- [x] Test: Context includes LTM results when embedder is available
+- [x] Test: Token budget is respected (STM prioritised over LTM)
+- [x] Test: Noop embedder means no LTM retrieval (graceful)
 
 ### R10.5 Conversation Seal and Archive Pipeline
 

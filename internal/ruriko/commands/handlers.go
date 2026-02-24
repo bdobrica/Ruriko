@@ -17,6 +17,7 @@ import (
 	"github.com/bdobrica/Ruriko/internal/ruriko/audit"
 	"github.com/bdobrica/Ruriko/internal/ruriko/config"
 	"github.com/bdobrica/Ruriko/internal/ruriko/kuze"
+	"github.com/bdobrica/Ruriko/internal/ruriko/memory"
 	"github.com/bdobrica/Ruriko/internal/ruriko/nlp"
 	"github.com/bdobrica/Ruriko/internal/ruriko/provisioning"
 	"github.com/bdobrica/Ruriko/internal/ruriko/runtime"
@@ -79,6 +80,11 @@ type HandlersConfig struct {
 	// `/ruriko secrets set ruriko.nlp-api-key`.  Storing the env-var value here
 	// lets tests inject a key without modifying the process environment.
 	NLPEnvAPIKey string // optional — bootstrap NLP API key from env
+
+	// Memory, when non-nil, is the context assembler that provides conversation
+	// history (short-term + long-term) to the NLP classifier.  When nil,
+	// classification calls proceed without conversation context.
+	Memory *memory.ContextAssembler // optional — enables memory-aware NLP
 }
 
 // RoomSender is the subset of the Matrix client needed for posting breadcrumb
@@ -120,6 +126,10 @@ type Handlers struct {
 	// "ruriko.nlp-api-key" entry yet.
 	nlpEnvAPIKey string
 
+	// memory is the context assembler that provides conversation history
+	// (STM + LTM) to the NLP classifier.  Nil when memory is disabled.
+	memory *memory.ContextAssembler
+
 	// nlpProviderMu guards nlpProviderCache for concurrent-safe lazy rebuilds.
 	nlpProviderMu sync.RWMutex
 
@@ -160,6 +170,7 @@ func NewHandlers(cfg HandlersConfig) *Handlers {
 		nlpTokenBudget:    cfg.NLPTokenBudget,
 		configStore:       cfg.ConfigStore,
 		nlpEnvAPIKey:      cfg.NLPEnvAPIKey,
+		memory:            cfg.Memory,
 	}
 }
 
