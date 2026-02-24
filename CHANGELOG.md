@@ -1272,6 +1272,178 @@ via `/ruriko config get` and auditable.
 
 ---
 
+## 📋 Phase R5.1: Kairo Agent Template ✅
+
+**Goal**: Create the canonical finance agent template so Ruriko can provision Kairo via `/ruriko agents create`.
+
+### R5.1 Kairo Agent Template
+
+- [x] Create `templates/kairo-agent/gosuto.yaml` — finance agent:
+  - MCP: finnhub (`sverze/stock-market-mcp-server`, Python/uv), database (`jparkerweb/mcp-sqlite`, npm)
+  - Capabilities: allow all finnhub tools, allow database CRUD (no deletes — append-only), deny all others
+  - Persona: financial analyst (`gpt-4o`, `temperature: 0.2`)
+  - Secret refs: `<agent>.finnhub-api-key`, `<agent>.openai-api-key`
+
+### Definition of done
+- [x] Kairo template exists, validates, and provisions correctly via `/ruriko agents create`
+
+---
+
+## 📋 Phase R14: Gosuto Persona / Instructions Separation ✅
+
+**Goal**: Split the Gosuto `persona` section into two distinct, auditable sections: **persona** (cosmetic: tone, style, name) and **instructions** (operational: workflow logic, who to contact, when to act).
+
+> **Core principle**: Persona is cosmetic (tone, personality). Instructions are operational (workflow steps, coordination targets, decision logic). Policy gates what is *allowed*; instructions define what the agent *chooses to do*. Both are auditable and versioned as part of Gosuto.
+
+### R14.1 Gosuto Schema — Instructions Section
+
+- [x] Added `instructions` section to `common/spec/gosuto/types.go` alongside `Persona`:
+  - `instructions.role` — free-text operational role description (injected into LLM system prompt)
+  - `instructions.workflow` — ordered `[{trigger, action}]` pairs
+  - `instructions.context.user` — description of the user's role (sole approver, report recipient)
+  - `instructions.context.peers` — list of known peer agents and their roles
+  - Default: empty instructions (agent has no operational workflow — only responds to direct messages)
+- [x] Validation added to `common/spec/gosuto/validate.go` (`validateInstructions`)
+- [x] Test: Valid instructions config passes validation
+- [x] Test: Missing or malformed instructions config (empty trigger/action, empty peer name/role) is rejected
+
+### R14.2 Invariant Update — Persona vs Instructions
+
+- [x] Updated `docs/invariants.md` §2 to clarify the three-layer model:
+  - **Policy** (authoritative): what the agent is *allowed* to do — enforced by code
+  - **Instructions** (operational): what the agent *should* do — auditable workflow logic
+  - **Persona** (cosmetic): how the agent *sounds* — tone, style, name
+- [x] Instructions are versioned and diffable alongside the rest of the Gosuto
+- [x] Test: Instructions workflow steps referencing MCP servers with no allow rule produce `Warnings()`
+
+### R14.3 System Prompt Assembly — Persona + Instructions
+
+- [x] `internal/gitai/app/prompt.go` — new `buildSystemPrompt(cfg, messagingTargets, memoryCtx)`:
+  - Assembles: persona.systemPrompt → instructions.role → workflow steps → context.user → context.peers → messaging targets summary → memory context
+  - Messaging targets and memory context are optional; omitted sections produce no output
+- [x] `runTurn()` in `internal/gitai/app/app.go` calls `buildSystemPrompt()` instead of bare `persona.SystemPrompt`
+- [x] Test: System prompt includes both persona and instructions sections
+- [x] Test: Peer agent context appears in the prompt
+- [x] Test: Missing persona/instructions sections produce a valid (non-empty) prompt
+
+### R14.4 Ruriko — Instructions Authoring and Auditing
+
+- [x] Templates include default instructions; all instruction changes are versioned with the Gosuto hash
+- [x] `/ruriko gosuto show <agent>` displays instructions separately from persona
+- [x] `/ruriko gosuto diff` shows instruction changes clearly
+- [x] Ruriko can update instructions without changing persona (and vice versa)
+- [x] Test: Provisioned agent has correct default instructions from template
+- [x] Test: Instructions change is versioned and auditable
+
+### R14.5 Template Updates — Canonical Agents
+
+- [x] `templates/saito-agent/gosuto.yaml` — `instructions` block with scheduling coordinator role
+- [x] `templates/kairo-agent/gosuto.yaml` — `instructions` block with finance/analysis workflow
+- [x] `templates/kumo-agent/gosuto.yaml` — `instructions` block with news/search workflow
+- [x] `templates/browser-agent/gosuto.yaml`, `email-agent`, `cron-agent` — instructions blocks added
+- [x] Test: All canonical templates pass `gosuto.Parse()` validation
+- [x] Test: Instructions render correctly in the system prompt
+
+### Definition of done
+- Gosuto has separate `persona` (cosmetic) and `instructions` (operational) sections
+- Instructions define workflow steps, peer awareness, and user context
+- Ruriko generates and audits instructions as part of provisioning
+- System prompt is assembled from both persona and instructions
+- Agents know about the user (sole approver) and their peer agents
+- All instruction changes are versioned and diffable
+- Policy remains authoritative — instructions cannot bypass capability rules
+
+---
+
+## 📋 Phase R15: Built-in Matrix Messaging Tool — Peer-to-Peer Agent Collaboration ✅
+
+**Goal**: Give every LLM-powered Gitai agent a built-in `matrix.send_message` tool so agents can collaborate peer-to-peer over Matrix. Ruriko defines the mesh topology (which agents can message which rooms); agents execute collaboratively without Ruriko relaying messages.
+
+> **Core invariant**: Inter-agent communication is policy-gated. Agents can only message rooms explicitly allowed in their Gosuto configuration (Invariant §12).
+
+### R15.1 Gosuto Schema Extension — Messaging Policy
+
+- [x] Added `Messaging` struct to `common/spec/gosuto/types.go`:
+  - `messaging.allowedTargets` — list of `{roomId, alias}` pairs
+  - `messaging.maxMessagesPerMinute` — outbound rate limit (0 = unlimited)
+- [x] Validation added to `validate.go` (`validateMessaging`): unique aliases, unique room IDs, `!`-prefix check, no-whitespace alias check
+- [x] Default: empty `allowedTargets` — agents cannot message anyone unless configured
+- [x] Test: Valid messaging config passes validation
+- [x] Test: Duplicate aliases, missing room ID, bad room ID prefix all rejected
+
+### R15.2 Matrix Messaging Tool Implementation
+
+- [x] `internal/gitai/builtin/tool.go` — `BuiltinTool` interface + `Registry` (name, description, parameters, Execute handler)
+- [x] `internal/gitai/builtin/matrix_send.go` — `MatrixSendTool`:
+  1. Resolves `target` alias → room ID from `cfg.Messaging.AllowedTargets`
+  2. Rejects unknown aliases with an informative error returned to the LLM
+  3. Enforces `MaxMessagesPerMinute` via a fixed-window `rateLimiter`
+  4. Sends via `MatrixSender.SendText(roomID, message)`
+  5. Returns `"Message sent to \"alias\" (roomID)."` on success
+- [x] Built-in tools injected alongside MCP tools in `gatherTools()` and dispatched from `executeTool()`
+- [x] Messaging targets summary injected into LLM system prompt via `buildMessagingTargets(cfg)` (R14.3 hook)
+- [x] Test: Message sent to allowed target succeeds
+- [x] Test: Message to unknown target is rejected
+- [x] Test: Rate limit is enforced; unlimited (0) never blocks
+- [x] Test: Tool definition is visible in gathered tool list
+
+### R15.3 Policy Engine Integration
+
+- [x] `internal/gitai/policy/engine.go` — `Evaluate("builtin", "matrix.send_message", args)` uses the same first-match-wins Capability rules
+- [x] `"builtin"` pseudo-MCP namespace: Gosuto capability rule `{mcp: builtin, tool: matrix.send_message, allow: true}` permits the call; absent rule → default deny
+- [x] Approval gating: `RequireApproval: true` on the capability rule gates the tool behind human approval
+- [x] When `messaging.allowedTargets` is empty and no allow rule exists, tool is excluded from the LLM's tool list (engine returns `Unavailable`)
+- [x] Test: Allow rule (`mcp: builtin`) permits call; no rule → Deny; `RequireApproval` → RequiresApproval; wildcard `tool: *` grants access
+
+### R15.4 Provisioning Pipeline — Mesh Topology
+
+- [x] `internal/ruriko/commands/mesh.go` — `InjectMeshTopology()`:
+  - Parses rendered Gosuto YAML
+  - Looks up peer agents from Ruriko's agent store by canonical name (kairo, kumo, saito)
+  - Injects their admin room IDs + a user room ID into `messaging.allowedTargets`
+  - Preserves existing `maxMessagesPerMinute` if already set
+  - Re-serialises and returns the updated YAML blob
+- [x] Called from `provision.go` step 3 after template rendering; non-fatal if store has no peers yet
+- [x] `TemplateVars` extended with `KairoAdminRoom`, `KumoAdminRoom`, `UserRoom` for template-level placeholder injection
+- [x] Test: Mesh topology injected with correct room IDs from store
+- [x] Test: Existing rate limit preserved; no-peer case leaves Gosuto unchanged
+
+### R15.5 Audit and Observability
+
+- [x] `auditMessagingSend()` in `internal/gitai/app/app.go`:
+  - Logs `matrix.send_message` at INFO: source agent, target alias, target room ID, trace ID, status
+  - Never logs message content at INFO (only at DEBUG with redaction applied)
+  - On success: posts `📨 Sent message to <alias> (trace=…)` breadcrumb to admin room
+  - Increments an in-memory `messagingCount` counter (exposed in agent status)
+- [x] Test: Audit log records messaging events with correct fields
+- [x] Test: Message content never appears in INFO log
+- [x] Test: Breadcrumb posted to admin room on success; not posted on error
+
+### R15.6 Template Updates — Canonical Agents
+
+- [x] `templates/saito-agent/gosuto.yaml`:
+  - `allow-matrix-send` capability rule (`mcp: builtin, tool: matrix.send_message`)
+  - `messaging.allowedTargets` with `{{.KairoAdminRoom}}` / `{{.UserRoom}}` placeholders
+  - `persona.systemPrompt` updated to mention `matrix.send_message`
+- [x] `templates/kairo-agent/gosuto.yaml`:
+  - `allow-matrix-send` capability rule
+  - `messaging.allowedTargets` with `{{.KumoAdminRoom}}` / `{{.UserRoom}}` placeholders
+- [x] `templates/kumo-agent/gosuto.yaml`:
+  - `allow-matrix-send` capability rule
+  - `messaging.allowedTargets` with `{{.KairoAdminRoom}}` / `{{.UserRoom}}` placeholders
+- [x] `docs/ops/agent-mesh-topology.md` — documentation for configuring agent mesh topology
+- [x] Test: All three canonical agent templates render and pass `gosuto.Parse()` with correct `allowedTargets`
+
+### Definition of done
+- Agents can send messages to other agents' rooms via `matrix.send_message` tool
+- Messaging is policy-gated: only Gosuto-allowed targets, rate-limited
+- Mesh topology is defined by Ruriko at provision time
+- The canonical Saito → Kairo → Kumo flow can execute peer-to-peer without Ruriko relaying
+- All inter-agent messages are audit logged
+- Default is deny: agents with no `messaging` config cannot message anyone
+
+---
+
 
 ---
 
@@ -1297,7 +1469,10 @@ via `/ruriko config get` and auditable.
 - [x] Phase R2: ACP Hardening — Auth, Idempotency, Timeouts ✅
 - [x] Phase R3: Kuze — Human Secret Entry ✅
 - [x] Phase R4: Token-Based Secret Distribution to Agents ✅
+- [x] Phase R5: Agent Provisioning UX ✅
 - [x] Phase R9: Natural Language Interface ✅
 - [x] Phase R11: Event Gateways — Schema, Types, Validation ✅
 - [x] Phase R12: Event Gateways — Gitai Runtime Integration ✅
 - [x] Phase R13: Ruriko-Side Gateway Wiring ✅
+- [x] Phase R14: Gosuto Persona / Instructions Separation ✅
+- [x] Phase R15: Built-in Matrix Messaging Tool ✅

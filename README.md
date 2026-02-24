@@ -73,7 +73,7 @@ Runtime is immutable. Behavior is controlled by structured configuration. Agents
 
 ---
 
-## 👻 Gosuto (Agent Persona & Policy)
+## 👻 Gosuto (Agent Configuration — Policy, Instructions, Persona)
 
 Each agent is configured using a versioned YAML file called **Gosuto**.
 
@@ -87,9 +87,11 @@ Gosuto defines:
 * Approval requirements
 * Limits (rate, cost, concurrency, events-per-minute)
 * Secret bindings
-* Persona and style (non-authoritative)
+* **Messaging targets** — rooms the agent is allowed to send messages to (policy-gated, rate-limited)
+* **Instructions** — operational workflow: role, workflow steps, peer and user awareness (auditable, versioned)
+* **Persona** — cosmetic tone and style (non-authoritative)
 
-Policy is deterministic. Persona is cosmetic.
+The Gosuto authority model is three-tier: **Policy** (code-enforced) > **Instructions** (operational workflow) > **Persona** (cosmetic). Instructions cannot grant capabilities outside policy.
 
 ---
 
@@ -166,7 +168,8 @@ Gateways are wired in Gosuto under `gateways:` and are supervised identically to
 ### Canonical agents
 
 * **Saito Agent** – deterministic cron/trigger agent; fires periodic triggers and **sends Matrix messages to other agents** to initiate workflows (e.g., tells Kairo to check the portfolio). Singleton identity.
-* **Kumo Agent** – news and web search via the Brave Search MCP; **receives requests from other agents via Matrix** and summarises news for tickers and topics. Singleton identity.
+* **Kairo Agent** – finance and portfolio analysis via the Finnhub MCP; retrieves market data, analyses tickers, **delegates news lookups to Kumo** via Matrix, and delivers final reports to the user. Singleton identity.
+* **Kumo Agent** – news and web search via the Brave Search MCP; **receives requests from Kairo via Matrix** and summarises news for tickers and topics. Singleton identity.
 
 Canonical agents are **named singleton identities** with distinct personalities and roles — not interchangeable worker instances.
 
@@ -207,7 +210,7 @@ Canonical agents are **named singleton identities** with distinct personalities 
 
 # 🧪 Current Status
 
-Core infrastructure is complete. Working on MVP canonical workflow.
+Core infrastructure and all agent primitives are complete. Working on the canonical end-to-end workflow and conversation memory.
 
 Completed:
 
@@ -222,16 +225,20 @@ Completed:
 * [x] Tuwunel homeserver integration (Docker Compose + provisioning)
 * [x] ACP authentication (bearer token, idempotency keys, per-op timeouts)
 * [x] Kuze one-time secret entry and agent token redemption
-* [x] Saito (cron/trigger) and Kumo (news/search) Gosuto templates
+* [x] Natural language interface — LLM-powered Matrix command translation (R9)
+* [x] Event gateways — built-in cron/webhook, external binary gateways (R11–R13)
+* [x] Automated provisioning pipeline — container → ACP health → Gosuto apply (R5)
+* [x] Saito, Kairo, and Kumo canonical Gosuto templates
+* [x] Gosuto persona / instructions separation — three-layer authority model (R14)
+* [x] Built-in `matrix.send_message` tool — policy-gated peer-to-peer messaging (R15)
+* [x] Mesh topology provisioning — Ruriko injects allowed messaging targets at provision time
 
-In progress:
+In progress / up next:
 
-* [ ] Automated provisioning pipeline (R5.2 — container → ACP health → Gosuto apply)
-* [ ] Kairo (finnhub finance agent) template
-* [ ] Canonical Saito → Kairo → Kumo orchestration workflow (R6)
-* [ ] Built-in Matrix messaging tool for inter-agent collaboration
-* [ ] Canonical agent knowledge in NLP system prompt
-* [ ] Gosuto template customization at provision time
+* [ ] Conversation memory — short-term buffer + long-term embedding recall (R10)
+* [ ] Canonical Saito → Kairo → Kumo end-to-end workflow (R6)
+* [ ] NLP planning layer — Ruriko drafts agent configs from natural language (R16)
+* [ ] Gosuto template variable customization at provision time (R17)
 
 ---
 
