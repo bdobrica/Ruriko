@@ -354,6 +354,181 @@ func TestRegistry_Render_AllTemplates_PassValidation(t *testing.T) {
 	}
 }
 
+// ── R16.1: Describe / DescribeAll — template metadata extraction ──────────────
+
+const describeTemplate = `apiVersion: gosuto/v1
+metadata:
+  name: "{{.AgentName}}"
+  template: test-agent
+  canonicalName: tester
+  description: >
+    A test agent used in unit tests.
+trust:
+  allowedRooms:
+    - "{{.AdminRoom}}"
+  allowedSenders:
+    - "*"
+`
+
+const nonCanonicalTemplate = `apiVersion: gosuto/v1
+metadata:
+  name: "{{.AgentName}}"
+  template: generic-agent
+trust:
+  allowedRooms:
+    - "{{.AdminRoom}}"
+  allowedSenders:
+    - "*"
+`
+
+func TestRegistry_Describe_ExtractsMetadata(t *testing.T) {
+	fs := makeFS(map[string]string{
+		"test-agent/gosuto.yaml": describeTemplate,
+	})
+	reg := templates.NewRegistry(fs)
+
+	info, err := reg.Describe("test-agent")
+	if err != nil {
+		t.Fatalf("Describe: %v", err)
+	}
+
+	if info.Name != "test-agent" {
+		t.Errorf("Name: got %q, want %q", info.Name, "test-agent")
+	}
+	if info.CanonicalName != "tester" {
+		t.Errorf("CanonicalName: got %q, want %q", info.CanonicalName, "tester")
+	}
+	if !strings.Contains(info.Description, "A test agent") {
+		t.Errorf("Description does not contain expected text: %q", info.Description)
+	}
+}
+
+func TestRegistry_Describe_EmptyCanonicalNameWhenAbsent(t *testing.T) {
+	fs := makeFS(map[string]string{
+		"generic-agent/gosuto.yaml": nonCanonicalTemplate,
+	})
+	reg := templates.NewRegistry(fs)
+
+	info, err := reg.Describe("generic-agent")
+	if err != nil {
+		t.Fatalf("Describe: %v", err)
+	}
+
+	if info.CanonicalName != "" {
+		t.Errorf("CanonicalName: got %q, want empty string for non-canonical template", info.CanonicalName)
+	}
+}
+
+func TestRegistry_Describe_NotFound(t *testing.T) {
+	fs := makeFS(map[string]string{
+		"test-agent/gosuto.yaml": describeTemplate,
+	})
+	reg := templates.NewRegistry(fs)
+
+	_, err := reg.Describe("nonexistent")
+	if err == nil {
+		t.Error("expected error for missing template, got nil")
+	}
+}
+
+func TestRegistry_DescribeAll_ReturnsInfoForAll(t *testing.T) {
+	fs := makeFS(map[string]string{
+		"test-agent/gosuto.yaml":    describeTemplate,
+		"generic-agent/gosuto.yaml": nonCanonicalTemplate,
+	})
+	reg := templates.NewRegistry(fs)
+
+	infos, err := reg.DescribeAll()
+	if err != nil {
+		t.Fatalf("DescribeAll: %v", err)
+	}
+
+	if len(infos) != 2 {
+		t.Errorf("DescribeAll: got %d entries, want 2", len(infos))
+	}
+}
+
+func TestRegistry_DescribeAll_CanonicalAgentsHaveNames(t *testing.T) {
+	fs := makeFS(map[string]string{
+		"test-agent/gosuto.yaml":    describeTemplate,
+		"generic-agent/gosuto.yaml": nonCanonicalTemplate,
+	})
+	reg := templates.NewRegistry(fs)
+
+	infos, err := reg.DescribeAll()
+	if err != nil {
+		t.Fatalf("DescribeAll: %v", err)
+	}
+
+	// Only test-agent has a canonicalName; generic-agent does not.
+	canonical := 0
+	for _, info := range infos {
+		if info.CanonicalName != "" {
+			canonical++
+		}
+	}
+	if canonical != 1 {
+		t.Errorf("expected 1 canonical agent in test set, got %d", canonical)
+	}
+}
+
+// Disk-backed tests: canonical templates must expose canonicalName via DescribeAll.
+
+func TestRegistry_DescribeAll_CanonicalTemplatesHaveCanonicalName(t *testing.T) {
+	reg := newDiskRegistry(t)
+
+	infos, err := reg.DescribeAll()
+	if err != nil {
+		t.Fatalf("DescribeAll on disk registry: %v", err)
+	}
+
+	want := map[string]string{
+		"saito-agent": "saito",
+		"kairo-agent": "kairo",
+		"kumo-agent":  "kumo",
+	}
+
+	byName := make(map[string]templates.TemplateInfo, len(infos))
+	for _, info := range infos {
+		byName[info.Name] = info
+	}
+
+	for tmpl, wantCanonical := range want {
+		info, ok := byName[tmpl]
+		if !ok {
+			t.Errorf("DescribeAll: template %q not found in results", tmpl)
+			continue
+		}
+		if info.CanonicalName != wantCanonical {
+			t.Errorf("template %q: CanonicalName = %q, want %q", tmpl, info.CanonicalName, wantCanonical)
+		}
+		if info.Description == "" {
+			t.Errorf("template %q: Description must not be empty", tmpl)
+		}
+	}
+}
+
+func TestRegistry_DescribeAll_CanonicalDescriptionsAreNonEmpty(t *testing.T) {
+	reg := newDiskRegistry(t)
+
+	infos, err := reg.DescribeAll()
+	if err != nil {
+		t.Fatalf("DescribeAll: %v", err)
+	}
+
+	for _, info := range infos {
+		if info.Name == "" {
+			t.Error("TemplateInfo with empty Name returned from DescribeAll")
+		}
+		// Description may be empty for templates that omit metadata.description,
+		// but the canonical three must always have one.
+		canonical := map[string]bool{"saito-agent": true, "kairo-agent": true, "kumo-agent": true}
+		if canonical[info.Name] && info.Description == "" {
+			t.Errorf("canonical template %q must have a non-empty Description", info.Name)
+		}
+	}
+}
+
 // ── R15.6: Canonical messaging-capable templates pass validation and have messaging ──
 
 // TestRegistry_Render_MessagingAgents_HaveAllowedTargets verifies that the

@@ -2,6 +2,7 @@ apiVersion: gosuto/v1
 metadata:
   name: "{{.AgentName}}"
   template: kairo-agent
+  canonicalName: kairo
   description: >
     Financial analysis agent. Queries stock market data via Finnhub, writes
     structured analysis results to a local SQLite database, and delivers

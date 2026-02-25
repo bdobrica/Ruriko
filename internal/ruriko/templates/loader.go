@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"fmt"
 	"io/fs"
+	"strings"
 	"text/template"
 
 	gosutospec "github.com/bdobrica/Ruriko/common/spec/gosuto"
@@ -151,4 +152,74 @@ func (r *Registry) RequiredSecrets(templateName, agentName string) ([]string, er
 		}
 	}
 	return names, nil
+}
+
+// TemplateInfo holds the metadata extracted from a Gosuto template file.
+// It is returned by Describe and DescribeAll and provides a lightweight view
+// of what each template is — without requiring full variable interpolation.
+type TemplateInfo struct {
+	// Name is the directory name of the template (e.g. "saito-agent").
+	// It matches the value returned by List() and is used as the --template
+	// flag value in agent provisioning commands.
+	Name string
+
+	// CanonicalName is the singleton agent identity defined in
+	// metadata.canonicalName in the Gosuto template, e.g. "saito".
+	// Empty for templates that are not canonical singleton agents.
+	CanonicalName string
+
+	// Description is the human-readable description from metadata.description,
+	// trimmed of surrounding whitespace and newlines.
+	Description string
+}
+
+// Describe extracts the TemplateInfo for a single named template by rendering
+// it with minimal placeholder variables (AgentName = "_") and reading back
+// the metadata section.  All other template variables produce empty strings,
+// which is acceptable because metadata fields do not reference them.
+//
+// Describe is cheap: it reads one file and does a tiny YAML unmarshal.
+func (r *Registry) Describe(name string) (*TemplateInfo, error) {
+	// Render with a placeholder AgentName so template directives like
+	// {{.AgentName}} expand without error.  All other TemplateVars fields
+	// are zero values (empty string); metadata fields do not reference them.
+	vars := TemplateVars{AgentName: "_"}
+	rendered, err := r.Render(name, vars)
+	if err != nil {
+		return nil, fmt.Errorf("describe template %q: %w", name, err)
+	}
+
+	var cfg gosutospec.Config
+	if err := yaml.Unmarshal(rendered, &cfg); err != nil {
+		return nil, fmt.Errorf("describe template %q: parse metadata: %w", name, err)
+	}
+
+	return &TemplateInfo{
+		Name:          name,
+		CanonicalName: cfg.Metadata.CanonicalName,
+		Description:   strings.TrimSpace(cfg.Metadata.Description),
+	}, nil
+}
+
+// DescribeAll returns a TemplateInfo for every template in the registry.
+// Templates are returned in the same order as List().
+//
+// If any individual Describe call fails, DescribeAll returns the error
+// immediately (fail-fast).  Callers that need best-effort results should
+// iterate List() and call Describe individually.
+func (r *Registry) DescribeAll() ([]TemplateInfo, error) {
+	names, err := r.List()
+	if err != nil {
+		return nil, fmt.Errorf("DescribeAll: list templates: %w", err)
+	}
+
+	infos := make([]TemplateInfo, 0, len(names))
+	for _, name := range names {
+		info, err := r.Describe(name)
+		if err != nil {
+			return nil, err
+		}
+		infos = append(infos, *info)
+	}
+	return infos, nil
 }

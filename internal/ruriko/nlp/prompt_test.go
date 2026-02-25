@@ -189,7 +189,7 @@ func TestCatalogueString_NonReadOnlyHasNoAnnotation(t *testing.T) {
 
 func TestBuildSystemPrompt_ContainsAllCatalogueActionKeys(t *testing.T) {
 	cat := nlp.DefaultCatalogue()
-	prompt := nlp.BuildSystemPrompt(cat, nil, nil)
+	prompt := nlp.BuildSystemPrompt(cat, nil, nil, nil)
 
 	for _, spec := range cat {
 		if !strings.Contains(prompt, spec.Action) {
@@ -199,7 +199,7 @@ func TestBuildSystemPrompt_ContainsAllCatalogueActionKeys(t *testing.T) {
 }
 
 func TestBuildSystemPrompt_ForbidsInternalFlags(t *testing.T) {
-	prompt := nlp.BuildSystemPrompt(nlp.DefaultCatalogue(), nil, nil)
+	prompt := nlp.BuildSystemPrompt(nlp.DefaultCatalogue(), nil, nil, nil)
 
 	// The prompt must explicitly call out the --_ prefix restriction so the
 	// LLM knows not to produce internal flags even if a user tries to inject
@@ -210,7 +210,7 @@ func TestBuildSystemPrompt_ForbidsInternalFlags(t *testing.T) {
 }
 
 func TestBuildSystemPrompt_ForbidsSecretValues(t *testing.T) {
-	prompt := nlp.BuildSystemPrompt(nlp.DefaultCatalogue(), nil, nil)
+	prompt := nlp.BuildSystemPrompt(nlp.DefaultCatalogue(), nil, nil, nil)
 
 	// The prompt must contain at least one explicit prohibition covering
 	// secret / credential leakage.
@@ -225,7 +225,7 @@ func TestBuildSystemPrompt_ForbidsSecretValues(t *testing.T) {
 
 func TestBuildSystemPrompt_IncludesAgentContext(t *testing.T) {
 	agents := []string{"saito — running", "kumo — stopped"}
-	prompt := nlp.BuildSystemPrompt(nlp.DefaultCatalogue(), agents, nil)
+	prompt := nlp.BuildSystemPrompt(nlp.DefaultCatalogue(), agents, nil, nil)
 
 	for _, a := range agents {
 		if !strings.Contains(prompt, a) {
@@ -236,7 +236,7 @@ func TestBuildSystemPrompt_IncludesAgentContext(t *testing.T) {
 
 func TestBuildSystemPrompt_IncludesTemplateContext(t *testing.T) {
 	templates := []string{"saito-agent", "kumo-agent", "browser-agent"}
-	prompt := nlp.BuildSystemPrompt(nlp.DefaultCatalogue(), nil, templates)
+	prompt := nlp.BuildSystemPrompt(nlp.DefaultCatalogue(), nil, templates, nil)
 
 	for _, tmpl := range templates {
 		if !strings.Contains(prompt, tmpl) {
@@ -246,7 +246,7 @@ func TestBuildSystemPrompt_IncludesTemplateContext(t *testing.T) {
 }
 
 func TestBuildSystemPrompt_EmptyAgentsAndTemplates(t *testing.T) {
-	prompt := nlp.BuildSystemPrompt(nlp.DefaultCatalogue(), nil, nil)
+	prompt := nlp.BuildSystemPrompt(nlp.DefaultCatalogue(), nil, nil, nil)
 
 	if !strings.Contains(prompt, "(none registered)") {
 		t.Error("system prompt should show '(none registered)' when no agents are known")
@@ -257,7 +257,7 @@ func TestBuildSystemPrompt_EmptyAgentsAndTemplates(t *testing.T) {
 }
 
 func TestBuildSystemPrompt_InstructsNeverExecute(t *testing.T) {
-	prompt := nlp.BuildSystemPrompt(nlp.DefaultCatalogue(), nil, nil)
+	prompt := nlp.BuildSystemPrompt(nlp.DefaultCatalogue(), nil, nil, nil)
 
 	// The prompt must explicitly state that the LLM never executes commands.
 	if !strings.Contains(strings.ToLower(prompt), "never execute") &&
@@ -267,7 +267,7 @@ func TestBuildSystemPrompt_InstructsNeverExecute(t *testing.T) {
 }
 
 func TestBuildSystemPrompt_InstructsMutationConfirmation(t *testing.T) {
-	prompt := nlp.BuildSystemPrompt(nlp.DefaultCatalogue(), nil, nil)
+	prompt := nlp.BuildSystemPrompt(nlp.DefaultCatalogue(), nil, nil, nil)
 
 	// The prompt must instruct that mutations require confirmation.
 	lower := strings.ToLower(prompt)
@@ -277,7 +277,7 @@ func TestBuildSystemPrompt_InstructsMutationConfirmation(t *testing.T) {
 }
 
 func TestBuildSystemPrompt_InstructsClarificationOnUnsure(t *testing.T) {
-	prompt := nlp.BuildSystemPrompt(nlp.DefaultCatalogue(), nil, nil)
+	prompt := nlp.BuildSystemPrompt(nlp.DefaultCatalogue(), nil, nil, nil)
 
 	lower := strings.ToLower(prompt)
 	if !strings.Contains(lower, "unsure") && !strings.Contains(lower, "not sure") {
@@ -289,9 +289,12 @@ func TestBuildSystemPrompt_IsDeterministic(t *testing.T) {
 	cat := nlp.DefaultCatalogue()
 	agents := []string{"saito — running"}
 	templates := []string{"saito-agent"}
+	canonicals := []nlp.CanonicalAgentSpec{
+		{Name: "saito", Role: "Scheduling trigger agent.", Template: "saito-agent"},
+	}
 
-	p1 := nlp.BuildSystemPrompt(cat, agents, templates)
-	p2 := nlp.BuildSystemPrompt(cat, agents, templates)
+	p1 := nlp.BuildSystemPrompt(cat, agents, templates, canonicals)
+	p2 := nlp.BuildSystemPrompt(cat, agents, templates, canonicals)
 
 	if p1 != p2 {
 		t.Error("BuildSystemPrompt must return identical output given the same inputs")
@@ -299,18 +302,21 @@ func TestBuildSystemPrompt_IsDeterministic(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// CanonicalAgents / R16.1
+// CanonicalAgentSpec / R16.1
 // ---------------------------------------------------------------------------
 
-func TestCanonicalAgents_NotEmpty(t *testing.T) {
-	agents := nlp.CanonicalAgents()
-	if len(agents) == 0 {
-		t.Fatal("CanonicalAgents returned an empty slice")
-	}
+// testCanonicals returns an explicit slice of all three canonical agents
+// for use in BuildSystemPrompt tests.  The source of truth for these values
+// is the Gosuto YAML templates; these literals are used in unit tests only
+// to avoid the templates package as a test dependency.
+var testCanonicals = []nlp.CanonicalAgentSpec{
+	{Name: "saito", Role: "Scheduling and trigger agent.", Template: "saito-agent"},
+	{Name: "kairo", Role: "Financial analysis agent.", Template: "kairo-agent"},
+	{Name: "kumo", Role: "News and web search agent.", Template: "kumo-agent"},
 }
 
-func TestCanonicalAgents_AllSpecsHaveRequiredFields(t *testing.T) {
-	for _, a := range nlp.CanonicalAgents() {
+func TestCanonicalAgentSpec_AllFieldsPopulated(t *testing.T) {
+	for _, a := range testCanonicals {
 		if a.Name == "" {
 			t.Errorf("CanonicalAgentSpec has empty Name: %+v", a)
 		}
@@ -320,40 +326,11 @@ func TestCanonicalAgents_AllSpecsHaveRequiredFields(t *testing.T) {
 		if a.Template == "" {
 			t.Errorf("CanonicalAgentSpec %q has empty Template", a.Name)
 		}
-		if a.KeyCapability == "" {
-			t.Errorf("CanonicalAgentSpec %q has empty KeyCapability", a.Name)
-		}
 	}
 }
 
-func TestCanonicalAgents_ContainsExpectedAgents(t *testing.T) {
-	// Saito, Kairo and Kumo are the three canonical agents for the reference
-	// workflow.  They must always be present.
-	want := map[string]string{
-		"saito": "saito-agent",
-		"kairo": "kairo-agent",
-		"kumo":  "kumo-agent",
-	}
-
-	got := make(map[string]string, len(nlp.CanonicalAgents()))
-	for _, a := range nlp.CanonicalAgents() {
-		got[a.Name] = a.Template
-	}
-
-	for name, tmpl := range want {
-		gotTmpl, ok := got[name]
-		if !ok {
-			t.Errorf("CanonicalAgents missing expected agent %q", name)
-			continue
-		}
-		if gotTmpl != tmpl {
-			t.Errorf("CanonicalAgents[%q].Template = %q; want %q", name, gotTmpl, tmpl)
-		}
-	}
-}
-
-func TestCanonicalAgents_NamesAreLowercase(t *testing.T) {
-	for _, a := range nlp.CanonicalAgents() {
+func TestCanonicalAgentSpec_NamesAreLowercase(t *testing.T) {
+	for _, a := range testCanonicals {
 		if a.Name != strings.ToLower(a.Name) {
 			t.Errorf("CanonicalAgentSpec.Name %q is not lowercase", a.Name)
 		}
@@ -361,9 +338,9 @@ func TestCanonicalAgents_NamesAreLowercase(t *testing.T) {
 }
 
 func TestBuildSystemPrompt_IncludesCanonicalAgentNames(t *testing.T) {
-	prompt := nlp.BuildSystemPrompt(nlp.DefaultCatalogue(), nil, nil)
+	prompt := nlp.BuildSystemPrompt(nlp.DefaultCatalogue(), nil, nil, testCanonicals)
 
-	for _, a := range nlp.CanonicalAgents() {
+	for _, a := range testCanonicals {
 		if !strings.Contains(prompt, a.Name) {
 			t.Errorf("system prompt does not contain canonical agent name %q", a.Name)
 		}
@@ -374,7 +351,7 @@ func TestBuildSystemPrompt_IncludesCanonicalAgentNames(t *testing.T) {
 }
 
 func TestBuildSystemPrompt_IncludesCanonicalAgentSection(t *testing.T) {
-	prompt := nlp.BuildSystemPrompt(nlp.DefaultCatalogue(), nil, nil)
+	prompt := nlp.BuildSystemPrompt(nlp.DefaultCatalogue(), nil, nil, testCanonicals)
 
 	if !strings.Contains(prompt, "CANONICAL AGENTS") {
 		t.Error("system prompt does not contain CANONICAL AGENTS section header")
@@ -382,7 +359,7 @@ func TestBuildSystemPrompt_IncludesCanonicalAgentSection(t *testing.T) {
 }
 
 func TestBuildSystemPrompt_CanonicalAgentsSectionIsBeforeJSONSchema(t *testing.T) {
-	prompt := nlp.BuildSystemPrompt(nlp.DefaultCatalogue(), nil, nil)
+	prompt := nlp.BuildSystemPrompt(nlp.DefaultCatalogue(), nil, nil, testCanonicals)
 
 	canonicalIdx := strings.Index(prompt, "CANONICAL AGENTS")
 	jsonSchemaIdx := strings.Index(prompt, "JSON RESPONSE SCHEMA")

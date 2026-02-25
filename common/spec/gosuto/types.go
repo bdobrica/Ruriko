@@ -58,6 +58,12 @@ type Metadata struct {
 	// Template is the template this config was derived from (informational).
 	Template string `yaml:"template,omitempty" json:"template,omitempty"`
 
+	// CanonicalName is the well-known singleton identity name for this template,
+	// e.g. "saito", "kairo", or "kumo". It is used by the NLP layer to teach
+	// the LLM about canonical agent roles without hard-coding them in code.
+	// Empty for templates that are not canonical singleton agents.
+	CanonicalName string `yaml:"canonicalName,omitempty" json:"canonicalName,omitempty"`
+
 	// Description is a human-readable description of the agent's purpose.
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 }

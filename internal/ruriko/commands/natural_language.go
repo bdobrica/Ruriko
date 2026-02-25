@@ -641,12 +641,32 @@ func (h *Handlers) handleNLClassify(ctx context.Context, text, roomID, senderMXI
 		}
 	}
 
+	// Derive canonical agent knowledge from the template registry.
+	// The Gosuto YAML templates are the single source of truth: each template
+	// with a non-empty metadata.canonicalName is a known singleton agent.
+	var canonicalAgents []nlp.CanonicalAgentSpec
+	if h.templates != nil {
+		if infos, err := h.templates.DescribeAll(); err == nil {
+			for _, info := range infos {
+				if info.CanonicalName == "" {
+					continue
+				}
+				canonicalAgents = append(canonicalAgents, nlp.CanonicalAgentSpec{
+					Name:     info.CanonicalName,
+					Role:     info.Description,
+					Template: info.Name,
+				})
+			}
+		}
+	}
+
 	req := nlp.ClassifyRequest{
 		Message:          text,
 		CommandCatalogue: h.buildCommandCatalogue(ctx, evt),
 		KnownAgents:      knownAgents,
 		KnownTemplates:   knownTemplates,
 		SenderMXID:       senderMXID,
+		CanonicalAgents:  canonicalAgents,
 	}
 
 	// --- Memory: record user message and assemble history --------------------

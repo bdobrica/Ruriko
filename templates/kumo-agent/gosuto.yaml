@@ -2,6 +2,7 @@ apiVersion: gosuto/v1
 metadata:
   name: "{{.AgentName}}"
   template: kumo-agent
+  canonicalName: kumo
   description: >
     News and web search agent. Searches Brave Search for recent news, articles,
     and public information about the companies, tickers, or topics requested by

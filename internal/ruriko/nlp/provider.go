@@ -83,6 +83,14 @@ type ClassifyRequest struct {
 	// the current user message in the LLM call so the model has continuity.
 	// May be nil when memory is disabled or the conversation is fresh.
 	ConversationHistory []HistoryMessage
+
+	// CanonicalAgents is the list of well-known singleton agents derived from
+	// the template registry (via templates.Registry.DescribeAll).  These are
+	// embedded in the system prompt so the LLM understands canonical identities
+	// like "Saito" or "Kumo" without hard-coded knowledge in the nlp package.
+	// May be nil when the template registry is unavailable; the system prompt
+	// will show "(none defined)" in the canonical agents section.
+	CanonicalAgents []CanonicalAgentSpec
 }
 
 // ClassifyResponse is the structured output produced by the NLP provider.

@@ -7,55 +7,23 @@ import (
 )
 
 // CanonicalAgentSpec describes a singleton canonical agent whose identity and
-// role must be known to the NLP classifier even before it is provisioned.
+// role is presented to the NLP classifier in the system prompt.
 //
-// These are baked into the system prompt so the LLM can map user intent like
-// "set up Saito" or "ask Kumo for news" to the correct commands without
-// requiring the operator to describe the agents every time.
+// Instances are derived at call time from templates.Registry.DescribeAll() —
+// the Gosuto YAML template files are the single source of truth for this
+// information.  The NLP package itself contains no hard-coded agent knowledge.
 type CanonicalAgentSpec struct {
 	// Name is the canonical lowercase name of the agent (e.g. "saito").
+	// Taken from metadata.canonicalName in the Gosuto template.
 	Name string
 
-	// Role is a one-sentence description of what the agent does.
+	// Role is a human-readable description of what the agent does.
+	// Taken from metadata.description in the Gosuto template.
 	Role string
 
-	// Template is the Gosuto template that should be used to provision it
+	// Template is the Gosuto template name used to provision this agent
 	// (matches a name returned by templates.Registry.List()).
 	Template string
-
-	// KeyCapability is a brief phrase summarising the agent's key capability,
-	// e.g. "scheduling + peer-to-peer coordination".
-	KeyCapability string
-}
-
-// CanonicalAgents returns the list of well-known singleton agents that Ruriko
-// recognises by name.  The list is ordered by conventional deployment sequence
-// (trigger → analysis → search) and is stable across calls.
-//
-// This is the authoritative in-code knowledge base.  When these agents are
-// mentioned in user messages ("set up Saito", "ask Kumo for news") the NLP
-// system prompt teaches the LLM what they are and which template to use.
-func CanonicalAgents() []CanonicalAgentSpec {
-	return []CanonicalAgentSpec{
-		{
-			Name:          "saito",
-			Role:          "Cron/trigger agent. Fires on a schedule and sends Matrix messages to other agents.",
-			Template:      "saito-agent",
-			KeyCapability: "scheduling + peer-to-peer coordination",
-		},
-		{
-			Name:          "kairo",
-			Role:          "Finance agent. Portfolio analysis via finnhub MCP, writes results to DB.",
-			Template:      "kairo-agent",
-			KeyCapability: "market data + analysis",
-		},
-		{
-			Name:          "kumo",
-			Role:          "News/search agent. Web search via Brave Search MCP.",
-			Template:      "kumo-agent",
-			KeyCapability: "news retrieval + summarisation",
-		},
-	}
 }
 
 // CommandSpec describes a single Ruriko command for inclusion in the NLP
@@ -324,7 +292,8 @@ func DefaultCatalogue() Catalogue {
 //  1. %s — formatted command catalogue (Catalogue.String())
 //  2. %s — agent summary lines ("name — status", one per line)
 //  3. %s — available template names (one per line)
-//  4. %s — canonical agent knowledge (canonicalAgentSummary)
+//  4. %s — canonical agent knowledge (canonicalAgentSummary); derived from
+//     the Gosuto template registry by the caller via DescribeAll().
 //
 // This constant is defined here (not in openai.go) so it can be tested and
 // extended independently of the HTTP transport layer.
@@ -376,7 +345,7 @@ JSON RESPONSE SCHEMA (include only fields relevant to the intent):
 
 // canonicalAgentSummary formats the canonical agent knowledge block for the
 // system prompt.  Each entry is rendered as a multi-line stanza so the LLM
-// can clearly match user intent (e.g. "Saito") to template + capability.
+// can clearly match user intent (e.g. "Saito") to template + role.
 func canonicalAgentSummary(agents []CanonicalAgentSpec) string {
 	if len(agents) == 0 {
 		return "(none defined)"
@@ -389,8 +358,6 @@ func canonicalAgentSummary(agents []CanonicalAgentSpec) string {
 		sb.WriteString(a.Role)
 		sb.WriteString("\n  Template: ")
 		sb.WriteString(a.Template)
-		sb.WriteString(". Key capability: ")
-		sb.WriteString(a.KeyCapability)
 		sb.WriteString(".\n")
 	}
 	return sb.String()
@@ -434,14 +401,17 @@ func templateSummary(templates []string) string {
 // This function is called on every Classify request to ensure the LLM always
 // sees fresh agent and template data (no stale caching between calls).
 //
-// Canonical agent knowledge (Saito, Kairo, Kumo) is built from the in-code
-// registry via CanonicalAgents() — it is static and requires no parameter.
-func BuildSystemPrompt(catalogue Catalogue, knownAgents []string, knownTemplates []string) string {
+// canonicalAgents is the list of well-known singleton agent specs derived from
+// the Gosuto template registry (via templates.Registry.DescribeAll()).  The
+// Gosuto YAML files are the single source of truth: entries are populated from
+// metadata.canonicalName and metadata.description in each template.  Pass nil
+// when the registry is unavailable; the section will show "(none defined)".
+func BuildSystemPrompt(catalogue Catalogue, knownAgents []string, knownTemplates []string, canonicalAgents []CanonicalAgentSpec) string {
 	return fmt.Sprintf(
 		systemPromptTemplate,
 		catalogue.String(),
 		agentSummary(knownAgents),
 		templateSummary(knownTemplates),
-		canonicalAgentSummary(CanonicalAgents()),
+		canonicalAgentSummary(canonicalAgents),
 	)
 }

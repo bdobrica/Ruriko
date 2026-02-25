@@ -148,6 +148,10 @@ The MVP is ready when **all** of the following are true:
   - Kumo: News/search agent. Web search via Brave Search MCP.
     Template: kumo-agent. Key capability: news retrieval + summarisation.
   ```
+  > **Note**: This knowledge is now derived from the Gosuto YAML templates
+  > (`metadata.canonicalName` + `metadata.description`) at call time via
+  > `templates.Registry.DescribeAll()`. The YAML files are the single
+  > source of truth — no hard-coded agent knowledge in code.
 - [x] Include canonical role knowledge in the LLM context alongside command catalogue
 - [x] When user mentions "Saito", "Kairo", or "Kumo", the LLM should understand what they are
 - [ ] Test: LLM correctly maps "set up Saito" to `agents.create --name saito --template saito-agent`

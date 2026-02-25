@@ -107,7 +107,7 @@ type oaiChoice struct {
 // command catalogue.  KnownAgents and KnownTemplates are substituted fresh on
 // every call so that the LLM has current context without caching.
 func (p *openAIProvider) Classify(ctx context.Context, req ClassifyRequest) (*ClassifyResponse, error) {
-	system := BuildSystemPrompt(DefaultCatalogue(), req.KnownAgents, req.KnownTemplates)
+	system := BuildSystemPrompt(DefaultCatalogue(), req.KnownAgents, req.KnownTemplates, req.CanonicalAgents)
 
 	// Build the messages array: system prompt, then conversation history
 	// (LTM context + STM turns), then the current user message.

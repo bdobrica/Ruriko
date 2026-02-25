@@ -2,6 +2,7 @@ apiVersion: gosuto/v1
 metadata:
   name: "{{.AgentName}}"
   template: saito-agent
+  canonicalName: saito
   description: >
     Scheduling and trigger agent. Emits periodic coordination messages to
     orchestrate other agents at defined intervals. Does not reason — only
