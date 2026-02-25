@@ -2,7 +2,6 @@ package commands
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -10,7 +9,6 @@ import (
 	"maunium.net/go/mautrix/event"
 
 	"github.com/bdobrica/Ruriko/common/trace"
-	"github.com/bdobrica/Ruriko/internal/ruriko/audit"
 	"github.com/bdobrica/Ruriko/internal/ruriko/secrets"
 	"github.com/bdobrica/Ruriko/internal/ruriko/store"
 )
@@ -90,16 +88,11 @@ Updated:          %s
 
 // HandleSecretsSet stores a new secret or updates an existing one.
 //
-// When a Kuze server is configured (the common production path), the command
-// generates a one-time HTTPS link and replies with it so the user can enter
-// the secret value in their browser rather than pasting it into chat:
+// The command always generates a one-time HTTPS link and replies with it so
+// the user can enter the secret value in their browser rather than pasting it
+// into chat:
 //
 //	/ruriko secrets set <name> --type <type>
-//
-// When Kuze is NOT configured (dev/test mode), the old inline base64 path is
-// still available as a fallback:
-//
-//	/ruriko secrets set <name> --type <type> --value <base64>
 //
 // Valid types: matrix_token, api_key, generic_json
 func (h *Handlers) HandleSecretsSet(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
@@ -122,13 +115,14 @@ func (h *Handlers) HandleSecretsSet(ctx context.Context, cmd *Command, evt *even
 		return "", fmt.Errorf("unknown secret type %q; valid types: matrix_token, api_key, generic_json", secretType)
 	}
 
-	// ── Kuze path (production) ──────────────────────────────────────────────
-	if h.kuze != nil {
-		return h.handleSecretsSetKuze(ctx, traceID, name, secretType, evt)
+	if h.kuze == nil {
+		return "", fmt.Errorf(
+			"secure secret entry requires Kuze; configure KUZE_BASE_URL and HTTP_ADDR, then rerun: /ruriko secrets set %s --type %s",
+			name, secretType,
+		)
 	}
 
-	// ── Legacy inline path (dev / no-Kuze mode) ─────────────────────────────
-	return h.handleSecretsSetInline(ctx, traceID, name, secretType, cmd, evt)
+	return h.handleSecretsSetKuze(ctx, traceID, name, secretType, evt)
 }
 
 // handleSecretsSetKuze issues a one-time Kuze link for secret entry.
@@ -161,75 +155,29 @@ func (h *Handlers) handleSecretsSetKuze(
 	), nil
 }
 
-// handleSecretsSetInline stores a secret from an inline base64-encoded value.
-// This path is only taken when Kuze is not configured.
-//
-// Usage: /ruriko secrets set <name> --type <type> --value <base64>
-func (h *Handlers) handleSecretsSetInline(
-	ctx context.Context,
-	traceID, name, secretType string,
-	cmd *Command,
-	evt *event.Event,
-) (string, error) {
-	b64Value := cmd.GetFlag("value", "")
-	if b64Value == "" {
-		return "", fmt.Errorf(
-			"usage: /ruriko secrets set <name> --type <type> --value <base64>\n" +
-				"Tip: configure KuzeBaseURL to use one-time secure links instead.",
-		)
-	}
-
-	rawValue, err := base64.StdEncoding.DecodeString(b64Value)
-	if err != nil {
-		return "", fmt.Errorf("--value must be valid base64: %w", err)
-	}
-
-	if err := h.secrets.Set(ctx, name, secrets.Type(secretType), rawValue); err != nil {
-		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "secrets.set", name, "error", nil, err.Error())
-		return "", fmt.Errorf("failed to store secret: %w", err)
-	}
-
-	if err := h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "secrets.set", name, "success",
-		store.AuditPayload{"type": secretType}, ""); err != nil {
-		slog.Warn("audit write failed", "op", "secrets.set", "secret", name, "err", err)
-	}
-
-	return fmt.Sprintf(
-		"✅ Secret **%s** stored (type: %s)\n\n"+
-			"⚠️ **SECURITY WARNING:** The secret value was transmitted as part of this Matrix message and is "+
-			"visible in the room history to all room members and stored on the homeserver. "+
-			"For sensitive secrets, use an encrypted direct message or an out-of-band mechanism.\n\n"+
-			"(trace: %s)",
-		name, secretType, traceID), nil
-}
-
 // HandleSecretsRotate replaces the encrypted value and increments rotation_version.
 //
-// Usage: /ruriko secrets rotate <name> --value <base64>
+// Usage: /ruriko secrets rotate <name>
 func (h *Handlers) HandleSecretsRotate(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
 	ctx = trace.WithTraceID(ctx, traceID)
 
 	name, ok := cmd.GetArg(0)
 	if !ok {
-		return "", fmt.Errorf("usage: /ruriko secrets rotate <name> --value <base64>")
+		return "", fmt.Errorf("usage: /ruriko secrets rotate <name>")
 	}
 
-	b64Value := cmd.GetFlag("value", "")
-	if b64Value == "" {
-		return "", fmt.Errorf("usage: /ruriko secrets rotate <name> --value <base64>")
-	}
-
-	// Validate base64 before requesting approval so that only valid
-	// operations enter the approval queue.
-	rawValue, err := base64.StdEncoding.DecodeString(b64Value)
-	if err != nil {
-		return "", fmt.Errorf("--value must be valid base64: %w", err)
+	if h.kuze == nil {
+		return "", fmt.Errorf(
+			"secure rotation requires Kuze; configure KUZE_BASE_URL and HTTP_ADDR, then rerun: /ruriko secrets rotate %s",
+			name,
+		)
 	}
 
 	// Verify the secret exists before entering the approval gate so that
 	// only valid operations are queued for approval.
-	if _, err := h.secrets.GetMetadata(ctx, name); err != nil {
+	meta, err := h.secrets.GetMetadata(ctx, name)
+	if err != nil {
 		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "secrets.rotate", name, "error", nil, err.Error())
 		return "", fmt.Errorf("secret not found: %s", name)
 	}
@@ -239,34 +187,28 @@ func (h *Handlers) HandleSecretsRotate(ctx context.Context, cmd *Command, evt *e
 		return msg, err
 	}
 
-	if err := h.secrets.Rotate(ctx, name, rawValue); err != nil {
+	result, err := h.kuze.IssueHumanToken(ctx, name, string(meta.Type))
+	if err != nil {
 		h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "secrets.rotate", name, "error", nil, err.Error())
-		return "", fmt.Errorf("failed to rotate secret: %w", err)
+		return "", fmt.Errorf("failed to generate rotate link: %w", err)
 	}
 
-	// Read updated metadata to report new version
-	meta, _ := h.secrets.GetMetadata(ctx, name)
-	version := 0
-	if meta != nil {
-		version = meta.RotationVersion
+	if err := h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "secrets.rotate.link_issued", name, "success",
+		store.AuditPayload{"type": string(meta.Type), "expires_at": result.ExpiresAt.String()}, ""); err != nil {
+		slog.Warn("audit write failed", "op", "secrets.rotate.link_issued", "secret", name, "err", err)
 	}
-
-	if err := h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "secrets.rotate", name, "success",
-		store.AuditPayload{"rotation_version": version}, ""); err != nil {
-		slog.Warn("audit write failed", "op", "secrets.rotate", "secret", name, "err", err)
-	}
-	h.notifier.Notify(ctx, audit.Event{
-		Kind: audit.KindSecretsRotated, Actor: evt.Sender.String(), Target: name,
-		Message: fmt.Sprintf("rotated to v%d", version), TraceID: traceID,
-	})
 
 	return fmt.Sprintf(
-		"🔄 Secret **%s** rotated to v%d\n\n"+
-			"⚠️ **SECURITY WARNING:** The new secret value was transmitted as part of this Matrix message and is "+
-			"visible in the room history to all room members and stored on the homeserver. "+
-			"For sensitive secrets, use an encrypted direct message or an out-of-band mechanism.\n\n"+
+		"🔄 Use this link to rotate secret **%s** (type: %s):\n\n"+
+			"%s\n\n"+
+			"⏰ Expires: %s\n"+
+			"⚠️  Single-use — do not share this link.\n\n"+
 			"(trace: %s)",
-		name, version, traceID), nil
+		name, string(meta.Type),
+		result.Link,
+		result.ExpiresAt.Format("2006-01-02 15:04:05 UTC"),
+		traceID,
+	), nil
 }
 
 // HandleSecretsDelete removes a stored secret.

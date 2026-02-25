@@ -56,8 +56,7 @@ type Config struct {
 	// KuzeBaseURL is the externally reachable base URL of the Ruriko HTTP
 	// server (e.g. "https://ruriko.example.com"). When non-empty and HTTPAddr
 	// is also set, the Kuze one-time-link routes are mounted on the HTTP
-	// server and the /ruriko secrets set command issues links instead of
-	// accepting inline values.
+	// server and the /ruriko secrets set / rotate commands issue one-time links.
 	KuzeBaseURL string
 	// KuzeTTL is the lifetime of Kuze one-time tokens. Defaults to 10 minutes
 	// when zero.
@@ -721,23 +720,19 @@ func (a *App) handleMessage(ctx context.Context, evt *event.Event) {
 	text := msgContent.Body
 
 	// Secret-in-chat guardrail: refuse to process any message that appears to
-	// contain a sensitive credential.  The guardrail is active only when Kuze
-	// is configured (production mode); in dev/test mode inline secrets are
-	// allowed as a deliberate fallback.
+	// contain a sensitive credential.
 	//
 	// For non-command messages all patterns (named + generic) are checked.
 	// For command messages only named vendor patterns (OpenAI sk-…, AWS AKIA…,
 	// etc.) are checked so that legitimate base64 command arguments like
 	// gosuto --content ... are not falsely rejected.
-	if a.kuzeServer != nil {
-		isCmd := strings.HasPrefix(text, "/ruriko")
-		if commands.LooksLikeSecret(text, isCmd) {
-			a.matrix.ReplyToMessage(
-				evt.RoomID.String(), evt.ID.String(),
-				commands.SecretGuardrailMessage,
-			)
-			return
-		}
+	isCmd := strings.HasPrefix(text, "/ruriko")
+	if commands.LooksLikeSecret(text, isCmd) {
+		a.matrix.ReplyToMessage(
+			evt.RoomID.String(), evt.ID.String(),
+			commands.SecretGuardrailMessage,
+		)
+		return
 	}
 
 	// Try to route the command

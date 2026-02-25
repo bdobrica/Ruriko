@@ -74,8 +74,8 @@ func (h *Handlers) HandleAgentsMatrixRegister(ctx context.Context, cmd *Command,
 
 MXID: %s
 
-⚠️  The access token for this account must be stored manually:
-/ruriko secrets set agent.%s.matrix_token --type matrix_token --value <base64-token>
+⚠️  The access token for this account must be stored manually via a one-time Kuze link:
+/ruriko secrets set agent.%s.matrix_token --type matrix_token
 Then bind it:
 /ruriko secrets bind %s agent.%s.matrix_token
 

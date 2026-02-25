@@ -323,16 +323,7 @@ These work immediately after Ruriko connects.
 
 Store, list, and manage encrypted secrets.
 
-**Without Kuze** (inline mode — when `KUZE_BASE_URL` is empty):
-
-```
-/ruriko secrets list                                   → Empty list initially
-/ruriko secrets set mykey --type api_key --value $(echo -n "sk-test123" | base64)
-/ruriko secrets list                                   → Shows "mykey"
-/ruriko secrets info mykey                             → Shows metadata (never the value)
-```
-
-**With Kuze** (one-time link mode — when `KUZE_BASE_URL` is set):
+**With Kuze** (one-time link mode — requires `KUZE_BASE_URL`):
 
 ```
 /ruriko secrets set openai-key --type api_key
@@ -346,7 +337,7 @@ Ruriko replies with a one-time URL like `http://localhost:8080/s/<token>`. Open 
 /ruriko secrets bind <agent-name> <secret-name>        → Grant agent access to a secret
 /ruriko secrets unbind <agent-name> <secret-name>      → Revoke access
 /ruriko secrets push <agent-name>                      → Push secrets to a running agent
-/ruriko secrets rotate mykey --value $(echo -n "new-value" | base64)  → Requires approval
+/ruriko secrets rotate mykey                            → Requires approval, returns one-time Kuze link
 /ruriko secrets delete mykey                           → Requires approval
 ```
 

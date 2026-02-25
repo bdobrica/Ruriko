@@ -8,7 +8,6 @@ package commands_test
 
 import (
 	"context"
-	"encoding/base64"
 	"os"
 	"strings"
 	"testing"
@@ -282,7 +281,6 @@ func TestHandleSecretsSet_MissingFlags(t *testing.T) {
 
 	cases := []string{
 		"/ruriko secrets set mykey",
-		"/ruriko secrets set mykey --type api_key",
 	}
 	for _, input := range cases {
 		cmd := parseCmd(t, input)
@@ -293,20 +291,22 @@ func TestHandleSecretsSet_MissingFlags(t *testing.T) {
 	}
 }
 
-func TestHandleSecretsSet_InvalidBase64(t *testing.T) {
+func TestHandleSecretsSet_RequiresKuze(t *testing.T) {
 	h, _, _ := newHandlerFixture(t)
-	cmd := parseCmd(t, "/ruriko secrets set mykey --type api_key --value not-valid-b64!!!")
+	cmd := parseCmd(t, "/ruriko secrets set mykey --type api_key")
 
 	_, err := h.HandleSecretsSet(context.Background(), cmd, fakeEvent("@alice:example.com"))
 	if err == nil {
-		t.Fatal("expected error for invalid base64, got nil")
+		t.Fatal("expected error when Kuze is not configured, got nil")
+	}
+	if !strings.Contains(err.Error(), "requires Kuze") {
+		t.Fatalf("expected Kuze requirement error, got %v", err)
 	}
 }
 
 func TestHandleSecretsSet_InvalidType(t *testing.T) {
 	h, _, _ := newHandlerFixture(t)
-	b64 := base64.StdEncoding.EncodeToString([]byte("value"))
-	cmd := parseCmd(t, "/ruriko secrets set mykey --type bad_type --value "+b64)
+	cmd := parseCmd(t, "/ruriko secrets set mykey --type bad_type")
 
 	_, err := h.HandleSecretsSet(context.Background(), cmd, fakeEvent("@alice:example.com"))
 	if err == nil {
@@ -314,21 +314,16 @@ func TestHandleSecretsSet_InvalidType(t *testing.T) {
 	}
 }
 
-func TestHandleSecretsSet_OK(t *testing.T) {
+func TestHandleSecretsSet_DoesNotAcceptInlineValue(t *testing.T) {
 	h, _, _ := newHandlerFixture(t)
-	b64 := base64.StdEncoding.EncodeToString([]byte("my-secret-value"))
-	cmd := parseCmd(t, "/ruriko secrets set mykey --type api_key --value "+b64)
+	cmd := parseCmd(t, "/ruriko secrets set mykey --type api_key --value c2stdGVzdA==")
 
-	resp, err := h.HandleSecretsSet(context.Background(), cmd, fakeEvent("@alice:example.com"))
-	if err != nil {
-		t.Fatalf("HandleSecretsSet: %v", err)
+	_, err := h.HandleSecretsSet(context.Background(), cmd, fakeEvent("@alice:example.com"))
+	if err == nil {
+		t.Fatal("expected refusal when --value is provided, got nil")
 	}
-	if !strings.Contains(resp, "mykey") {
-		t.Errorf("expected secret name in response, got %q", resp)
-	}
-	// The security warning must always appear.
-	if !strings.Contains(resp, "SECURITY WARNING") {
-		t.Errorf("expected SECURITY WARNING in response, got %q", resp)
+	if !strings.Contains(err.Error(), "requires Kuze") {
+		t.Fatalf("expected Kuze requirement error, got %v", err)
 	}
 }
 

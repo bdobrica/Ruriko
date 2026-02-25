@@ -252,15 +252,15 @@ func (h *Handlers) HandleHelp(ctx context.Context, cmd *Command, evt *event.Even
 
 **Secrets Commands (admin only):**
 • /ruriko secrets list - List secret names and metadata
-• /ruriko secrets set <name> --type <type> --value <base64> - Store a secret
+• /ruriko secrets set <name> --type <type> - Issue one-time Kuze link to store/update a secret
 • /ruriko secrets info <name> - Show secret metadata
-• /ruriko secrets rotate <name> --value <base64> - Rotate secret to new value
+• /ruriko secrets rotate <name> - Issue one-time Kuze link to rotate an existing secret
 • /ruriko secrets delete <name> - Delete a secret
 • /ruriko secrets bind <agent> <secret> --scope <scope> - Grant agent access
 • /ruriko secrets unbind <agent> <secret> - Revoke agent access
 • /ruriko secrets push <agent> - Push all bound secrets to running agent
 
-⚠️ **Secret values passed via --value are visible in room history.** Prefer an encrypted DM or out-of-band delivery for sensitive secrets.
+🔐 **Secret values are never accepted in Matrix commands.** Use Kuze one-time links issued by /ruriko secrets set and /ruriko secrets rotate.
 
 **Audit Commands:**
 • /ruriko audit tail [n] - Show recent audit entries

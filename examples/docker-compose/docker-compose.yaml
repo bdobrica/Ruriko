@@ -71,7 +71,7 @@ services:
 
       # --- Kuze (one-time secret entry) ---
       # Set to the externally reachable base URL of Ruriko's HTTP server.
-      # When set, /ruriko secrets set generates browser links instead of accepting inline values.
+      # /ruriko secrets set and /ruriko secrets rotate issue one-time browser links.
       KUZE_BASE_URL:                     ${KUZE_BASE_URL:-}
       KUZE_TTL:                          ${KUZE_TTL:-10m}
 
