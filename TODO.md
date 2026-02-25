@@ -138,7 +138,7 @@ The MVP is ready when **all** of the following are true:
 
 ### R16.1 Canonical Agent Role Knowledge
 
-- [ ] Extend the NLP system prompt (`internal/ruriko/nlp/prompt.go`) with canonical agent knowledge:
+- [x] Extend the NLP system prompt (`internal/ruriko/nlp/prompt.go`) with canonical agent knowledge:
   ```
   CANONICAL AGENTS (singleton identities with predefined roles):
   - Saito: Cron/trigger agent. Fires on a schedule and sends Matrix messages to other agents.
@@ -148,8 +148,8 @@ The MVP is ready when **all** of the following are true:
   - Kumo: News/search agent. Web search via Brave Search MCP.
     Template: kumo-agent. Key capability: news retrieval + summarisation.
   ```
-- [ ] Include canonical role knowledge in the LLM context alongside command catalogue
-- [ ] When user mentions "Saito", "Kairo", or "Kumo", the LLM should understand what they are
+- [x] Include canonical role knowledge in the LLM context alongside command catalogue
+- [x] When user mentions "Saito", "Kairo", or "Kumo", the LLM should understand what they are
 - [ ] Test: LLM correctly maps "set up Saito" to `agents.create --name saito --template saito-agent`
 - [ ] Test: LLM correctly maps "set up a news agent" to `agents.create --template kumo-agent`
 

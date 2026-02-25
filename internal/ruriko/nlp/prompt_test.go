@@ -297,3 +297,103 @@ func TestBuildSystemPrompt_IsDeterministic(t *testing.T) {
 		t.Error("BuildSystemPrompt must return identical output given the same inputs")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// CanonicalAgents / R16.1
+// ---------------------------------------------------------------------------
+
+func TestCanonicalAgents_NotEmpty(t *testing.T) {
+	agents := nlp.CanonicalAgents()
+	if len(agents) == 0 {
+		t.Fatal("CanonicalAgents returned an empty slice")
+	}
+}
+
+func TestCanonicalAgents_AllSpecsHaveRequiredFields(t *testing.T) {
+	for _, a := range nlp.CanonicalAgents() {
+		if a.Name == "" {
+			t.Errorf("CanonicalAgentSpec has empty Name: %+v", a)
+		}
+		if a.Role == "" {
+			t.Errorf("CanonicalAgentSpec %q has empty Role", a.Name)
+		}
+		if a.Template == "" {
+			t.Errorf("CanonicalAgentSpec %q has empty Template", a.Name)
+		}
+		if a.KeyCapability == "" {
+			t.Errorf("CanonicalAgentSpec %q has empty KeyCapability", a.Name)
+		}
+	}
+}
+
+func TestCanonicalAgents_ContainsExpectedAgents(t *testing.T) {
+	// Saito, Kairo and Kumo are the three canonical agents for the reference
+	// workflow.  They must always be present.
+	want := map[string]string{
+		"saito": "saito-agent",
+		"kairo": "kairo-agent",
+		"kumo":  "kumo-agent",
+	}
+
+	got := make(map[string]string, len(nlp.CanonicalAgents()))
+	for _, a := range nlp.CanonicalAgents() {
+		got[a.Name] = a.Template
+	}
+
+	for name, tmpl := range want {
+		gotTmpl, ok := got[name]
+		if !ok {
+			t.Errorf("CanonicalAgents missing expected agent %q", name)
+			continue
+		}
+		if gotTmpl != tmpl {
+			t.Errorf("CanonicalAgents[%q].Template = %q; want %q", name, gotTmpl, tmpl)
+		}
+	}
+}
+
+func TestCanonicalAgents_NamesAreLowercase(t *testing.T) {
+	for _, a := range nlp.CanonicalAgents() {
+		if a.Name != strings.ToLower(a.Name) {
+			t.Errorf("CanonicalAgentSpec.Name %q is not lowercase", a.Name)
+		}
+	}
+}
+
+func TestBuildSystemPrompt_IncludesCanonicalAgentNames(t *testing.T) {
+	prompt := nlp.BuildSystemPrompt(nlp.DefaultCatalogue(), nil, nil)
+
+	for _, a := range nlp.CanonicalAgents() {
+		if !strings.Contains(prompt, a.Name) {
+			t.Errorf("system prompt does not contain canonical agent name %q", a.Name)
+		}
+		if !strings.Contains(prompt, a.Template) {
+			t.Errorf("system prompt does not contain canonical agent template %q", a.Template)
+		}
+	}
+}
+
+func TestBuildSystemPrompt_IncludesCanonicalAgentSection(t *testing.T) {
+	prompt := nlp.BuildSystemPrompt(nlp.DefaultCatalogue(), nil, nil)
+
+	if !strings.Contains(prompt, "CANONICAL AGENTS") {
+		t.Error("system prompt does not contain CANONICAL AGENTS section header")
+	}
+}
+
+func TestBuildSystemPrompt_CanonicalAgentsSectionIsBeforeJSONSchema(t *testing.T) {
+	prompt := nlp.BuildSystemPrompt(nlp.DefaultCatalogue(), nil, nil)
+
+	canonicalIdx := strings.Index(prompt, "CANONICAL AGENTS")
+	jsonSchemaIdx := strings.Index(prompt, "JSON RESPONSE SCHEMA")
+
+	if canonicalIdx == -1 {
+		t.Fatal("system prompt missing CANONICAL AGENTS section")
+	}
+	if jsonSchemaIdx == -1 {
+		t.Fatal("system prompt missing JSON RESPONSE SCHEMA section")
+	}
+	if canonicalIdx > jsonSchemaIdx {
+		t.Error("CANONICAL AGENTS section must appear before JSON RESPONSE SCHEMA")
+	}
+}
