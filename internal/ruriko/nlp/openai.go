@@ -121,7 +121,7 @@ func (p *openAIProvider) Classify(ctx context.Context, req ClassifyRequest) (*Cl
 	body := oaiRequest{
 		Model:          p.cfg.Model,
 		Messages:       msgs,
-		MaxTokens:      512,
+		MaxTokens:      768,
 		ResponseFormat: &oaiFormat{Type: "json_object"},
 	}
 

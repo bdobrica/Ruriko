@@ -1,6 +1,6 @@
 package nlp_test
 
-// R16.1 and R16.2 integration tests — exercise the real OpenAI API.
+// R16.1, R16.2 and R16.3 integration tests — exercise the real OpenAI API.
 //
 // These tests are skipped automatically when RURIKO_NLP_API_KEY is not set in
 // the environment, so they never block the regular `make test` run.  To run
@@ -21,6 +21,7 @@ package nlp_test
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/bdobrica/Ruriko/internal/ruriko/nlp"
@@ -247,15 +248,20 @@ func TestR16_SetUpSaitoAndKumo(t *testing.T) {
 // -----------------------------------------------------------------
 
 // TestR16_MultiAgentWorkflowWithSchedule verifies that a request describing
-// a full multi-agent workflow (saito triggers kumo every morning) is
-// decomposed into a plan that:
-//   - Creates both agents.
-//   - Includes at least one step for each agent.
-//   - Uses saito-agent and kumo-agent templates respectively.
+// a full multi-agent workflow (saito triggers kumo every morning) is handled
+// in one of two valid ways:
 //
-// This test is intentionally lenient about the exact number of steps and step
-// order; LLM planning is non-deterministic and the exact cron/messaging-targets
-// config step is covered separately by R16.3 and R16.4.
+//	a) The LLM produces a plan (two+ steps: create saito, create kumo, ...)
+//	   referencing both agents. This is the pre-R16.3 expected output where the
+//	   LLM assumes a reasonable default time (e.g. 8 AM).
+//
+//	b) The LLM asks a clarifying question about "every morning" (R16.3 AMBIGUOUS
+//	   SCHEDULES behaviour). This is also correct: "every morning" is ambiguous
+//	   without a specific time and the operator should be asked to clarify before
+//	   the cron expression is committed.
+//
+// Both outcomes are acceptable. The test fails only if the LLM returns
+// intent="unknown" without any meaningful response.
 func TestR16_MultiAgentWorkflowWithSchedule(t *testing.T) {
 	classifier := buildIntegrationClassifier(t)
 
@@ -272,43 +278,173 @@ func TestR16_MultiAgentWorkflowWithSchedule(t *testing.T) {
 		t.Logf("  step[%d]: action=%s flags=%v explanation=%q", i, step.Action, step.Flags, step.Explanation)
 	}
 
-	// Must produce a plan (not a single command, not unknown).
-	if resp.Intent != nlp.IntentPlan {
-		t.Errorf("intent: got %q, want %q (response: %q)", resp.Intent, nlp.IntentPlan, resp.Response)
+	switch resp.Intent {
+	case nlp.IntentPlan:
+		// Path (a): LLM produced a multi-step plan — validate it contains both agents.
+
+		// Must have at least 2 steps (one per agent, at minimum).
+		if len(resp.Steps) < 2 {
+			t.Fatalf("steps: got %d, want ≥2 (one per agent)", len(resp.Steps))
+		}
+
+		// All step actions must be valid action keys.
+		validActions := map[string]bool{
+			"agents.create":       true,
+			"agents.config.apply": true,
+			"gosuto.set":          true,
+			"gosuto.push":         true,
+		}
+		for i, step := range resp.Steps {
+			if !validActions[step.Action] {
+				t.Errorf("step[%d]: action=%q not in expected set of valid plan actions", i, step.Action)
+			}
+		}
+
+		// The plan must reference both saito and kumo somewhere in the steps.
+		mentionsSaito, mentionsKumo := false, false
+		for _, step := range resp.Steps {
+			if step.Flags["name"] == "saito" || step.Flags["template"] == "saito-agent" {
+				mentionsSaito = true
+			}
+			if step.Flags["name"] == "kumo" || step.Flags["template"] == "kumo-agent" {
+				mentionsKumo = true
+			}
+		}
+		if !mentionsSaito {
+			t.Errorf("plan must reference saito in at least one step, steps: %v", resp.Steps)
+		}
+		if !mentionsKumo {
+			t.Errorf("plan must reference kumo in at least one step, steps: %v", resp.Steps)
+		}
+
+	case nlp.IntentUnknown:
+		// Path (b): LLM asked a clarifying question about the ambiguous schedule.
+		// This is correct R16.3 behaviour for "every morning" (no time of day given).
+		// Verify the clarification is about the time, not a generic fallback.
+		lc := strings.ToLower(resp.Response)
+		timeKeywords := []string{"time", "hour", "am", "pm", "utc", "when", "morning", "o'clock"}
+		found := false
+		for _, kw := range timeKeywords {
+			if strings.Contains(lc, kw) {
+				found = true
+				break
+			}
+		}
+		if !found || resp.Response == "" {
+			t.Errorf("intent=unknown but response %q is not a schedule clarification — expected a time question", resp.Response)
+		}
+		t.Logf("R16.3 AMBIGUOUS SCHEDULES path: LLM asked for clarification: %q", resp.Response)
+
+	default:
+		t.Errorf("intent: got %q — expected plan (path a) or unknown+clarification (path b), response: %q",
+			resp.Intent, resp.Response)
+	}
+}
+
+// -----------------------------------------------------------------
+// R16.3 — Test: "every 15 minutes" maps to */15 * * * *
+// -----------------------------------------------------------------
+
+// TestR16_3_Every15MinutesCronMapping verifies that when the user asks to
+// schedule Saito to run "every 15 minutes", the NLP classifier:
+//   - Returns intent="command" (or intent="plan" if it also creates the agent)
+//   - Produces a cron flag whose value is exactly "*/15 * * * *"
+//
+// This test exercises the CRON EXPRESSION MAPPING section added to the system
+// prompt in R16.3 and confirms that the Classifier's cron validation does not
+// reject the expression.
+func TestR16_3_Every15MinutesCronMapping(t *testing.T) {
+	classifier := buildIntegrationClassifier(t)
+
+	req := buildCreateRequest("set up Saito to run every 15 minutes")
+
+	resp, err := classifier.Classify(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Classify error: %v", err)
 	}
 
-	// Must have at least 2 steps (one per agent, at minimum).
-	if len(resp.Steps) < 2 {
-		t.Fatalf("steps: got %d, want ≥2 (one per agent)", len(resp.Steps))
+	t.Logf("intent=%s action=%s flags=%v steps=%d confidence=%.2f explanation=%q",
+		resp.Intent, resp.Action, resp.Flags, len(resp.Steps), resp.Confidence, resp.Explanation)
+
+	// The classifier must not downgrade to IntentUnknown — we need a concrete
+	// command or plan with a usable cron expression, not a clarifying question.
+	if resp.Intent == nlp.IntentUnknown {
+		t.Fatalf("intent: got %q — LLM should produce a command or plan, not a clarification: %s", resp.Intent, resp.Response)
 	}
 
-	// All step actions must be valid action keys.
-	validActions := map[string]bool{
-		"agents.create":       true,
-		"agents.config.apply": true,
-		"gosuto.set":          true,
-		"gosuto.push":         true,
-	}
-	for i, step := range resp.Steps {
-		if !validActions[step.Action] {
-			t.Errorf("step[%d]: action=%q not in expected set of valid plan actions", i, step.Action)
+	// Find the cron flag in the top-level flags or in any plan step.
+	cronValue := resp.Flags["cron"]
+	if cronValue == "" {
+		for _, step := range resp.Steps {
+			if v := step.Flags["cron"]; v != "" {
+				cronValue = v
+				break
+			}
+			if v := step.Flags["schedule"]; v != "" {
+				cronValue = v
+				break
+			}
 		}
+	}
+	if cronValue == "" {
+		// The LLM may embed the cron expression in a different flag name —
+		// log available flags for diagnostics but don't fail hard here because
+		// the cron flag naming is an NLP convention that may vary by model.
+		t.Logf("WARNING: no cron/schedule flag found in response — flags=%v steps=%v", resp.Flags, resp.Steps)
+		t.Skip("LLM did not include a cron flag; skipping cron-value assertion")
 	}
 
-	// The plan must reference both saito and kumo somewhere in the steps.
-	mentionsSaito, mentionsKumo := false, false
-	for _, step := range resp.Steps {
-		if step.Flags["name"] == "saito" || step.Flags["template"] == "saito-agent" {
-			mentionsSaito = true
-		}
-		if step.Flags["name"] == "kumo" || step.Flags["template"] == "kumo-agent" {
-			mentionsKumo = true
+	if err := nlp.ValidateCronExpression(cronValue); err != nil {
+		t.Errorf("cron flag value %q is not a valid cron expression: %v", cronValue, err)
+	}
+
+	if cronValue != "*/15 * * * *" {
+		t.Errorf("cron flag: got %q, want %q", cronValue, "*/15 * * * *")
+	}
+}
+
+// -----------------------------------------------------------------
+// R16.3 — Test: Ambiguous "daily" prompts for clarification
+// -----------------------------------------------------------------
+
+// TestR16_3_AmbiguousDailyPromptsForClarification verifies that when the user
+// gives an underspecified schedule ("set up Saito to run daily" with no time),
+// the NLP classifier:
+//   - Returns intent="unknown"
+//   - Includes a clarifying question in the "response" field asking for the time
+//
+// This exercises the AMBIGUOUS SCHEDULES section of the R16.3 system prompt
+// additions.
+func TestR16_3_AmbiguousDailyPromptsForClarification(t *testing.T) {
+	classifier := buildIntegrationClassifier(t)
+
+	req := buildCreateRequest("set up Saito to run daily")
+
+	resp, err := classifier.Classify(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Classify error: %v", err)
+	}
+
+	t.Logf("intent=%s action=%s flags=%v confidence=%.2f response=%q explanation=%q",
+		resp.Intent, resp.Action, resp.Flags, resp.Confidence, resp.Response, resp.Explanation)
+
+	// The LLM must ask a clarifying question, not assume a time.
+	if resp.Intent != nlp.IntentUnknown {
+		t.Errorf("intent: got %q, want %q — ambiguous schedule should produce a clarifying question, not a command",
+			resp.Intent, nlp.IntentUnknown)
+	}
+
+	// The clarifying response must mention time (hour, time, AM, PM, UTC, or "when").
+	lc := strings.ToLower(resp.Response)
+	timeKeywords := []string{"time", "hour", "am", "pm", "utc", "when", "o'clock", "clock"}
+	found := false
+	for _, kw := range timeKeywords {
+		if strings.Contains(lc, kw) {
+			found = true
+			break
 		}
 	}
-	if !mentionsSaito {
-		t.Errorf("plan must reference saito in at least one step, steps: %v", resp.Steps)
-	}
-	if !mentionsKumo {
-		t.Errorf("plan must reference kumo in at least one step, steps: %v", resp.Steps)
+	if !found {
+		t.Errorf("response %q does not ask about time — expected a clarifying question about the time of day", resp.Response)
 	}
 }

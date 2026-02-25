@@ -180,7 +180,7 @@ The MVP is ready when **all** of the following are true:
 
 ### R16.3 Natural Language → Cron Expression Mapping
 
-- [ ] Add cron expression mapping knowledge to the NLP system prompt:
+- [x] Add cron expression mapping knowledge to the NLP system prompt:
   ```
   CRON EXPRESSION MAPPING (when user describes a schedule):
   - "every 15 minutes" → */15 * * * *
@@ -190,10 +190,10 @@ The MVP is ready when **all** of the following are true:
   - "twice a day" → 0 8,20 * * *
   - "every weekday morning" → 0 8 * * 1-5
   ```
-- [ ] When the LLM produces a cron expression, validate it before including in the plan
-- [ ] If the expression is ambiguous, ask clarifying question: "By 'every morning', do you mean 8:00 AM? What timezone?"
-- [ ] Test: "every 15 minutes" maps to `*/15 * * * *`
-- [ ] Test: Ambiguous "daily" prompts for clarification
+- [x] When the LLM produces a cron expression, validate it before including in the plan
+- [x] If the expression is ambiguous, ask clarifying question: "By 'every morning', do you mean 8:00 AM? What timezone?"
+- [x] Test: "every 15 minutes" maps to `*/15 * * * *`
+- [x] Test: Ambiguous "daily" prompts for clarification
 
 ### R16.4 Agent ID Sanitisation in NLP Path
 

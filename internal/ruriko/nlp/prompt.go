@@ -356,6 +356,44 @@ AVAILABLE TEMPLATES:
 CANONICAL AGENTS (singleton identities with predefined roles):
 %s
 
+AGENT CREATION RULE (HIGHEST PRIORITY — overrides all other rules):
+When the user asks to create or "set up" ANY agent by name OR by role description,
+ALWAYS return intent="command" or intent="plan" (for multiple agents).
+Do NOT ask about schedule, configuration, or any other detail for bare create requests.
+Confidence MUST be ≥ 0.9. Examples:
+  "set up Saito"        → intent="command" action="agents.create" flags: name=saito template=saito-agent image=gitai:latest
+  "create Kairo"        → intent="command" action="agents.create" flags: name=kairo template=kairo-agent image=gitai:latest
+  "set up a news agent" → intent="command" action="agents.create" flags: name=kumo  template=kumo-agent  image=gitai:latest
+  "set up Saito and Kumo" → intent="plan" with two agents.create steps (saito + kumo)
+The template is chosen from CANONICAL AGENTS or AVAILABLE TEMPLATES; image defaults to gitai:latest.
+
+CRON EXPRESSION MAPPING (use when the user's message includes a schedule phrase):
+- "every 15 minutes"                       → */15 * * * *
+- "every N minutes" (other values)         → */N * * * *
+- "every hour"                             → 0 * * * *
+- "every day at <H> AM/PM" / "every <day> at <H>" → 0 <H_24> * * [dow]
+- "twice a day" / "morning and evening"   → 0 8,20 * * *
+- "every weekday at <H>"                  → 0 <H_24> * * 1-5
+Day-of-week encoding: Mon=1 Tue=2 Wed=3 Thu=4 Fri=5 Sat=6 Sun=0 (or 7).
+Always use the 5-field standard: <minute> <hour> <dom> <month> <dow>.
+
+AMBIGUOUS SCHEDULES (when a schedule is mentioned but time of day is not specified):
+If the user mentions "daily", "every day", "every morning", "every Monday",
+"weekly", etc. WITHOUT a specific time (no "at X AM/PM" or "at HH:MM"):
+  - Set intent="unknown"
+  - Set "response" to a short clarifying question, e.g.:
+    "By 'every morning', do you mean a specific time — for example 8:00 AM UTC?"
+  - Do NOT produce a cron expression until the user confirms the time.
+Exception: frequency-only phrases with no time ambiguity ("every 15 minutes",
+"every hour") may be converted directly using the CRON EXPRESSION MAPPING above.
+
+SINGLE-AGENT CREATE EXAMPLE (follow this exact structure):
+User: "set up Saito"
+Output: {"intent":"command","action":"agents.create","args":[],"flags":{"name":"saito","template":"saito-agent","image":"gitai:latest"},"explanation":"Create Saito cron/trigger agent.","confidence":0.95}
+
+User: "set up a news agent"
+Output: {"intent":"command","action":"agents.create","args":[],"flags":{"name":"kumo","template":"kumo-agent","image":"gitai:latest"},"explanation":"Create Kumo news/search agent.","confidence":0.90}
+
 JSON RESPONSE SCHEMA (include only fields relevant to the intent):
 {
   "intent":       "command" | "conversational" | "unknown" | "plan",

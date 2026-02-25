@@ -81,6 +81,24 @@ func (c *Classifier) Classify(ctx context.Context, req ClassifyRequest) (*Classi
 		resp.Steps[i].Flags = sanitiseFlags(resp.Steps[i].Flags)
 	}
 
+	// --- 1b. Validate cron expressions in cron-related flags ----------------
+	// The LLM is instructed to produce valid 5-field cron expressions, but we
+	// verify them deterministically here so a malformed expression (e.g. a
+	// natural-language phrase that leaked through) is rejected before it
+	// reaches the command dispatcher.
+	if err := validateResponseCronFlags(resp); err != nil {
+		return &ClassifyResponse{
+			Intent: IntentUnknown,
+			Response: fmt.Sprintf(
+				"The schedule I produced doesn't look right (%s). "+
+					"Could you describe the schedule more precisely — for example "+
+					"\"every 15 minutes\" or \"every day at 9 AM UTC\"?",
+				err.Error(),
+			),
+			Explanation: fmt.Sprintf("LLM produced invalid cron expression: %s", err.Error()),
+		}, nil
+	}
+
 	// --- 2. Validate action key(s) ------------------------------------------
 	switch resp.Intent {
 	case IntentCommand:
@@ -197,6 +215,15 @@ func applyConfidencePolicy(resp *ClassifyResponse) *ClassifyResponse {
 
 	default:
 		// Low confidence — surface a clarification prompt.
+		//
+		// Special case: if the LLM has intentionally returned intent="unknown"
+		// with a non-empty clarifying question (e.g. the AMBIGUOUS SCHEDULES
+		// rule asking for a time of day), preserve that response verbatim.
+		// We only inject a generic fallback when the model genuinely has no
+		// useful output.
+		if resp.Intent == IntentUnknown && resp.Response != "" {
+			return resp
+		}
 		hint := "Here are some things I can help with: managing agents, secrets, Gosuto configs, approvals, and audit logs."
 		if resp.Explanation != "" {
 			hint = resp.Explanation
