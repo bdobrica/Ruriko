@@ -36,12 +36,19 @@ var ErrMalformedOutput = errors.New("nlp: malformed response from LLM")
 type Intent string
 
 const (
-	// IntentCommand means the user wants to run a Ruriko command.
+	// IntentCommand means the user wants to run a single Ruriko command.
 	IntentCommand Intent = "command"
 	// IntentConversational means the user is asking a question or chatting.
 	IntentConversational Intent = "conversational"
 	// IntentUnknown means the model could not determine intent with confidence.
 	IntentUnknown Intent = "unknown"
+	// IntentPlan means the user's request requires multiple ordered Ruriko
+	// commands — typically a multi-agent workflow decomposition (e.g. "set up
+	// Saito and Kumo so that Saito triggers Kumo every morning").  The LLM
+	// returns an ordered Steps slice; the NL handler presents each step to the
+	// operator for individual confirmation, identical to the multi-step
+	// IntentCommand path.
+	IntentPlan Intent = "plan"
 )
 
 // HistoryMessage is a single prior turn in the conversation, injected into

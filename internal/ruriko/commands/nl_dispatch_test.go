@@ -358,6 +358,178 @@ type providerErr struct{ msg string }
 func (e *providerErr) Error() string { return e.msg }
 
 // ---------------------------------------------------------------------------
+// R16.2 — IntentPlan multi-agent workflow decomposition tests
+// ---------------------------------------------------------------------------
+
+// TestHandleNaturalLanguage_PlanIntent_ShowsOverviewAndDecomposesSteps
+// verifies that an IntentPlan response:
+//  1. Shows the plan overview (explanation) before the first step prompt.
+//  2. Shows "Step 1 of N" header for each step.
+//  3. Does NOT dispatch until the operator confirms each step individually.
+//  4. Dispatches all steps in order after consecutive confirmations.
+func TestHandleNaturalLanguage_PlanIntent_ShowsOverviewAndDecomposesSteps(t *testing.T) {
+	stub := &nlpStub{resp: &nlp.ClassifyResponse{
+		Intent:      nlp.IntentPlan,
+		Explanation: "I'll create Saito (cron agent) and Kumo (news agent).",
+		Confidence:  0.92,
+		Steps: []nlp.CommandStep{
+			{
+				Action:      "agents.create",
+				Flags:       map[string]string{"name": "saito", "template": "saito-agent"},
+				Explanation: "Create Saito cron/trigger agent.",
+			},
+			{
+				Action:      "agents.create",
+				Flags:       map[string]string{"name": "kumo", "template": "kumo-agent"},
+				Explanation: "Create Kumo news search agent.",
+			},
+		},
+	}}
+	cap := &captureDispatch{response: "Done."}
+	h := newNLHandlers(stub, cap)
+	evt := nlpFakeEvent()
+
+	// --- Initial message: should show plan overview + first step prompt -------
+	reply1, err := h.HandleNaturalLanguage(context.Background(), "set up Saito and Kumo", evt)
+	if err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+
+	// Plan header must be present.
+	if !strings.Contains(reply1, "Plan") {
+		t.Errorf("expected plan header in first reply, got: %q", reply1)
+	}
+	// Overall plan explanation must appear.
+	if !strings.Contains(reply1, "Saito") {
+		t.Errorf("expected plan explanation mentioning 'Saito' in first reply, got: %q", reply1)
+	}
+	// Step progress indicator.
+	if !strings.Contains(reply1, "Step 1 of 2") {
+		t.Errorf("expected 'Step 1 of 2' in first reply, got: %q", reply1)
+	}
+	// Confirmation words.
+	if !strings.Contains(reply1, "yes") {
+		t.Errorf("expected 'yes' option in first reply, got: %q", reply1)
+	}
+
+	// No dispatch yet.
+	if len(cap.dispatched) != 0 {
+		t.Errorf("expected no dispatch before step 1 confirmation, got: %v", cap.dispatched)
+	}
+
+	// --- Confirm step 1 -------------------------------------------------------
+	reply2, err := h.HandleNaturalLanguage(context.Background(), "yes", evt)
+	if err != nil {
+		t.Fatalf("step 1 confirm: %v", err)
+	}
+	if len(cap.dispatched) != 1 || cap.dispatched[0] != "agents.create" {
+		t.Errorf("expected agents.create dispatched after step 1 confirm, got: %v", cap.dispatched)
+	}
+	if !strings.Contains(reply2, "Step 2 of 2") {
+		t.Errorf("expected 'Step 2 of 2' after step 1 confirm, got: %q", reply2)
+	}
+
+	// --- Confirm step 2 -------------------------------------------------------
+	reply3, err := h.HandleNaturalLanguage(context.Background(), "yes", evt)
+	if err != nil {
+		t.Fatalf("step 2 confirm: %v", err)
+	}
+	if len(cap.dispatched) != 2 || cap.dispatched[1] != "agents.create" {
+		t.Errorf("expected second agents.create dispatched after step 2 confirm, got: %v", cap.dispatched)
+	}
+	if reply3 != "Done." {
+		t.Errorf("expected final dispatch result after last step, got: %q", reply3)
+	}
+}
+
+// TestHandleNaturalLanguage_PlanIntent_CancelAtFirstStep verifies that
+// replying "no" to the first step of a plan cancels the entire plan and
+// clears the session.
+func TestHandleNaturalLanguage_PlanIntent_CancelAtFirstStep(t *testing.T) {
+	stub := &nlpStub{resp: &nlp.ClassifyResponse{
+		Intent:      nlp.IntentPlan,
+		Explanation: "Create Saito and Kumo.",
+		Confidence:  0.9,
+		Steps: []nlp.CommandStep{
+			{Action: "agents.create", Flags: map[string]string{"name": "saito", "template": "saito-agent"}},
+			{Action: "agents.create", Flags: map[string]string{"name": "kumo", "template": "kumo-agent"}},
+		},
+	}}
+	cap := &captureDispatch{response: "Done."}
+	h := newNLHandlers(stub, cap)
+	evt := nlpFakeEvent()
+
+	// Trigger the plan prompt.
+	_, err := h.HandleNaturalLanguage(context.Background(), "set up Saito and Kumo", evt)
+	if err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+
+	// Operator cancels at step 1.
+	reply, err := h.HandleNaturalLanguage(context.Background(), "no", evt)
+	if err != nil {
+		t.Fatalf("cancel reply: %v", err)
+	}
+	if !strings.Contains(reply, "Cancelled") {
+		t.Errorf("expected cancellation message, got: %q", reply)
+	}
+	if len(cap.dispatched) != 0 {
+		t.Errorf("expected no dispatch after cancel, got: %v", cap.dispatched)
+	}
+
+	// Session must be cleared — the next message goes through the LLM again
+	// (stub still returns plan), producing a fresh plan prompt.
+	reply2, err := h.HandleNaturalLanguage(context.Background(), "set up Saito and Kumo again", evt)
+	if err != nil {
+		t.Fatalf("post-cancel call: %v", err)
+	}
+	if !strings.Contains(reply2, "Step 1 of 2") {
+		t.Errorf("expected fresh 'Step 1 of 2' after cancel+restart, got: %q", reply2)
+	}
+}
+
+// TestHandleNaturalLanguage_PlanIntent_CancelMidPlan verifies that replying
+// "no" mid-plan (after the first step dispatches) halts remaining steps and
+// clears the session.
+func TestHandleNaturalLanguage_PlanIntent_CancelMidPlan(t *testing.T) {
+	stub := &nlpStub{resp: &nlp.ClassifyResponse{
+		Intent:      nlp.IntentPlan,
+		Explanation: "Create Saito, Kumo, and Kairo.",
+		Confidence:  0.91,
+		Steps: []nlp.CommandStep{
+			{Action: "agents.create", Flags: map[string]string{"name": "saito", "template": "saito-agent"}},
+			{Action: "agents.create", Flags: map[string]string{"name": "kumo", "template": "kumo-agent"}},
+			{Action: "agents.create", Flags: map[string]string{"name": "kairo", "template": "kairo-agent"}},
+		},
+	}}
+	cap := &captureDispatch{response: "Created."}
+	h := newNLHandlers(stub, cap)
+	evt := nlpFakeEvent()
+
+	// Initial plan prompt.
+	_, _ = h.HandleNaturalLanguage(context.Background(), "set up three agents", evt)
+
+	// Confirm step 1.
+	_, _ = h.HandleNaturalLanguage(context.Background(), "yes", evt)
+	if len(cap.dispatched) != 1 {
+		t.Fatalf("expected 1 dispatch after step 1, got %d", len(cap.dispatched))
+	}
+
+	// Cancel at step 2.
+	cancelReply, err := h.HandleNaturalLanguage(context.Background(), "no", evt)
+	if err != nil {
+		t.Fatalf("cancel at step 2: %v", err)
+	}
+	if !strings.Contains(cancelReply, "Cancelled") {
+		t.Errorf("expected cancellation message after mid-plan cancel, got: %q", cancelReply)
+	}
+	// Step 3 must NOT have dispatched.
+	if len(cap.dispatched) != 1 {
+		t.Errorf("expected exactly 1 dispatch (only step 1), got %d: %v", len(cap.dispatched), cap.dispatched)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // R9.5 Graceful Degradation and Fallbacks
 // ---------------------------------------------------------------------------
 

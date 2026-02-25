@@ -755,7 +755,7 @@ func (h *Handlers) handleNLClassify(ctx context.Context, text, roomID, senderMXI
 		}
 		return reply, err
 
-	case nlp.IntentCommand:
+	case nlp.IntentCommand, nlp.IntentPlan:
 		reply, cmdErr := h.handleNLCommandIntent(ctx, resp, roomID, senderMXID)
 		// Record a brief note about the proposed command so STM has continuity.
 		if cmdErr == nil && reply != "" {
@@ -827,7 +827,7 @@ func (h *Handlers) handleNLCommandIntent(ctx context.Context, resp *nlp.Classify
 
 	var steps []nlStep
 	if len(resp.Steps) > 0 {
-		// Multi-step mutation — decompose into individual confirmations.
+		// Multi-step mutation (or plan) — decompose into individual confirmations.
 		for _, s := range resp.Steps {
 			cmd := actionKeyToCommand(s.Action, s.Args, s.Flags)
 			steps = append(steps, nlStep{
@@ -855,7 +855,14 @@ func (h *Handlers) handleNLCommandIntent(ctx context.Context, resp *nlp.Classify
 	}
 	h.conversations.set(roomID, senderMXID, session)
 
-	return buildNLStepPrompt(steps[0], 1, len(steps)), nil
+	firstStepPrompt := buildNLStepPrompt(steps[0], 1, len(steps))
+
+	// For multi-agent plans, prepend an overview so the operator understands
+	// the full workflow before confirming each individual step.
+	if resp.Intent == nlp.IntentPlan && resp.Explanation != "" {
+		return fmt.Sprintf("📋 **Plan**: %s\n\n%s", resp.Explanation, firstStepPrompt), nil
+	}
+	return firstStepPrompt, nil
 }
 
 // handleNLConfirmationResponse handles the operator's yes/no reply to a

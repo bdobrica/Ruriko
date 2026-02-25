@@ -159,10 +159,10 @@ The MVP is ready when **all** of the following are true:
 
 ### R16.2 Multi-Agent Workflow Decomposition
 
-- [ ] Extend NLP classifier to recognise multi-agent requests:
+- [x] Extend NLP classifier to recognise multi-agent requests:
   - "Set up Saito and Kumo" → two create commands (already partially supported in R9.4)
   - "Set up Saito so that every morning he asks Kumo for news" → create Saito + create Kumo + configure mesh topology
-- [ ] Add a `plan` intent type to the classifier response:
+- [x] Add a `plan` intent type to the classifier response:
   ```json
   {
     "intent": "plan",
@@ -174,9 +174,9 @@ The MVP is ready when **all** of the following are true:
     "explanation": "I'll create Saito (cron agent) and Kumo (search agent), then configure Saito to trigger every morning and message Kumo."
   }
   ```
-- [ ] Plans are presented to the user for approval step-by-step (same as R9.4 multi-step)
-- [ ] Test: Multi-agent request is decomposed into individual steps
-- [ ] Test: Each step requires user confirmation
+- [x] Plans are presented to the user for approval step-by-step (same as R9.4 multi-step)
+- [x] Test: Multi-agent request is decomposed into individual steps
+- [x] Test: Each step requires user confirmation
 
 ### R16.3 Natural Language → Cron Expression Mapping
 

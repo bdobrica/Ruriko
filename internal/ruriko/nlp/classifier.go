@@ -82,18 +82,40 @@ func (c *Classifier) Classify(ctx context.Context, req ClassifyRequest) (*Classi
 	}
 
 	// --- 2. Validate action key(s) ------------------------------------------
-	if resp.Intent == IntentCommand {
+	switch resp.Intent {
+	case IntentCommand:
 		if resp.Action != "" {
 			if _, ok := c.knownKeys[resp.Action]; !ok {
 				return unknownActionResponse(resp.Action), nil
 			}
 		}
-		// Validate every step in a multi-step response as well.
+		// Validate every step in a multi-step command response as well.
 		for _, step := range resp.Steps {
 			if _, ok := c.knownKeys[step.Action]; !ok {
 				return unknownActionResponse(step.Action), nil
 			}
 		}
+
+	case IntentPlan:
+		// A plan must contain at least one step — an empty plan is treated as
+		// malformed output and converted to IntentUnknown so the caller gets
+		// a useful clarification prompt.
+		if len(resp.Steps) == 0 {
+			return &ClassifyResponse{
+				Intent: IntentUnknown,
+				Response: "I understood that as a multi-step plan but couldn't determine the individual steps. " +
+					"Could you describe what you'd like to set up in more detail?" + clarificationSuffix,
+				Explanation: "LLM returned intent=plan with an empty steps array",
+			}, nil
+		}
+		// Validate every step action key.
+		for _, step := range resp.Steps {
+			if _, ok := c.knownKeys[step.Action]; !ok {
+				return unknownActionResponse(step.Action), nil
+			}
+		}
+		// Plans must not carry a top-level Action — clear it defensively.
+		resp.Action = ""
 	}
 
 	// --- 3. Apply confidence-threshold policy --------------------------------

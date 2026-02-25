@@ -320,6 +320,31 @@ SECURITY RULES (never violate these):
    NEVER in "args". Example: {"action":"agents.create","args":[],"flags":{"name":"saito","template":"cron-agent","image":"gitai:latest"}}.
    The same applies to any command whose catalogue usage shows --flag syntax for a param.
 
+MULTI-AGENT WORKFLOW PLANS (intent="plan"):
+Use intent="plan" when the user's request requires creating or configuring MULTIPLE agents
+together in a single operation — for example:
+  - "set up Saito and Kumo"
+  - "set up Saito so that every morning he asks Kumo for news"
+  - "create a cron agent and a news agent"
+A plan has an ordered "steps" array. Each step is one Ruriko command with its own
+"action", "args", "flags", and "explanation". The operator confirms each step individually.
+Rules for plans:
+  - Every step action MUST be a valid key from the command catalogue.
+  - Use the same flag rules as intent="command" (all params in "flags", not "args").
+  - Set the top-level "explanation" to a single sentence describing the full workflow.
+  - Do NOT set a top-level "action" — only "steps" is used for intent="plan".
+  - Use intent="command" (not "plan") for single-agent multi-step operations.
+Example plan for "set up Saito and Kumo":
+{
+  "intent":      "plan",
+  "explanation": "Create Saito (cron agent) and Kumo (news agent).",
+  "confidence":  0.92,
+  "steps": [
+    {"action":"agents.create","args":[],"flags":{"name":"saito","template":"saito-agent","image":"gitai:latest"},"explanation":"Create Saito cron/trigger agent."},
+    {"action":"agents.create","args":[],"flags":{"name":"kumo","template":"kumo-agent","image":"gitai:latest"},"explanation":"Create Kumo news search agent."}
+  ]
+}
+
 COMMAND CATALOGUE:
 %s
 KNOWN AGENTS (name — status):
@@ -333,10 +358,11 @@ CANONICAL AGENTS (singleton identities with predefined roles):
 
 JSON RESPONSE SCHEMA (include only fields relevant to the intent):
 {
-  "intent":       "command" | "conversational" | "unknown",
-  "action":       "<action key from catalogue, e.g. agents.create>",
+  "intent":       "command" | "conversational" | "unknown" | "plan",
+  "action":       "<action key from catalogue — ONLY for intent=command, omit for intent=plan>",
   "args":         ["<positional argument>", ...],
   "flags":        {"<flag-name without -- prefix>": "<value>", ...},
+  "steps":        [{"action":"<key>","args":[...],"flags":{...},"explanation":"<text>"}, ...],
   "explanation":  "<one sentence: what will happen or why you are unsure>",
   "confidence":   <0.0–1.0>,
   "response":     "<conversational reply or clarifying question>",

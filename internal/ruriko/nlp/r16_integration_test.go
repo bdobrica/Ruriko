@@ -1,6 +1,6 @@
 package nlp_test
 
-// R16.1 integration tests — exercise the real OpenAI API.
+// R16.1 and R16.2 integration tests — exercise the real OpenAI API.
 //
 // These tests are skipped automatically when RURIKO_NLP_API_KEY is not set in
 // the environment, so they never block the regular `make test` run.  To run
@@ -174,5 +174,141 @@ func TestR16_SetUpNewsAgent(t *testing.T) {
 
 	if resp.Flags["template"] != "kumo-agent" {
 		t.Errorf("flag 'template': got %q, want %q (flags: %v)", resp.Flags["template"], "kumo-agent", resp.Flags)
+	}
+}
+
+// -----------------------------------------------------------------
+// R16.2 — Test: "set up Saito and Kumo" → plan with two agents.create steps
+// -----------------------------------------------------------------
+
+// TestR16_SetUpSaitoAndKumo verifies that a natural-language request to set
+// up both canonical agents together is translated into a multi-step plan:
+//
+//	intent="plan", steps=[agents.create saito, agents.create kumo]
+func TestR16_SetUpSaitoAndKumo(t *testing.T) {
+	classifier := buildIntegrationClassifier(t)
+
+	req := buildCreateRequest("set up Saito and Kumo")
+
+	resp, err := classifier.Classify(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Classify error: %v", err)
+	}
+
+	t.Logf("intent=%s action=%s steps=%d confidence=%.2f explanation=%q",
+		resp.Intent, resp.Action, len(resp.Steps), resp.Confidence, resp.Explanation)
+	for i, step := range resp.Steps {
+		t.Logf("  step[%d]: action=%s flags=%v explanation=%q", i, step.Action, step.Flags, step.Explanation)
+	}
+
+	// The LLM must produce a plan (multi-agent decomposition).
+	if resp.Intent != nlp.IntentPlan {
+		t.Errorf("intent: got %q, want %q (response: %q)", resp.Intent, nlp.IntentPlan, resp.Response)
+	}
+
+	// Must have at least two steps (one per agent).
+	if len(resp.Steps) < 2 {
+		t.Fatalf("steps: got %d, want ≥2", len(resp.Steps))
+	}
+
+	// Both agents.create actions should be present.
+	for _, step := range resp.Steps {
+		if step.Action != "agents.create" {
+			t.Errorf("unexpected step action %q; all plan steps should be agents.create", step.Action)
+		}
+	}
+
+	// Saito and Kumo must both appear as named agents in the steps.
+	sawSaito, sawKumo := false, false
+	for _, step := range resp.Steps {
+		if step.Flags["name"] == "saito" {
+			sawSaito = true
+			if step.Flags["template"] != "saito-agent" {
+				t.Errorf("saito step: template got %q, want saito-agent", step.Flags["template"])
+			}
+		}
+		if step.Flags["name"] == "kumo" {
+			sawKumo = true
+			if step.Flags["template"] != "kumo-agent" {
+				t.Errorf("kumo step: template got %q, want kumo-agent", step.Flags["template"])
+			}
+		}
+	}
+	if !sawSaito {
+		t.Errorf("plan steps do not include saito (steps: %v)", resp.Steps)
+	}
+	if !sawKumo {
+		t.Errorf("plan steps do not include kumo (steps: %v)", resp.Steps)
+	}
+}
+
+// -----------------------------------------------------------------
+// R16.2 — Test: multi-agent workflow with scheduling configuration
+// -----------------------------------------------------------------
+
+// TestR16_MultiAgentWorkflowWithSchedule verifies that a request describing
+// a full multi-agent workflow (saito triggers kumo every morning) is
+// decomposed into a plan that:
+//   - Creates both agents.
+//   - Includes at least one step for each agent.
+//   - Uses saito-agent and kumo-agent templates respectively.
+//
+// This test is intentionally lenient about the exact number of steps and step
+// order; LLM planning is non-deterministic and the exact cron/messaging-targets
+// config step is covered separately by R16.3 and R16.4.
+func TestR16_MultiAgentWorkflowWithSchedule(t *testing.T) {
+	classifier := buildIntegrationClassifier(t)
+
+	req := buildCreateRequest("set up Saito so that every morning he asks Kumo for news")
+
+	resp, err := classifier.Classify(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Classify error: %v", err)
+	}
+
+	t.Logf("intent=%s steps=%d confidence=%.2f explanation=%q",
+		resp.Intent, len(resp.Steps), resp.Confidence, resp.Explanation)
+	for i, step := range resp.Steps {
+		t.Logf("  step[%d]: action=%s flags=%v explanation=%q", i, step.Action, step.Flags, step.Explanation)
+	}
+
+	// Must produce a plan (not a single command, not unknown).
+	if resp.Intent != nlp.IntentPlan {
+		t.Errorf("intent: got %q, want %q (response: %q)", resp.Intent, nlp.IntentPlan, resp.Response)
+	}
+
+	// Must have at least 2 steps (one per agent, at minimum).
+	if len(resp.Steps) < 2 {
+		t.Fatalf("steps: got %d, want ≥2 (one per agent)", len(resp.Steps))
+	}
+
+	// All step actions must be valid action keys.
+	validActions := map[string]bool{
+		"agents.create":       true,
+		"agents.config.apply": true,
+		"gosuto.set":          true,
+		"gosuto.push":         true,
+	}
+	for i, step := range resp.Steps {
+		if !validActions[step.Action] {
+			t.Errorf("step[%d]: action=%q not in expected set of valid plan actions", i, step.Action)
+		}
+	}
+
+	// The plan must reference both saito and kumo somewhere in the steps.
+	mentionsSaito, mentionsKumo := false, false
+	for _, step := range resp.Steps {
+		if step.Flags["name"] == "saito" || step.Flags["template"] == "saito-agent" {
+			mentionsSaito = true
+		}
+		if step.Flags["name"] == "kumo" || step.Flags["template"] == "kumo-agent" {
+			mentionsKumo = true
+		}
+	}
+	if !mentionsSaito {
+		t.Errorf("plan must reference saito in at least one step, steps: %v", resp.Steps)
+	}
+	if !mentionsKumo {
+		t.Errorf("plan must reference kumo in at least one step, steps: %v", resp.Steps)
 	}
 }

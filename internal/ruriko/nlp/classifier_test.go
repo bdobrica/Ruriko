@@ -565,3 +565,259 @@ func TestClassifier_MaliciousOutputAllFlagsStripped(t *testing.T) {
 // TestClassifier_ImplementsProviderInterface ensures at compile time that
 // *Classifier satisfies the Provider interface.
 var _ nlp.Provider = (*nlp.Classifier)(nil)
+
+// ---------------------------------------------------------------------------
+// R16.2 — IntentPlan tests
+// ---------------------------------------------------------------------------
+
+// TestClassifier_IntentPlan_Valid verifies that a well-formed plan response
+// (all step action keys registered, non-empty steps) passes through the
+// Classifier unchanged (beyond flag sanitisation).
+func TestClassifier_IntentPlan_Valid(t *testing.T) {
+	stub := &stubProvider{
+		resp: &nlp.ClassifyResponse{
+			Intent:      nlp.IntentPlan,
+			Explanation: "Create Saito (cron agent) and Kumo (news agent).",
+			Confidence:  0.92,
+			Steps: []nlp.CommandStep{
+				{
+					Action:      "agents.create",
+					Args:        []string{},
+					Flags:       map[string]string{"name": "saito", "template": "saito-agent"},
+					Explanation: "Create Saito cron/trigger agent.",
+				},
+				{
+					Action:      "agents.create",
+					Args:        []string{},
+					Flags:       map[string]string{"name": "kumo", "template": "kumo-agent"},
+					Explanation: "Create Kumo news search agent.",
+				},
+			},
+		},
+	}
+	c := newClassifier(stub)
+
+	got, err := c.Classify(context.Background(), nlp.ClassifyRequest{Message: "set up Saito and Kumo"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got.Intent != nlp.IntentPlan {
+		t.Errorf("intent: got %q, want %q", got.Intent, nlp.IntentPlan)
+	}
+	if len(got.Steps) != 2 {
+		t.Errorf("steps: got %d, want 2", len(got.Steps))
+	}
+	if got.Steps[0].Action != "agents.create" {
+		t.Errorf("steps[0].action: got %q, want agents.create", got.Steps[0].Action)
+	}
+	if got.Steps[0].Flags["name"] != "saito" {
+		t.Errorf("steps[0].flags[name]: got %q, want saito", got.Steps[0].Flags["name"])
+	}
+	if got.Steps[1].Flags["name"] != "kumo" {
+		t.Errorf("steps[1].flags[name]: got %q, want kumo", got.Steps[1].Flags["name"])
+	}
+	// Top-level Action must be cleared for plan intent.
+	if got.Action != "" {
+		t.Errorf("plan intent must have empty top-level Action, got: %q", got.Action)
+	}
+}
+
+// TestClassifier_IntentPlan_InvalidStepAction verifies that a plan step with
+// an unknown action key is rejected and converted to IntentUnknown.
+func TestClassifier_IntentPlan_InvalidStepAction(t *testing.T) {
+	cases := []struct {
+		name       string
+		stepAction string
+	}{
+		{"phantom_action_in_step", "agents.teleport"},
+		{"internal_prefix_in_step", "_sudo.exec"},
+		{"arbitrary_string_in_step", "rm -rf /"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := &stubProvider{
+				resp: &nlp.ClassifyResponse{
+					Intent:      nlp.IntentPlan,
+					Explanation: "Three-step plan.",
+					Confidence:  0.9,
+					Steps: []nlp.CommandStep{
+						{Action: "agents.create", Flags: map[string]string{"name": "saito", "template": "saito-agent"}},
+						{Action: tc.stepAction, Flags: map[string]string{"name": "saito"}},
+					},
+				},
+			}
+			c := newClassifier(stub)
+
+			got, err := c.Classify(context.Background(), nlp.ClassifyRequest{Message: "do bad plan"})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got.Intent != nlp.IntentUnknown {
+				t.Errorf("expected IntentUnknown for invalid step action %q, got %q", tc.stepAction, got.Intent)
+			}
+			if got.Response == "" {
+				t.Error("expected non-empty Response for rejected plan step action key")
+			}
+		})
+	}
+}
+
+// TestClassifier_IntentPlan_EmptySteps verifies that a plan with zero steps
+// is converted to IntentUnknown with a clarification prompt.
+func TestClassifier_IntentPlan_EmptySteps(t *testing.T) {
+	stub := &stubProvider{
+		resp: &nlp.ClassifyResponse{
+			Intent:      nlp.IntentPlan,
+			Explanation: "A plan with no steps.",
+			Confidence:  0.85,
+			Steps:       []nlp.CommandStep{}, // empty — should be rejected
+		},
+	}
+	c := newClassifier(stub)
+
+	got, err := c.Classify(context.Background(), nlp.ClassifyRequest{Message: "do something"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Intent != nlp.IntentUnknown {
+		t.Errorf("expected IntentUnknown for empty plan, got %q", got.Intent)
+	}
+	if got.Response == "" {
+		t.Error("expected clarification prompt for empty plan")
+	}
+}
+
+// TestClassifier_IntentPlan_NilSteps verifies that a plan with nil steps
+// (structurally equivalent to empty) is also rejected.
+func TestClassifier_IntentPlan_NilSteps(t *testing.T) {
+	stub := &stubProvider{
+		resp: &nlp.ClassifyResponse{
+			Intent:      nlp.IntentPlan,
+			Explanation: "Plan with nil steps.",
+			Confidence:  0.8,
+			Steps:       nil,
+		},
+	}
+	c := newClassifier(stub)
+
+	got, err := c.Classify(context.Background(), nlp.ClassifyRequest{Message: "plan something"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Intent != nlp.IntentUnknown {
+		t.Errorf("expected IntentUnknown for nil-steps plan, got %q", got.Intent)
+	}
+}
+
+// TestClassifier_IntentPlan_InternalFlagsStrippedFromSteps verifies that
+// flag keys starting with "_" are stripped from every step in a plan, not
+// just from the top-level flags map.
+func TestClassifier_IntentPlan_InternalFlagsStrippedFromSteps(t *testing.T) {
+	stub := &stubProvider{
+		resp: &nlp.ClassifyResponse{
+			Intent:      nlp.IntentPlan,
+			Explanation: "Create two agents.",
+			Confidence:  0.9,
+			Steps: []nlp.CommandStep{
+				{
+					Action: "agents.create",
+					Flags: map[string]string{
+						"name":      "saito",
+						"template":  "saito-agent",
+						"_approved": "true",   // internal — must be stripped
+						"_trace_id": "xyz123", // internal — must be stripped
+					},
+				},
+				{
+					Action: "agents.create",
+					Flags: map[string]string{
+						"name":         "kumo",
+						"template":     "kumo-agent",
+						"_injected_id": "evil", // internal — must be stripped
+					},
+				},
+			},
+		},
+	}
+	c := newClassifier(stub)
+
+	got, err := c.Classify(context.Background(), nlp.ClassifyRequest{Message: "create saito and kumo"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Intent != nlp.IntentPlan {
+		t.Fatalf("intent: got %q, want plan", got.Intent)
+	}
+	for i, step := range got.Steps {
+		for k := range step.Flags {
+			if strings.HasPrefix(k, "_") {
+				t.Errorf("step[%d]: internal flag %q was not stripped", i, k)
+			}
+		}
+	}
+	if got.Steps[0].Flags["name"] != "saito" {
+		t.Error("step[0]: legitimate flag 'name' was incorrectly removed")
+	}
+	if got.Steps[1].Flags["name"] != "kumo" {
+		t.Error("step[1]: legitimate flag 'name' was incorrectly removed")
+	}
+}
+
+// TestClassifier_IntentPlan_TopLevelActionCleared verifies that even if the
+// LLM incorrectly sets a top-level "action" alongside a plan, the Classifier
+// clears it before returning — the canonical representation of a plan uses
+// only the Steps slice.
+func TestClassifier_IntentPlan_TopLevelActionCleared(t *testing.T) {
+	stub := &stubProvider{
+		resp: &nlp.ClassifyResponse{
+			Intent:      nlp.IntentPlan,
+			Action:      "agents.create", // LLM set this erroneously
+			Explanation: "Create Saito.",
+			Confidence:  0.88,
+			Steps: []nlp.CommandStep{
+				{Action: "agents.create", Flags: map[string]string{"name": "saito", "template": "saito-agent"}},
+			},
+		},
+	}
+	c := newClassifier(stub)
+
+	got, err := c.Classify(context.Background(), nlp.ClassifyRequest{Message: "set up saito"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Intent != nlp.IntentPlan {
+		t.Fatalf("intent: got %q, want plan", got.Intent)
+	}
+	if got.Action != "" {
+		t.Errorf("top-level Action should be cleared for plan intent, got %q", got.Action)
+	}
+}
+
+// TestClassifier_IntentPlan_LowConfidence_DowngradedToUnknown verifies that
+// a plan with confidence < MidConfidenceThreshold is downgraded to
+// IntentUnknown, same as any other intent.
+func TestClassifier_IntentPlan_LowConfidence_DowngradedToUnknown(t *testing.T) {
+	stub := &stubProvider{
+		resp: &nlp.ClassifyResponse{
+			Intent:      nlp.IntentPlan,
+			Explanation: "Set up two agents.",
+			Confidence:  0.3,
+			Steps: []nlp.CommandStep{
+				{Action: "agents.create", Flags: map[string]string{"name": "saito", "template": "saito-agent"}},
+			},
+		},
+	}
+	c := newClassifier(stub)
+
+	got, err := c.Classify(context.Background(), nlp.ClassifyRequest{Message: "maybe set things up?"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Intent != nlp.IntentUnknown {
+		t.Errorf("expected IntentUnknown for low-confidence plan, got %q", got.Intent)
+	}
+	if !strings.Contains(got.Response, "/ruriko help") {
+		t.Errorf("low-confidence response should mention /ruriko help, got: %q", got.Response)
+	}
+}
