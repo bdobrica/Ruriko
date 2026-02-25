@@ -233,11 +233,11 @@ Completed:
 * [x] Built-in `matrix.send_message` tool — policy-gated peer-to-peer messaging (R15)
 * [x] Mesh topology provisioning — Ruriko injects allowed messaging targets at provision time
 * [x] Conversation memory — STM tracker, LTM interface, seal pipeline, context assembly, pluggable SQLite/OpenAI/LLM backends (R10)
+* [x] NLP planning layer — canonical agent role knowledge, multi-step plan intent, cron mapping, ID sanitisation, conversation history, re-query retries (R16)
 
 In progress / up next:
 
 * [ ] Canonical Saito → Kairo → Kumo end-to-end workflow (R6)
-* [ ] NLP planning layer — Ruriko drafts agent configs from natural language (R16)
 * [ ] Gosuto template variable customization at provision time (R17)
 
 ---

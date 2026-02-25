@@ -203,6 +203,13 @@ The MVP is ready when **all** of the following are true:
 - ✅ Test coverage expanded for dynamic canonical guidance, empty-state fallback, deterministic ordering, and legacy hard-coded literal removal.
 - ✅ Validation completed: focused NLP/commands tests and live `TestR16*` integration tests pass; broader `go test ./internal/ruriko/...` suite passes after migration/concurrency store fixes.
 
+#### R16 Coverage Summary (Definition-of-Done Mapping)
+
+- ✅ Canonical roles / workflow decomposition / cron mapping are covered by live NLP integration tests in `internal/ruriko/nlp/r16_integration_test.go`.
+- ✅ Agent ID sanitisation in NL dispatch path is covered by unit + integration-style command-path tests in `internal/ruriko/commands/natural_language_test.go`, `internal/ruriko/commands/nl_dispatch_test.go`, and `internal/ruriko/commands/r16_nl_integration_test.go`.
+- ✅ Conversation-history continuity (including clarification loops) is covered by command-path tests in `internal/ruriko/commands/nl_dispatch_test.go` and `internal/ruriko/commands/r16_nl_integration_test.go`.
+- ✅ Re-query correction (not re-dispatching the same broken command) and max-2 retry cap are covered by command-path tests in `internal/ruriko/commands/nl_dispatch_test.go` and `internal/ruriko/commands/r16_nl_integration_test.go`.
+
 ### R16.4 Agent ID Sanitisation in NLP Path
 
 - [x] Sanitise agent IDs produced by the LLM to lowercase before dispatch:
@@ -225,13 +232,13 @@ The MVP is ready when **all** of the following are true:
 
 ### R16.6 Retry with Re-query (Not Same Broken Command)
 
-- [ ] When a dispatched NL command fails validation, re-query the LLM with the error context:
+- [x] When a dispatched NL command fails validation, re-query the LLM with the error context:
   - "The command `agents create --name Saito` failed because: agent ID must be lowercase. Please fix."
   - LLM produces corrected command
   - Max 2 retries before falling back to error message
-- [ ] Replace the current retry loop that dispatches the same broken command
-- [ ] Test: Validation error triggers re-query with error context
-- [ ] Test: Max retries are enforced
+- [x] Replace the current retry loop that dispatches the same broken command
+- [x] Test: Validation error triggers re-query with error context
+- [x] Test: Max retries are enforced
 
 ### Definition of done
 - Ruriko's NLP understands canonical agent roles (Saito, Kairo, Kumo)
@@ -583,7 +590,7 @@ The MVP is ready when **all** of the following are true:
 - [x] Phase R14: Gosuto Persona / Instructions Separation ✅ *complete*
 - [x] Phase R15: Built-in Matrix Messaging Tool — Peer-to-Peer Collaboration ✅ *complete*
 - [x] Phase R10: Conversation Memory — Short-Term / Long-Term Architecture ✅ *complete*
-- [ ] Phase R16: Canonical Agent Knowledge & NLP Planning Layer
+- [x] Phase R16: Canonical Agent Knowledge & NLP Planning Layer ✅ *complete*
 - [ ] Phase R6: Canonical Workflow — Saito → Kairo → Kumo
 - [ ] Phase R17: Gosuto Template Customization at Provision Time
 - [ ] Phase R18: Gitai Conversation Memory — Agent-Side STM/LTM
@@ -592,5 +599,5 @@ The MVP is ready when **all** of the following are true:
 
 ---
 
-**Last Updated**: 2026-02-24
-**Current Focus**: Phase R16 — Canonical Agent Knowledge & NLP Planning Layer (depends on R9 ✅, R15 ✅)
+**Last Updated**: 2026-02-25
+**Current Focus**: Phase R6 — Canonical Workflow: Saito → Kairo → Kumo (depends on R5 ✅, R14 ✅, R15 ✅, R16 ✅)

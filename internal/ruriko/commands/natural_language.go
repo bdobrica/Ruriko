@@ -337,6 +337,8 @@ type conversationSession struct {
 	nlPendingSteps []nlStep // remaining command steps awaiting confirmation
 	nlTotalSteps   int      // total number of steps (for display)
 	nlRawIntent    string   // LLM explanation string, included in audit logs
+	nlUserMessage  string   // original user message that produced this NL session
+	nlRetryCount   int      // correction attempts for the current step
 }
 
 // conversationStore manages in-memory per-room conversation sessions.
@@ -850,7 +852,7 @@ func (h *Handlers) handleNLClassify(ctx context.Context, text, roomID, senderMXI
 		return reply, err
 
 	case nlp.IntentCommand, nlp.IntentPlan:
-		reply, cmdErr := h.handleNLCommandIntent(ctx, resp, roomID, senderMXID)
+		reply, cmdErr := h.handleNLCommandIntent(ctx, resp, roomID, senderMXID, text)
 		// Record a brief note about the proposed command so STM has continuity.
 		if cmdErr == nil && reply != "" {
 			h.recordAssistantMessage(roomID, senderMXID, reply)
@@ -914,7 +916,7 @@ func (h *Handlers) handleNLReadQueries(ctx context.Context, resp *nlp.ClassifyRe
 
 // handleNLCommandIntent builds the pending-step session for a mutation command
 // and returns the first step's confirmation prompt.
-func (h *Handlers) handleNLCommandIntent(ctx context.Context, resp *nlp.ClassifyResponse, roomID, senderMXID string) (string, error) {
+func (h *Handlers) handleNLCommandIntent(ctx context.Context, resp *nlp.ClassifyResponse, roomID, senderMXID, userMessage string) (string, error) {
 	if h.dispatch == nil {
 		return "", nil
 	}
@@ -945,6 +947,8 @@ func (h *Handlers) handleNLCommandIntent(ctx context.Context, resp *nlp.Classify
 		nlPendingSteps: steps,
 		nlTotalSteps:   len(steps),
 		nlRawIntent:    resp.Explanation,
+		nlUserMessage:  strings.TrimSpace(userMessage),
+		nlRetryCount:   0,
 		expiresAt:      time.Now().Add(sessionTTL),
 	}
 	h.conversations.set(roomID, senderMXID, session)
@@ -957,6 +961,126 @@ func (h *Handlers) handleNLCommandIntent(ctx context.Context, resp *nlp.Classify
 		return fmt.Sprintf("📋 **Plan**: %s\n\n%s", resp.Explanation, firstStepPrompt), nil
 	}
 	return firstStepPrompt, nil
+}
+
+const nlMaxCorrectionRetries = 2
+
+func isNLValidationError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	markers := []string{
+		"usage:",
+		"invalid",
+		"must",
+		"required",
+		"malformed",
+		"unknown flag",
+	}
+	for _, marker := range markers {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *Handlers) buildNLRequeryRequest(ctx context.Context, message, senderMXID string, evt *event.Event) nlp.ClassifyRequest {
+	req := nlp.ClassifyRequest{
+		Message:          message,
+		CommandCatalogue: h.buildCommandCatalogue(ctx, evt),
+		SenderMXID:       senderMXID,
+	}
+
+	if h.store != nil {
+		if agents, err := h.store.ListAgents(ctx); err == nil {
+			for _, a := range agents {
+				req.KnownAgents = append(req.KnownAgents, a.ID)
+			}
+		}
+	}
+
+	if h.templates != nil {
+		if ts, err := h.templates.List(); err == nil {
+			req.KnownTemplates = ts
+		}
+		if infos, err := h.templates.DescribeAll(); err == nil {
+			req.CanonicalAgents = buildCanonicalAgentsFromTemplateInfos(infos)
+		}
+	}
+
+	return req
+}
+
+func correctedStepFromClassifyResponse(resp *nlp.ClassifyResponse, fallbackAction string) (nlStep, error) {
+	if resp == nil {
+		return nlStep{}, fmt.Errorf("empty classifier response")
+	}
+
+	if len(resp.Steps) > 0 {
+		s := resp.Steps[0]
+		action := s.Action
+		if strings.TrimSpace(action) == "" {
+			action = fallbackAction
+		}
+		return nlStep{
+			action:      action,
+			command:     actionKeyToCommand(action, s.Args, s.Flags),
+			explanation: s.Explanation,
+		}, nil
+	}
+
+	action := resp.Action
+	if strings.TrimSpace(action) == "" {
+		action = fallbackAction
+	}
+	if strings.TrimSpace(action) == "" {
+		return nlStep{}, fmt.Errorf("classifier response did not include a command action")
+	}
+
+	return nlStep{
+		action:      action,
+		command:     actionKeyToCommand(action, resp.Args, resp.Flags),
+		explanation: resp.Explanation,
+	}, nil
+}
+
+func (h *Handlers) requeryFailedNLStep(
+	ctx context.Context,
+	session *conversationSession,
+	step nlStep,
+	dispatchErr error,
+	senderMXID string,
+	evt *event.Event,
+) (nlStep, error) {
+	provider := h.resolveNLPProvider(ctx)
+	if provider == nil {
+		return nlStep{}, fmt.Errorf("nlp provider unavailable for correction")
+	}
+
+	originalUserMessage := strings.TrimSpace(session.nlUserMessage)
+	if originalUserMessage == "" {
+		originalUserMessage = "(not available)"
+	}
+
+	requeryMessage := fmt.Sprintf(
+		"The command `%s` failed because: %v.\n"+
+			"Original user request: %s\n"+
+			"Please return a corrected command for the same intent.\n"+
+			"Return intent=\"command\" with corrected action/args/flags.",
+		step.command.RawText,
+		dispatchErr,
+		originalUserMessage,
+	)
+
+	req := h.buildNLRequeryRequest(ctx, requeryMessage, senderMXID, evt)
+	resp, err := provider.Classify(ctx, req)
+	if err != nil {
+		return nlStep{}, err
+	}
+
+	return correctedStepFromClassifyResponse(resp, step.action)
 }
 
 // handleNLConfirmationResponse handles the operator's yes/no reply to a
@@ -1025,13 +1149,44 @@ func (h *Handlers) handleNLConfirmationResponse(
 
 	result, err := h.dispatch(ctx, step.action, step.command, evt)
 	if err != nil {
+		if isNLValidationError(err) {
+			if session.nlRetryCount >= nlMaxCorrectionRetries {
+				h.conversations.delete(roomID, senderMXID)
+				return fmt.Sprintf(
+					"❌ Failed to run `%s`: %v\n\nI couldn't auto-correct this command after %d attempts. Please rephrase your request.",
+					step.action,
+					err,
+					nlMaxCorrectionRetries,
+				), nil
+			}
+
+			correctedStep, correctionErr := h.requeryFailedNLStep(ctx, session, step, err, senderMXID, evt)
+			if correctionErr == nil {
+				session.nlPendingSteps[0] = correctedStep
+				session.nlRetryCount++
+				session.expiresAt = time.Now().Add(sessionTTL)
+				h.conversations.set(roomID, senderMXID, session)
+
+				var sb strings.Builder
+				sb.WriteString(fmt.Sprintf("⚠️ Failed to run `%s`: %v\n", step.action, err))
+				sb.WriteString(fmt.Sprintf("I asked the NLP model to correct it (attempt %d/%d).\n\n",
+					session.nlRetryCount, nlMaxCorrectionRetries))
+				sb.WriteString(buildNLStepPrompt(correctedStep, doneIndex+1, session.nlTotalSteps))
+				return sb.String(), nil
+			}
+
+			slog.Warn("nl correction re-query failed", "action", step.action, "err", correctionErr)
+		}
+
 		// Leave the session active so the operator can retry.
 		return fmt.Sprintf("❌ Failed to run `%s`: %v\n\nReply **yes** to retry or **no** to cancel.", step.action, err), nil
 	}
+	session.nlRetryCount = 0
 
 	if len(remaining) > 0 {
 		// Advance to the next step.
 		session.nlPendingSteps = remaining
+		session.nlRetryCount = 0
 		session.expiresAt = time.Now().Add(sessionTTL)
 		h.conversations.set(roomID, senderMXID, session)
 

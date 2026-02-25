@@ -898,3 +898,146 @@ func TestHandleNaturalLanguage_R16History_ClarificationRetainsOriginalRequest(t 
 		t.Errorf("history missing clarification response, got: %#v", secondHistory)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// R16.6 Retry with Re-query (Not Same Broken Command)
+// ---------------------------------------------------------------------------
+
+func TestHandleNaturalLanguage_R16Retry_RequeriesOnValidationError(t *testing.T) {
+	stub := &nlpStub{responses: []*nlp.ClassifyResponse{
+		{
+			Intent:      nlp.IntentCommand,
+			Action:      "agents.create",
+			Flags:       map[string]string{"name": "Saito", "template": "saito-agent", "image": "gitai:latest"},
+			Explanation: "Create Saito.",
+			Confidence:  0.95,
+		},
+		{
+			Intent:      nlp.IntentCommand,
+			Action:      "agents.create",
+			Flags:       map[string]string{"name": "saito", "template": "saito-agent", "image": "gitai:latest"},
+			Explanation: "Create saito with corrected ID.",
+			Confidence:  0.95,
+		},
+	}}
+
+	h := newNLHandlers(stub, nil)
+	attempts := 0
+	h.SetDispatch(func(_ context.Context, _ string, cmd *Command, _ *event.Event) (string, error) {
+		attempts++
+		if attempts == 1 {
+			return "", fmt.Errorf("--template is required")
+		}
+		if cmd.GetFlag("name", "") != "saito" {
+			return "", fmt.Errorf("corrected command still invalid: expected lowercase name, got %q", cmd.GetFlag("name", ""))
+		}
+		return "✅ corrected command executed", nil
+	})
+
+	evt := nlpFakeEvent()
+
+	// Initial NL intent -> first confirmation prompt.
+	_, err := h.HandleNaturalLanguage(context.Background(), "set up saito", evt)
+	if err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+
+	// Confirm execution of the initial (invalid) command.
+	repairPrompt, err := h.HandleNaturalLanguage(context.Background(), "yes", evt)
+	if err != nil {
+		t.Fatalf("confirm call: %v", err)
+	}
+	if !strings.Contains(repairPrompt, "I asked the NLP model to correct it") {
+		t.Fatalf("expected correction prompt, got: %q", repairPrompt)
+	}
+	if !strings.Contains(strings.ToLower(repairPrompt), "--name saito") {
+		t.Fatalf("expected corrected lowercase name in prompt, got: %q", repairPrompt)
+	}
+
+	// Confirm corrected command.
+	result, err := h.HandleNaturalLanguage(context.Background(), "yes", evt)
+	if err != nil {
+		t.Fatalf("second confirm call: %v", err)
+	}
+	if result != "✅ corrected command executed" {
+		t.Fatalf("unexpected final result: %q", result)
+	}
+
+	if len(stub.requests) != 2 {
+		t.Fatalf("expected 2 classify calls (initial + correction), got %d", len(stub.requests))
+	}
+
+	requeryMessage := stub.requests[1].Message
+	if !strings.Contains(requeryMessage, "failed because") {
+		t.Errorf("expected failure context in correction request, got: %q", requeryMessage)
+	}
+	if !strings.Contains(strings.ToLower(requeryMessage), "set up saito") {
+		t.Errorf("expected original user request in correction message, got: %q", requeryMessage)
+	}
+}
+
+func TestHandleNaturalLanguage_R16Retry_MaxCorrectionRetriesEnforced(t *testing.T) {
+	stub := &nlpStub{responses: []*nlp.ClassifyResponse{
+		{
+			Intent:      nlp.IntentCommand,
+			Action:      "agents.create",
+			Flags:       map[string]string{"name": "Saito", "template": "saito-agent", "image": "gitai:latest"},
+			Explanation: "Create Saito.",
+			Confidence:  0.95,
+		},
+		{
+			Intent:      nlp.IntentCommand,
+			Action:      "agents.create",
+			Flags:       map[string]string{"name": "StillUpper", "template": "saito-agent", "image": "gitai:latest"},
+			Explanation: "Retry correction 1.",
+			Confidence:  0.95,
+		},
+		{
+			Intent:      nlp.IntentCommand,
+			Action:      "agents.create",
+			Flags:       map[string]string{"name": "AgainUpper", "template": "saito-agent", "image": "gitai:latest"},
+			Explanation: "Retry correction 2.",
+			Confidence:  0.95,
+		},
+	}}
+
+	h := newNLHandlers(stub, nil)
+	h.SetDispatch(func(_ context.Context, _ string, cmd *Command, _ *event.Event) (string, error) {
+		return "", fmt.Errorf("agent ID %q is invalid: must match ^[a-z0-9][a-z0-9-]{0,62}$", cmd.GetFlag("name", ""))
+	})
+
+	evt := nlpFakeEvent()
+
+	_, _ = h.HandleNaturalLanguage(context.Background(), "set up saito", evt)
+
+	// First validation failure -> correction attempt 1.
+	reply1, err := h.HandleNaturalLanguage(context.Background(), "yes", evt)
+	if err != nil {
+		t.Fatalf("confirm #1: %v", err)
+	}
+	if !strings.Contains(reply1, "attempt 1/2") {
+		t.Fatalf("expected correction attempt 1/2, got: %q", reply1)
+	}
+
+	// Second validation failure -> correction attempt 2.
+	reply2, err := h.HandleNaturalLanguage(context.Background(), "yes", evt)
+	if err != nil {
+		t.Fatalf("confirm #2: %v", err)
+	}
+	if !strings.Contains(reply2, "attempt 2/2") {
+		t.Fatalf("expected correction attempt 2/2, got: %q", reply2)
+	}
+
+	// Third failure -> hard stop (max retries enforced).
+	reply3, err := h.HandleNaturalLanguage(context.Background(), "yes", evt)
+	if err != nil {
+		t.Fatalf("confirm #3: %v", err)
+	}
+	if !strings.Contains(strings.ToLower(reply3), "after 2 attempts") {
+		t.Fatalf("expected max-retry fallback message, got: %q", reply3)
+	}
+
+	if len(stub.requests) != 3 {
+		t.Fatalf("expected exactly 3 classify calls (initial + 2 correction re-queries), got %d", len(stub.requests))
+	}
+}
