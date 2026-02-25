@@ -95,6 +95,7 @@ openssl rand -hex 32
 | `TUWUNEL_REGISTRATION_TOKEN` | | Registration token for Tuwunel account creation |
 | `MATRIX_SHARED_SECRET` | | Synapse shared registration secret |
 | `DOCKER_ENABLE` | `false` | Enable Docker runtime adapter |
+| `DOCKER_HOST` | _(Docker default)_ | Optional Docker API endpoint (e.g. `tcp://docker-socket-proxy:2375`) |
 | `DOCKER_NETWORK` | | Docker network for spawned agent containers |
 | `RECONCILE_INTERVAL` | `30s` | Reconciliation loop interval |
 | `DATABASE_PATH` | `/data/ruriko.db` | SQLite database path |
@@ -237,6 +238,23 @@ To allow Ruriko to spawn/stop agent containers:
 **Security note**: Mounting the Docker socket grants root-equivalent access to the host.  
 In production, use a Docker socket proxy (e.g. Tecnativa docker-socket-proxy) to restrict  
 which API endpoints Ruriko can reach.
+
+### Hardened profile checklist (recommended when `DOCKER_ENABLE=true`)
+
+Use this checklist for production-like deployments where Ruriko must manage
+agent containers:
+
+- [ ] Use a Docker socket proxy instead of mounting `/var/run/docker.sock` directly into Ruriko
+- [ ] Restrict socket-proxy API surface to only the endpoints required for container/network lifecycle
+- [ ] Keep socket-proxy and Docker socket on internal networks only (no public port exposure)
+- [ ] Run Ruriko as non-root (default image behavior) and keep `--privileged` disabled
+- [ ] Enable `no-new-privileges` (`security_opt: ["no-new-privileges:true"]`)
+- [ ] Use read-only root filesystem where compatible (`read_only: true`) with explicit writable mounts only
+- [ ] Configure resource limits (`cpus`, `mem_limit`, optionally `pids_limit`) to reduce blast radius
+- [ ] Bind public-facing ports to loopback unless intentionally fronted by a hardened reverse proxy
+
+If you do not need agent lifecycle management on a host, prefer `DOCKER_ENABLE=false`
+and avoid any Docker socket exposure entirely.
 
 ---
 

@@ -29,7 +29,8 @@
    - [Full Agent Provisioning](#flow-7-full-agent-provisioning-docker-enabled)
    - [Audit & Tracing](#flow-8-audit--tracing)
 6. [Environment Variable Reference](#environment-variable-reference)
-7. [Troubleshooting](#troubleshooting)
+7. [Hardened Mode Quick-Start](#hardened-mode-quick-start)
+8. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -552,6 +553,24 @@ Trace IDs appear in most Ruriko responses. You can use them to correlate actions
 | `TUWUNEL_ALLOW_REGISTRATION` | `false` | Enable account registration (set `true` only during setup) |
 | `HTTP_ADDR_HOST` | `127.0.0.1` | Host bind for Ruriko's HTTP endpoint |
 | `HTTP_ADDR_PORT` | `8080` | Host port for Ruriko's HTTP endpoint |
+
+---
+
+## Hardened Mode Quick-Start
+
+Use this when you want `DOCKER_ENABLE=true` but with stricter host-hardening defaults.
+
+1. Start from the commented hardened profile in [examples/docker-compose/docker-compose.yaml](examples/docker-compose/docker-compose.yaml).
+  - Enable `security_opt: no-new-privileges:true`
+  - Enable `read_only`, `tmpfs`, and resource limits (`cpus`, `mem_limit`, `pids_limit`)
+2. Configure Docker runtime env vars in `.env` using [.env.example](.env.example) as reference.
+  - Set `DOCKER_ENABLE=true`
+  - Prefer `DOCKER_HOST=tcp://docker-socket-proxy:2375`
+  - If you mount `/var/run/docker.sock` directly, set `DOCKER_GID` appropriately
+3. Apply the full hardening checklist in [docs/ops/deployment-docker.md](docs/ops/deployment-docker.md).
+  - Use a socket proxy instead of direct socket mount when possible
+  - Keep socket/socket-proxy internal-only (no public exposure)
+  - Keep Ruriko non-root and avoid `--privileged`
 
 ---
 

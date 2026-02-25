@@ -613,25 +613,35 @@ The MVP targets a **single-host deployment** with the following security propert
 
 ### 5. Container Security Controls
 
+**C5.0: Operating Modes (Reality-Based Controls)**
+- **Control-plane-only mode** (`DOCKER_ENABLE=false`): no Docker socket mount required
+- **Docker-runtime mode** (`DOCKER_ENABLE=true`): Docker socket access is required for agent lifecycle operations and is treated as root-equivalent host access
+- Security guidance below distinguishes baseline controls from hardened controls for Docker-runtime mode
+
 **C5.1: Non-Root User**
 - Run containers as non-root UID
 - Drop all capabilities
 
 **C5.2: Read-Only Filesystem**
-- Mount `/` as read-only
-- Only writable: `/tmp`, `/data` (bind mounts)
+- Prefer mounting `/` as read-only where runtime compatibility allows
+- Limit writable paths to `/tmp` and `/data` (or explicit bind mounts only)
 
-**C5.3: No Privileged Mode**
+**C5.3: No Privileged Mode + Controlled Socket Access**
 - Never use `--privileged` flag
-- No access to Docker socket
+- If `DOCKER_ENABLE=false`, do not mount `/var/run/docker.sock`
+- If `DOCKER_ENABLE=true`, treat socket access as high risk and prefer a Docker socket proxy with allowlisted API endpoints
+- Never expose Docker socket or socket-proxy ports publicly
 
 **C5.4: Resource Limits**
-- Set CPU and memory limits
+- Set CPU and memory limits (especially in Docker-runtime mode)
 - Prevent resource exhaustion
 
 **C5.5: Network Policies**
 - Restrict egress (optional)
 - Only allow necessary endpoints
+
+**C5.6: Hardening Reference**
+- See `docs/ops/deployment-docker.md` for a hardened deployment checklist (socket proxy, `no-new-privileges`, read-only filesystem, and resource limits)
 
 ---
 
