@@ -558,6 +558,7 @@ The MVP is ready when **all** of the following are true:
 - [ ] Gateway marketplace / vetted registry for community-contributed gateways
 - [ ] Inter-agent communication hardening (content inspection, circuit breakers, graph analysis)
 - [ ] Signed inter-agent messages for non-repudiation
+- [ ] ACP transport hardening: add mTLS for Ruriko ↔ Gitai control-plane traffic (cert issuance, rotation, and revocation)
 
 ---
 

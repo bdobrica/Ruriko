@@ -546,20 +546,25 @@ The MVP targets a **single-host deployment** with the following security propert
 ### 2. Agent Control Protocol (ACP) Security Controls
 
 **C2.1: Authentication**
-- Bearer token or mTLS required for ACP endpoints
+- Per-agent bearer token required for ACP endpoints in MVP
 - Token stored securely, rotated periodically
 
 **C2.2: Network Isolation**
-- ACP endpoints listen on localhost or private network only
+- ACP endpoints are reachable only on localhost or private Docker network
 - No public internet exposure
 
 **C2.3: Request Validation**
 - Schema validation on all ACP payloads
 - Reject malformed requests
 
-**C2.4: HTTPS/TLS**
-- All ACP traffic encrypted in transit
-- Certificate pinning (optional, for mTLS)
+**C2.4: MVP Trust Boundary Clarification**
+- In single-host Docker deployments, ACP uses HTTP on a private bridge network
+- Security comes from network isolation + bearer auth + non-exposure to internet
+- If ACP traffic crosses host or untrusted network boundaries, deploy TLS/mTLS
+
+**C2.5: mTLS Roadmap (Post-MVP)**
+- Add mutual TLS for ACP transport authentication and encryption in transit
+- Add certificate issuance, rotation, and revocation procedures
 
 ---
 

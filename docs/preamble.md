@@ -130,9 +130,15 @@ ACP is intentionally synchronous and operationally boring, so Ruriko can manage 
 
 ACP must be:
 
-* authenticated and encrypted (mTLS preferred)
+* authenticated (Bearer token in MVP)
+* private to the Docker network in single-host deployments
 * not exposed publicly
 * idempotent for all control operations
+
+In the MVP single-host topology, ACP traffic is plain HTTP on the private
+Docker bridge and is protected by per-agent bearer tokens + network isolation.
+mTLS for ACP is a planned post-MVP hardening item for multi-host or less
+trusted network environments.
 
 ---
 

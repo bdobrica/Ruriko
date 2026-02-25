@@ -414,7 +414,7 @@ flowchart LR
 #### Agent Control Protocol Client (`internal/ruriko/runtime/acp/`)
 - HTTP client for agent management
 - Endpoints: /health, /status, /config/apply, /secrets/apply, /process/restart
-- Optional mTLS support
+- Bearer-token authentication (MVP); mTLS planned post-MVP
 - Request/response logging
 
 ---
@@ -613,9 +613,13 @@ collaboration happens directly between agents over Matrix.
 ### 2. Agent Control Protocol (Ruriko ↔ Gitai)
 
 **Protocol**: HTTP REST  
-**Transport**: HTTP/1.1 (optional mTLS)  
-**Authentication**: Bearer token or mTLS  
+**Transport**: HTTP/1.1 on private Docker network (MVP)  
+**Authentication**: Per-agent Bearer token (MVP)  
 **Format**: JSON  
+
+**Note**: In the single-host MVP, ACP is intentionally private-network HTTP
+with bearer authentication. mTLS is planned as post-MVP hardening for
+multi-host or otherwise untrusted network topologies.
 
 **Endpoints**:
 - `GET /health` - Health check
