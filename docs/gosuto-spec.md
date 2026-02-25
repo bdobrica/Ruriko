@@ -271,7 +271,7 @@ Events that exceed the rate limit are dropped with a warning log.
 
 ### `secrets` *(optional)*
 
-References to Ruriko secrets the agent expects to be injected at runtime. Secret *values* are never stored in Gosuto. Ruriko distributes them via ACP `/secrets/apply`.
+References to Ruriko secrets the agent expects to be injected at runtime. Secret *values* are never stored in Gosuto. Ruriko distributes token leases via ACP `/secrets/token`, and the agent redeems each lease through Kuze.
 
 | Field     | Type   | Required | Description                                       |
 |-----------|--------|----------|---------------------------------------------------|

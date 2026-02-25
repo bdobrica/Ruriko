@@ -158,7 +158,7 @@ Ruriko is a distributed control plane for managing secure, capability-scoped AI 
 
 **Types**:
 - **Built-in: Cron** — fires `cron.tick` events on a 5-field cron schedule (no external dependency)
-- **Built-in: Webhook** — accepts HTTP POSTs from Ruriko's `/webhook/{agent}/{source}` proxy
+- **Built-in: Webhook** — accepts HTTP POSTs from Ruriko's `/webhooks/{agent}/{source}` proxy
 - **External binaries** — compiled artefacts baked into the Gitai Docker image (e.g. `ruriko-gw-imap`)
 
 **Integration**:
@@ -337,7 +337,7 @@ flowchart LR
   end
 
   subgraph RurikoProxy["Ruriko Control Plane"]
-    WHProxy["/webhook/{agent}/{source}\nRate-limit · HMAC auth · Proxy"]
+        WHProxy["/webhooks/{agent}/{source}\nRate-limit · HMAC auth · Proxy"]
   end
 
   subgraph GitaiAgent["Gitai Agent Runtime"]

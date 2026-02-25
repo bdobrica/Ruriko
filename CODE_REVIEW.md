@@ -1,6 +1,7 @@
 # Ruriko Code Review — Operations & Security
 
 Date: 2026-02-25  
+Last Updated: 2026-02-26  
 Reviewer: GitHub Copilot (GPT-5.3-Codex)
 
 ## Scope
@@ -21,7 +22,30 @@ This review focused on:
 
 Ruriko’s architecture is strong and coherent: deterministic control plane, policy-first execution, explicit trust contexts, scoped secret distribution, and good runtime separation between Matrix/ACP/Kuze.
 
-The main risk is **policy drift** between stated invariants and shipped behavior. The highest-priority issue is that Matrix-based inline secret entry is still accepted in command handlers and operational docs, which conflicts with your explicit invariant that secrets must never enter via Matrix.
+The original high-priority policy-drift findings in this review were remediated during the follow-up implementation pass (P0 and P1, plus P2 docs/path consistency). Remaining work is primarily operationalization (CI vulnerability/SBOM enforcement).
+
+## Remediation Status (as of 2026-02-26)
+
+- ✅ **P0 closed** — Matrix inline secret entry/rotation removed from chat command path; guardrail made unconditional; docs/help updated.
+   - `internal/ruriko/commands/secrets_handlers.go`
+   - `internal/ruriko/app/app.go`
+   - `internal/ruriko/commands/handlers.go`
+   - `internal/ruriko/commands/provisioning_handlers.go`
+   - `OPERATIONS.md`, `.env.example`, `examples/docker-compose/docker-compose.yaml`
+- ✅ **P1 (ACP trust-boundary docs) closed** — MVP now explicitly documented as private Docker network + bearer auth; mTLS moved to roadmap/TODO.
+   - `docs/preamble.md`
+   - `docs/threat-model.md` (ACP controls section)
+   - `docs/architecture.md` (ACP transport/auth sections)
+   - `TODO.md` (explicit mTLS roadmap item)
+- ✅ **P1 (container hardening wording + hardened profile) closed** — threat model aligned with real operating modes; hardened deployment checklist and compose profile added.
+   - `docs/threat-model.md` (container controls section)
+   - `docs/ops/deployment-docker.md` (hardened checklist)
+   - `examples/docker-compose/docker-compose.yaml` (commented hardened profile)
+   - `.env.example` (`DOCKER_HOST` / `DOCKER_GID` guidance)
+   - `OPERATIONS.md` (Hardened Mode Quick-Start)
+- ✅ **P2 docs/path drift closed** — webhook path standardized to `/webhooks/{agent}/{source}`; gosuto spec updated to token-based secret distribution wording.
+   - `README.md`, `docs/threat-model.md`, `docs/architecture.md`
+   - `docs/gosuto-spec.md`
 
 ## Priority Findings
 
@@ -81,6 +105,8 @@ The main risk is **policy drift** between stated invariants and shipped behavior
 
 ### P1 — Control-plane transport hardening drift (documentation vs current runtime)
 
+**Status**: ✅ Closed via Option A
+
 **Severity**: High  
 **Why it matters**: Threat model suggests HTTPS/mTLS for ACP, while implementation is internal HTTP bearer-token model.
 
@@ -97,6 +123,8 @@ The main risk is **policy drift** between stated invariants and shipped behavior
 ---
 
 ### P1 — Container hardening controls overstate current deployment defaults
+
+**Status**: ✅ Closed
 
 **Severity**: High  
 **Why it matters**: Threat model says no Docker socket access; Compose mounts socket to Ruriko by design for lifecycle management.
@@ -115,6 +143,8 @@ The main risk is **policy drift** between stated invariants and shipped behavior
 ---
 
 ### P2 — Endpoint naming/documentation drift
+
+**Status**: ✅ Closed
 
 **Severity**: Medium  
 **Why it matters**: Causes operator confusion and integration errors.
@@ -155,18 +185,12 @@ The main risk is **policy drift** between stated invariants and shipped behavior
 
 ## Recommended Implementation Sequence
 
-1. **Immediate (P0)**
-   - Remove inline Matrix secret entry/rotation pathways.
-   - Make secret guardrail unconditional.
-   - Update help + operations docs to match behavior.
-
-2. **Next (P1)**
-   - Reconcile ACP/TLS documentation with implemented trust boundary.
-   - Publish hardened deployment profile with socket proxy + tighter container settings.
-
-3. **Then (P2)**
-   - Resolve route naming drift (`/webhooks` vs `/webhook`).
+1. **Immediate next**
    - Operationalize dependency and SBOM controls in CI.
+2. **Then**
+   - Add hardened deployment verification examples/tests for socket-proxy mode.
+3. **Roadmap**
+   - Implement ACP mTLS for multi-host / untrusted-network topologies.
 
 ## Validation Checklist (for P0 changes)
 

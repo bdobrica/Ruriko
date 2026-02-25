@@ -277,7 +277,7 @@ The MVP targets a **single-host deployment** with the following security propert
 ### 7. Webhook Endpoint Surface
 
 **Entry Points**:
-- Ruriko's `/webhook/{agentName}/{source}` proxy endpoint (internet-facing)
+- Ruriko's `/webhooks/{agentName}/{source}` proxy endpoint (internet-facing)
 - Inbound HTTP traffic from third-party services (GitHub, Stripe, etc.)
 
 **Risks**:
@@ -708,7 +708,7 @@ The MVP targets a **single-host deployment** with the following security propert
 - Each gateway process can only access the secrets explicitly bound to it
 
 **C8.4: Webhook Authentication and Rate Limiting**
-- Ruriko's `/webhook/{agentName}/{source}` proxy validates HMAC-SHA256 signatures before forwarding
+- Ruriko's `/webhooks/{agentName}/{source}` proxy validates HMAC-SHA256 signatures before forwarding
 - Bearer token authentication supported as an alternative
 - Per-agent rate limiting enforced at the Ruriko proxy (default: 60 deliveries/minute)
 - Invalid signatures and rate-exceeded requests return 4xx without disclosing internal details

@@ -156,7 +156,7 @@ Agents can be *woken* by external events rather than waiting for Matrix messages
 Gateway types:
 
 * **Built-in Cron** — fires `cron.tick` events on any 5-field cron schedule (no external process needed)
-* **Built-in Webhook** — receives HTTP POSTs proxied through Ruriko's rate-limited, HMAC-authenticated `/webhook/{agent}/{source}` endpoint
+* **Built-in Webhook** — receives HTTP POSTs proxied through Ruriko's rate-limited, HMAC-authenticated `/webhooks/{agent}/{source}` endpoint
 * **External binaries** — compiled gateway processes baked into the Gitai Docker image (e.g. `ruriko-gw-imap` for email-reactive agents)
 
 Gateways are wired in Gosuto under `gateways:` and are supervised identically to MCP processes — same credential management, same restart semantics, same audit trail. Events enter the same policy → LLM → tool pipeline as Matrix messages; prompt injection from external sources is mitigated by code-enforced policy.
