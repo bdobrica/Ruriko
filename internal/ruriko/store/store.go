@@ -29,6 +29,12 @@ func New(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
+	// SQLite is single-writer by design. Keep a single shared connection so
+	// concurrent callers are serialized by database/sql instead of fighting for
+	// write locks across multiple underlying connections.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+
 	// Enable foreign keys (important for SQLite)
 	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
 		db.Close()
@@ -102,6 +108,29 @@ func (s *Store) runMigrations() error {
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].Name() < entries[j].Name()
 	})
+
+	// Validate migration versions are unique across filenames.
+	seenVersions := make(map[int]string, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
+			continue
+		}
+
+		parts := strings.SplitN(entry.Name(), "_", 2)
+		if len(parts) < 2 {
+			continue
+		}
+
+		var version int
+		if _, err := fmt.Sscanf(parts[0], "%d", &version); err != nil {
+			continue
+		}
+
+		if prev, exists := seenVersions[version]; exists {
+			return fmt.Errorf("duplicate migration version %04d: %q and %q", version, prev, entry.Name())
+		}
+		seenVersions[version] = entry.Name()
+	}
 
 	// Apply pending migrations
 	for _, entry := range entries {

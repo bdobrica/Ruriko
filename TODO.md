@@ -195,6 +195,14 @@ The MVP is ready when **all** of the following are true:
 - [x] Test: "every 15 minutes" maps to `*/15 * * * *`
 - [x] Test: Ambiguous "daily" prompts for clarification
 
+#### R16 Refactor Summary (2026-02-25)
+
+- ✅ Canonical agent knowledge in NLP prompt is now fully template-driven (from Gosuto metadata) rather than hard-coded identity examples.
+- ✅ Prompt generation normalises canonical specs (trim/lowercase/filter/sort) and derives deterministic create guidance from available canonical templates.
+- ✅ NL dispatch canonical extraction now sanitises + de-duplicates canonical names at the template boundary before classification.
+- ✅ Test coverage expanded for dynamic canonical guidance, empty-state fallback, deterministic ordering, and legacy hard-coded literal removal.
+- ✅ Validation completed: focused NLP/commands tests and live `TestR16*` integration tests pass; broader `go test ./internal/ruriko/...` suite passes after migration/concurrency store fixes.
+
 ### R16.4 Agent ID Sanitisation in NLP Path
 
 - [ ] Sanitise agent IDs produced by the LLM to lowercase before dispatch:
