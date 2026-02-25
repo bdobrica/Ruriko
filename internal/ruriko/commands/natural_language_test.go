@@ -1,8 +1,12 @@
 package commands
 
 import (
+	"reflect"
 	"testing"
 	"time"
+
+	"github.com/bdobrica/Ruriko/internal/ruriko/nlp"
+	"github.com/bdobrica/Ruriko/internal/ruriko/templates"
 )
 
 // TestParseIntent_CreateAgent verifies that common natural-language phrases
@@ -467,6 +471,53 @@ func TestActionKeyToCommand_RawText(t *testing.T) {
 	// Should NOT contain bare positional args after the action words.
 	if contains(raw, "create saito") {
 		t.Errorf("RawText still contains positional args: %q", raw)
+	}
+}
+
+func TestBuildCanonicalAgentsFromTemplateInfos_NormalizesDedupesAndSorts(t *testing.T) {
+	infos := []templates.TemplateInfo{
+		{
+			Name:          "  kumo-agent  ",
+			CanonicalName: "  Kumo  ",
+			Description:   "  News/search agent  ",
+		},
+		{
+			Name:          "kumo-duplicate",
+			CanonicalName: "kumo",
+			Description:   "duplicate should be ignored",
+		},
+		{
+			Name:          "kairo-agent",
+			CanonicalName: " KAIRO ",
+			Description:   " Finance agent ",
+		},
+		{
+			Name:          "missing-canonical",
+			CanonicalName: "   ",
+			Description:   "invalid: empty canonical",
+		},
+		{
+			Name:          "   ",
+			CanonicalName: "saito",
+			Description:   "invalid: empty template",
+		},
+	}
+
+	got := buildCanonicalAgentsFromTemplateInfos(infos)
+	want := []nlp.CanonicalAgentSpec{
+		{Name: "kairo", Role: "Finance agent", Template: "kairo-agent"},
+		{Name: "kumo", Role: "News/search agent", Template: "kumo-agent"},
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("buildCanonicalAgentsFromTemplateInfos()\n got: %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestBuildCanonicalAgentsFromTemplateInfos_EmptyInput(t *testing.T) {
+	got := buildCanonicalAgentsFromTemplateInfos(nil)
+	if got != nil {
+		t.Fatalf("expected nil for empty input, got: %#v", got)
 	}
 }
 

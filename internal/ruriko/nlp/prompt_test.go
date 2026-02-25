@@ -374,3 +374,94 @@ func TestBuildSystemPrompt_CanonicalAgentsSectionIsBeforeJSONSchema(t *testing.T
 		t.Error("CANONICAL AGENTS section must appear before JSON RESPONSE SCHEMA")
 	}
 }
+
+func TestBuildSystemPrompt_NormalizesAndSortsCanonicalAgents(t *testing.T) {
+	prompt := nlp.BuildSystemPrompt(
+		nlp.DefaultCatalogue(),
+		nil,
+		nil,
+		[]nlp.CanonicalAgentSpec{
+			{Name: "  Kumo  ", Role: "  News/search  ", Template: "kumo-agent"},
+			{Name: "", Role: "missing name", Template: "invalid-template"},
+			{Name: "saito", Role: "trigger", Template: ""},
+			{Name: "KAIRO", Role: " finance ", Template: "kairo-agent"},
+		},
+	)
+
+	if !strings.Contains(prompt, "- kairo:") {
+		t.Fatal("expected normalized canonical name 'kairo' to be present")
+	}
+	if !strings.Contains(prompt, "- kumo:") {
+		t.Fatal("expected normalized canonical name 'kumo' to be present")
+	}
+	if strings.Contains(prompt, "- Kumo:") || strings.Contains(prompt, "- KAIRO:") {
+		t.Fatal("canonical names should be normalized to lowercase")
+	}
+	if strings.Contains(prompt, "invalid-template") {
+		t.Fatal("entry with empty canonical name should be dropped")
+	}
+
+	// Canonical section should be sorted by normalized name: kairo before kumo.
+	kairoIdx := strings.Index(prompt, "- kairo:")
+	kumoIdx := strings.Index(prompt, "- kumo:")
+	if kairoIdx == -1 || kumoIdx == -1 {
+		t.Fatal("expected both kairo and kumo entries")
+	}
+	if kairoIdx > kumoIdx {
+		t.Fatalf("canonical entries not sorted: kairo index=%d kumo index=%d", kairoIdx, kumoIdx)
+	}
+
+	// Dynamic guidance should also use normalized names.
+	if !strings.Contains(prompt, "\"set up kairo\"") {
+		t.Fatal("dynamic creation guidance should include normalized 'set up kairo' mapping")
+	}
+	if !strings.Contains(prompt, "\"set up kumo\"") {
+		t.Fatal("dynamic creation guidance should include normalized 'set up kumo' mapping")
+	}
+}
+
+func TestBuildSystemPrompt_CanonicalGuidanceIsTemplateDriven(t *testing.T) {
+	prompt := nlp.BuildSystemPrompt(
+		nlp.DefaultCatalogue(),
+		nil,
+		[]string{"alpha-agent", "beta-agent"},
+		[]nlp.CanonicalAgentSpec{
+			{Name: "alpha", Role: "internal workflow coordinator", Template: "alpha-agent"},
+			{Name: "beta", Role: "document retrieval specialist", Template: "beta-agent"},
+		},
+	)
+
+	for _, want := range []string{
+		"Canonical create mappings (derived from templates)",
+		"\"set up alpha\"",
+		"template=alpha-agent",
+		"\"set up beta\"",
+		"template=beta-agent",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing expected dynamic canonical guidance fragment %q", want)
+		}
+	}
+
+	// Ensure the prompt does not depend on the legacy hard-coded literal examples.
+	for _, legacy := range []string{
+		"\"set up Saito\"",
+		"\"create Kairo\"",
+		"\"set up a news agent\"",
+	} {
+		if strings.Contains(prompt, legacy) {
+			t.Fatalf("prompt still contains legacy hard-coded canonical example %q", legacy)
+		}
+	}
+}
+
+func TestBuildSystemPrompt_EmptyCanonicalListShowsFallbackGuidance(t *testing.T) {
+	prompt := nlp.BuildSystemPrompt(nlp.DefaultCatalogue(), nil, nil, nil)
+
+	if !strings.Contains(prompt, "(none defined)") {
+		t.Fatal("expected canonical summary empty-state marker '(none defined)'")
+	}
+	if !strings.Contains(prompt, "No canonical singleton identities are defined. Choose template names from AVAILABLE TEMPLATES.") {
+		t.Fatal("expected canonical creation guidance empty-state fallback")
+	}
+}

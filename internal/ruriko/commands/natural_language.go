@@ -38,6 +38,7 @@ import (
 	"github.com/bdobrica/Ruriko/internal/ruriko/memory"
 	"github.com/bdobrica/Ruriko/internal/ruriko/nlp"
 	"github.com/bdobrica/Ruriko/internal/ruriko/store"
+	"github.com/bdobrica/Ruriko/internal/ruriko/templates"
 )
 
 // ---------------------------------------------------------------------------
@@ -60,6 +61,51 @@ type ParsedIntent struct {
 	TemplateName string // canonical template name, e.g. "saito-agent"
 	AgentName    string // derived lowercase agent ID, e.g. "saito"
 	Raw          string // original message text
+}
+
+// buildCanonicalAgentsFromTemplateInfos derives canonical-agent NLP context
+// from template metadata with normalization and deterministic ordering.
+//
+// Rules:
+//   - canonical name is trimmed and lowercased
+//   - template name is trimmed
+//   - entries with empty canonical or template name are dropped
+//   - duplicate canonical names are deduplicated (first occurrence wins)
+//   - output is sorted by canonical name, then template name
+func buildCanonicalAgentsFromTemplateInfos(infos []templates.TemplateInfo) []nlp.CanonicalAgentSpec {
+	if len(infos) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]struct{}, len(infos))
+	out := make([]nlp.CanonicalAgentSpec, 0, len(infos))
+
+	for _, info := range infos {
+		canonicalName := strings.ToLower(strings.TrimSpace(info.CanonicalName))
+		templateName := strings.TrimSpace(info.Name)
+		if canonicalName == "" || templateName == "" {
+			continue
+		}
+		if _, exists := seen[canonicalName]; exists {
+			continue
+		}
+		seen[canonicalName] = struct{}{}
+
+		out = append(out, nlp.CanonicalAgentSpec{
+			Name:     canonicalName,
+			Role:     strings.TrimSpace(info.Description),
+			Template: templateName,
+		})
+	}
+
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Name == out[j].Name {
+			return out[i].Template < out[j].Template
+		}
+		return out[i].Name < out[j].Name
+	})
+
+	return out
 }
 
 // templateKeywords maps lower-case keywords to canonical template names.
@@ -647,16 +693,7 @@ func (h *Handlers) handleNLClassify(ctx context.Context, text, roomID, senderMXI
 	var canonicalAgents []nlp.CanonicalAgentSpec
 	if h.templates != nil {
 		if infos, err := h.templates.DescribeAll(); err == nil {
-			for _, info := range infos {
-				if info.CanonicalName == "" {
-					continue
-				}
-				canonicalAgents = append(canonicalAgents, nlp.CanonicalAgentSpec{
-					Name:     info.CanonicalName,
-					Role:     info.Description,
-					Template: info.Name,
-				})
-			}
+			canonicalAgents = buildCanonicalAgentsFromTemplateInfos(infos)
 		}
 	}
 

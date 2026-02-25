@@ -294,6 +294,8 @@ func DefaultCatalogue() Catalogue {
 //  3. %s — available template names (one per line)
 //  4. %s — canonical agent knowledge (canonicalAgentSummary); derived from
 //     the Gosuto template registry by the caller via DescribeAll().
+//  5. %s — canonical creation guidance/examples generated from canonical
+//     agent metadata (canonicalCreationGuidance).
 //
 // This constant is defined here (not in openai.go) so it can be tested and
 // extended independently of the HTTP transport layer.
@@ -361,11 +363,8 @@ When the user asks to create or "set up" ANY agent by name OR by role descriptio
 ALWAYS return intent="command" or intent="plan" (for multiple agents).
 Do NOT ask about schedule, configuration, or any other detail for bare create requests.
 Confidence MUST be ≥ 0.9. Examples:
-  "set up Saito"        → intent="command" action="agents.create" flags: name=saito template=saito-agent image=gitai:latest
-  "create Kairo"        → intent="command" action="agents.create" flags: name=kairo template=kairo-agent image=gitai:latest
-  "set up a news agent" → intent="command" action="agents.create" flags: name=kumo  template=kumo-agent  image=gitai:latest
-  "set up Saito and Kumo" → intent="plan" with two agents.create steps (saito + kumo)
 The template is chosen from CANONICAL AGENTS or AVAILABLE TEMPLATES; image defaults to gitai:latest.
+%s
 
 CRON EXPRESSION MAPPING (use when the user's message includes a schedule phrase):
 - "every 15 minutes"                       → */15 * * * *
@@ -388,11 +387,8 @@ Exception: frequency-only phrases with no time ambiguity ("every 15 minutes",
 "every hour") may be converted directly using the CRON EXPRESSION MAPPING above.
 
 SINGLE-AGENT CREATE EXAMPLE (follow this exact structure):
-User: "set up Saito"
-Output: {"intent":"command","action":"agents.create","args":[],"flags":{"name":"saito","template":"saito-agent","image":"gitai:latest"},"explanation":"Create Saito cron/trigger agent.","confidence":0.95}
-
-User: "set up a news agent"
-Output: {"intent":"command","action":"agents.create","args":[],"flags":{"name":"kumo","template":"kumo-agent","image":"gitai:latest"},"explanation":"Create Kumo news/search agent.","confidence":0.90}
+User: "set up <canonical-name>"
+Output: {"intent":"command","action":"agents.create","args":[],"flags":{"name":"<canonical-name>","template":"<template-from-canonical-mapping>","image":"gitai:latest"},"explanation":"Create canonical agent from template mapping.","confidence":0.95}
 
 JSON RESPONSE SCHEMA (include only fields relevant to the intent):
 {
@@ -411,6 +407,7 @@ JSON RESPONSE SCHEMA (include only fields relevant to the intent):
 // system prompt.  Each entry is rendered as a multi-line stanza so the LLM
 // can clearly match user intent (e.g. "Saito") to template + role.
 func canonicalAgentSummary(agents []CanonicalAgentSpec) string {
+	agents = normalizeCanonicalAgents(agents)
 	if len(agents) == 0 {
 		return "(none defined)"
 	}
@@ -425,6 +422,63 @@ func canonicalAgentSummary(agents []CanonicalAgentSpec) string {
 		sb.WriteString(".\n")
 	}
 	return sb.String()
+}
+
+// canonicalCreationGuidance builds dynamic creation examples from canonical
+// agent metadata. This keeps identity-specific guidance out of static prompt
+// text so adding a new canonical template is plug-and-play.
+func canonicalCreationGuidance(agents []CanonicalAgentSpec) string {
+	agents = normalizeCanonicalAgents(agents)
+	if len(agents) == 0 {
+		return "No canonical singleton identities are defined. Choose template names from AVAILABLE TEMPLATES."
+	}
+
+	var sb strings.Builder
+	sb.WriteString("Canonical create mappings (derived from templates):\n")
+	for _, a := range agents {
+		sb.WriteString("  - \"")
+		sb.WriteString("set up ")
+		sb.WriteString(a.Name)
+		sb.WriteString("\" → intent=\"command\" action=\"agents.create\" flags: name=")
+		sb.WriteString(a.Name)
+		sb.WriteString(" template=")
+		sb.WriteString(a.Template)
+		sb.WriteString(" image=gitai:latest")
+		if role := strings.TrimSpace(a.Role); role != "" {
+			sb.WriteString(" (role: ")
+			sb.WriteString(role)
+			sb.WriteString(")")
+		}
+		sb.WriteString("\n")
+	}
+	if len(agents) >= 2 {
+		sb.WriteString("  - Multi-agent form: \"set up <canonical-1> and <canonical-2>\" → intent=\"plan\" with one agents.create step per canonical agent.\n")
+	}
+	return sb.String()
+}
+
+// normalizeCanonicalAgents sanitizes and orders canonical agent specs before
+// rendering them in the prompt. Invalid entries are dropped.
+func normalizeCanonicalAgents(agents []CanonicalAgentSpec) []CanonicalAgentSpec {
+	normalized := make([]CanonicalAgentSpec, 0, len(agents))
+	for _, a := range agents {
+		name := strings.ToLower(strings.TrimSpace(a.Name))
+		template := strings.TrimSpace(a.Template)
+		if name == "" || template == "" {
+			continue
+		}
+		normalized = append(normalized, CanonicalAgentSpec{
+			Name:     name,
+			Role:     strings.TrimSpace(a.Role),
+			Template: template,
+		})
+	}
+
+	sort.SliceStable(normalized, func(i, j int) bool {
+		return normalized[i].Name < normalized[j].Name
+	})
+
+	return normalized
 }
 
 // agentSummary formats agent descriptors for the system prompt context block.
@@ -477,5 +531,6 @@ func BuildSystemPrompt(catalogue Catalogue, knownAgents []string, knownTemplates
 		agentSummary(knownAgents),
 		templateSummary(knownTemplates),
 		canonicalAgentSummary(canonicalAgents),
+		canonicalCreationGuidance(canonicalAgents),
 	)
 }
