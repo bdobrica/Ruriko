@@ -1,4 +1,4 @@
-.PHONY: all build build-ruriko build-gitai build-tools test lint fmt clean run-ruriko run-gitai install help
+.PHONY: all build build-ruriko build-gitai build-tools test test-integration lint fmt clean run-ruriko run-gitai install help
 
 # Build variables
 BINARY_DIR := bin
@@ -50,6 +50,11 @@ test-coverage: test ## Generate test coverage report
 	@echo "Generating coverage report..."
 	$(GO) tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
+
+test-integration: ## Run live LLM integration tests (requires RURIKO_NLP_API_KEY)
+	@echo "Running integration tests..."
+	@KEY=$${RURIKO_NLP_API_KEY:-$$(grep '^RURIKO_NLP_API_KEY=' examples/docker-compose/.env 2>/dev/null | cut -d= -f2)}; \
+	RURIKO_NLP_API_KEY=$$KEY $(GO) test -v -race -run TestR16 ./internal/ruriko/nlp/
 
 lint: ## Run linter
 	@echo "Running linter..."

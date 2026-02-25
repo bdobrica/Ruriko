@@ -154,8 +154,8 @@ The MVP is ready when **all** of the following are true:
   > source of truth — no hard-coded agent knowledge in code.
 - [x] Include canonical role knowledge in the LLM context alongside command catalogue
 - [x] When user mentions "Saito", "Kairo", or "Kumo", the LLM should understand what they are
-- [ ] Test: LLM correctly maps "set up Saito" to `agents.create --name saito --template saito-agent`
-- [ ] Test: LLM correctly maps "set up a news agent" to `agents.create --template kumo-agent`
+- [x] Test: LLM correctly maps "set up Saito" to `agents.create --name saito --template saito-agent`
+- [x] Test: LLM correctly maps "set up a news agent" to `agents.create --template kumo-agent`
 
 ### R16.2 Multi-Agent Workflow Decomposition
 
