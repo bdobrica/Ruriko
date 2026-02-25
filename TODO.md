@@ -536,6 +536,45 @@ The MVP is ready when **all** of the following are true:
 
 ---
 
+## 📋 Phase R19: Control-Plane Hardening for Untrusted Networks (Post-MVP)
+
+**Goal**: Make hardened Docker-runtime validation repeatable and add ACP mTLS for multi-host / untrusted-network deployments without regressing the single-host MVP defaults.
+
+> Post-MVP phase derived from CODE_REVIEW follow-up items.
+
+### R19.1 Hardened Docker socket-proxy verification
+
+- [ ] Add operator-facing verification examples in `docs/ops/deployment-docker.md` for hardened mode (`DOCKER_ENABLE=true` + socket proxy)
+- [ ] Add integration checks (script-based) that validate:
+  - [ ] Ruriko uses proxy endpoint (no direct `/var/run/docker.sock` mount in hardened profile)
+  - [ ] Required lifecycle operations succeed via allowlisted proxy APIs (create/start/stop/inspect/remove)
+  - [ ] Disallowed Docker API routes are denied by proxy policy
+- [ ] Add CI job/profile to run hardened socket-proxy verification (opt-in or scheduled)
+- [ ] Add troubleshooting section for common proxy misconfiguration failures
+
+### R19.2 ACP mTLS for multi-host / untrusted-network topologies
+
+- [ ] Add ACP listener TLS mode in Gitai control server with client cert verification (mTLS)
+- [ ] Add ACP client TLS config in Ruriko runtime/acp (CA bundle, client cert/key, server-name validation)
+- [ ] Define certificate lifecycle:
+  - [ ] Issuance/bootstrap flow (dev + production guidance)
+  - [ ] Rotation strategy with overlap window
+  - [ ] Revocation/compromise response procedure
+- [ ] Keep MVP single-host mode explicit: private Docker network + bearer token remains supported default
+- [ ] Add tests:
+  - [ ] Positive path: valid cert chain + mutual auth succeeds
+  - [ ] Negative path: missing/invalid/expired certs are rejected
+  - [ ] Downgrade protection: unencrypted ACP refused when TLS-required mode is enabled
+- [ ] Update docs (`docs/architecture.md`, `docs/threat-model.md`, `OPERATIONS.md`) with deployment matrix and migration steps
+
+### Definition of done
+
+- Hardened socket-proxy mode is documented, verifiable, and CI-covered
+- ACP mTLS is implemented for untrusted-network deployments with certificate lifecycle guidance
+- Existing single-host Docker MVP remains operational with documented default trust boundary
+
+---
+
 ## 🚀 Post-MVP Roadmap (explicitly not required now)
 
 - [ ] Reverse RPC broker (agents behind NAT without inbound connectivity)
@@ -558,7 +597,7 @@ The MVP is ready when **all** of the following are true:
 - [ ] Gateway marketplace / vetted registry for community-contributed gateways
 - [ ] Inter-agent communication hardening (content inspection, circuit breakers, graph analysis)
 - [ ] Signed inter-agent messages for non-repudiation
-- [ ] ACP transport hardening: add mTLS for Ruriko ↔ Gitai control-plane traffic (cert issuance, rotation, and revocation)
+- [ ] Phase R19 (post-MVP): control-plane hardening for untrusted networks (socket-proxy verification + ACP mTLS)
 
 ---
 
@@ -595,10 +634,11 @@ The MVP is ready when **all** of the following are true:
 - [ ] Phase R6: Canonical Workflow — Saito → Kairo → Kumo
 - [ ] Phase R17: Gosuto Template Customization at Provision Time
 - [ ] Phase R18: Gitai Conversation Memory — Agent-Side STM/LTM
+- [ ] Phase R19: Control-Plane Hardening for Untrusted Networks (Post-MVP)
 - [ ] Phase R7: Observability, Safety, and Polish
 - [ ] Phase R8: Integration and End-to-End Testing
 
 ---
 
-**Last Updated**: 2026-02-25
+**Last Updated**: 2026-02-26
 **Current Focus**: Phase R6 — Canonical Workflow: Saito → Kairo → Kumo (depends on R5 ✅, R14 ✅, R15 ✅, R16 ✅)

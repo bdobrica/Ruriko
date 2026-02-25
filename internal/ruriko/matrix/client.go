@@ -69,8 +69,8 @@ func (c *Client) Start(ctx context.Context, handler MessageHandler) error {
 	// NOTE: E2EE (end-to-end encryption) is not currently implemented.
 	// All messages are sent and received in plaintext. Secret values
 	// transmitted via Matrix commands are visible in room history.
-	// See issue #13 in CODE_REVIEW.md — implementing E2EE requires olm
-	// session management via the mautrix crypto store.
+	// Implementing E2EE requires olm session management via the mautrix
+	// crypto store and additional key lifecycle handling.
 	slog.Warn("Matrix E2EE is not enabled; messages are transmitted in plaintext")
 
 	// Set up event handler

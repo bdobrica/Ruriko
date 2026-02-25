@@ -118,6 +118,20 @@ Agents cannot:
 
 ---
 
+# 🛡️ CI Security Automation
+
+Security and supply-chain checks run automatically in GitHub Actions via `.github/workflows/security-supply-chain.yml`.
+
+It runs on pull requests, pushes to `main`, and weekly on schedule, and includes:
+
+* `govulncheck ./...` for Go dependency/runtime vulnerability detection
+* CycloneDX SBOM generation (`ruriko-go-mod.cdx.json`)
+* Trivy image scanning for `ruriko` and `gitai` (fails on `HIGH`/`CRITICAL`)
+
+To retrieve SBOM output, open a workflow run in **Actions** and download the artifact named **`sbom-cyclonedx`**.
+
+---
+
 # 📡 Communication Model
 
 Ruriko uses **three distinct channels**:
