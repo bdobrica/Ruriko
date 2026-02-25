@@ -346,6 +346,58 @@ type conversationStore struct {
 	sessions map[string]*conversationSession // key: roomID+":"+senderMXID
 }
 
+const nlHistoryFallbackMaxMessages = 20
+
+// nlHistoryStore keeps a bounded in-memory conversation history per
+// room+sender for NLP calls when the R10 memory subsystem is unavailable.
+type nlHistoryStore struct {
+	mu       sync.Mutex
+	history  map[string][]nlp.HistoryMessage // key: roomID+":"+senderMXID
+	maxItems int
+}
+
+func newNLHistoryStore() *nlHistoryStore {
+	return &nlHistoryStore{
+		history:  make(map[string][]nlp.HistoryMessage),
+		maxItems: nlHistoryFallbackMaxMessages,
+	}
+}
+
+func (hs *nlHistoryStore) sessionKey(roomID, senderMXID string) string {
+	return roomID + ":" + senderMXID
+}
+
+func (hs *nlHistoryStore) get(roomID, senderMXID string) []nlp.HistoryMessage {
+	hs.mu.Lock()
+	defer hs.mu.Unlock()
+
+	key := hs.sessionKey(roomID, senderMXID)
+	messages := hs.history[key]
+	if len(messages) == 0 {
+		return nil
+	}
+	out := make([]nlp.HistoryMessage, len(messages))
+	copy(out, messages)
+	return out
+}
+
+func (hs *nlHistoryStore) append(roomID, senderMXID, role, content string) {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return
+	}
+
+	hs.mu.Lock()
+	defer hs.mu.Unlock()
+
+	key := hs.sessionKey(roomID, senderMXID)
+	messages := append(hs.history[key], nlp.HistoryMessage{Role: role, Content: content})
+	if hs.maxItems > 0 && len(messages) > hs.maxItems {
+		messages = messages[len(messages)-hs.maxItems:]
+	}
+	hs.history[key] = messages
+}
+
 func newConversationStore() *conversationStore {
 	return &conversationStore{
 		sessions: make(map[string]*conversationSession),
@@ -707,14 +759,14 @@ func (h *Handlers) handleNLClassify(ctx context.Context, text, roomID, senderMXI
 	}
 
 	// --- Memory: record user message and assemble history --------------------
-	if h.memory != nil && h.memory.STM != nil {
-		_, sealed := h.memory.STM.RecordMessage(roomID, senderMXID, "user", text)
-		// Hand sealed conversations to the LTM pipeline (fire-and-forget).
-		for _, s := range sealed {
-			h.handleSealedConversation(ctx, s)
-		}
-	}
 	if h.memory != nil {
+		if h.memory.STM != nil {
+			_, sealed := h.memory.STM.RecordMessage(roomID, senderMXID, "user", text)
+			// Hand sealed conversations to the LTM pipeline (fire-and-forget).
+			for _, s := range sealed {
+				h.handleSealedConversation(ctx, s)
+			}
+		}
 		history, assembleErr := h.memory.Assemble(ctx, roomID, senderMXID, text)
 		if assembleErr != nil {
 			slog.Warn("memory: context assembly failed; proceeding without history",
@@ -725,6 +777,11 @@ func (h *Handlers) handleNLClassify(ctx context.Context, text, roomID, senderMXI
 		} else {
 			req.ConversationHistory = memoryToNLPHistory(history)
 		}
+	} else if h.nlHistoryFallback != nil {
+		// R16.5 fallback when R10 memory is not configured: include previous
+		// same-session messages from an in-memory per room+sender buffer.
+		req.ConversationHistory = h.nlHistoryFallback.get(roomID, senderMXID)
+		h.nlHistoryFallback.append(roomID, senderMXID, "user", text)
 	}
 
 	resp, err := provider.Classify(ctx, req)
@@ -1006,6 +1063,41 @@ var positionalToFlagMapping = map[string][]string{
 	"agents.create": {"name", "template", "image"},
 }
 
+// actionAgentIDFlagMapping defines which flag contains the agent ID for an
+// action key. Values in these flags are normalised to lowercase in the NL
+// dispatch path before command execution.
+var actionAgentIDFlagMapping = map[string]string{
+	"agents.create": "name",
+}
+
+// actionAgentIDArgIndexMapping defines actions whose positional argument at
+// the given index is an agent ID. Those values are normalised to lowercase in
+// the NL dispatch path before command execution.
+var actionAgentIDArgIndexMapping = map[string]int{
+	"agents.show":     0,
+	"agents.stop":     0,
+	"agents.start":    0,
+	"agents.respawn":  0,
+	"agents.status":   0,
+	"agents.cancel":   0,
+	"agents.delete":   0,
+	"agents.matrix":   0,
+	"agents.disable":  0,
+	"gosuto.show":     0,
+	"gosuto.versions": 0,
+	"gosuto.diff":     0,
+	"gosuto.set":      0,
+	"gosuto.rollback": 0,
+	"gosuto.push":     0,
+	"secrets.bind":    0,
+	"secrets.unbind":  0,
+	"secrets.push":    0,
+}
+
+func normaliseNLAgentID(id string) string {
+	return strings.ToLower(strings.TrimSpace(id))
+}
+
 // actionKeyToCommand builds a synthetic *Command from a dot-separated action
 // key (e.g. "agents.list"), positional args, and a flag map.  The resulting
 // Command is safe to pass directly to a DispatchFunc.
@@ -1040,6 +1132,18 @@ func actionKeyToCommand(action string, args []string, flags map[string]string) *
 		args = remaining
 		if args == nil {
 			args = []string{}
+		}
+	}
+
+	// Normalise agent IDs produced by the LLM before dispatching.
+	if flagName, ok := actionAgentIDFlagMapping[action]; ok {
+		if v, exists := flags[flagName]; exists {
+			flags[flagName] = normaliseNLAgentID(v)
+		}
+	}
+	if argIndex, ok := actionAgentIDArgIndexMapping[action]; ok {
+		if argIndex >= 0 && argIndex < len(args) {
+			args[argIndex] = normaliseNLAgentID(args[argIndex])
 		}
 	}
 
@@ -1132,6 +1236,9 @@ func memoryToNLPHistory(msgs []memory.Message) []nlp.HistoryMessage {
 // memory is not configured.
 func (h *Handlers) recordAssistantMessage(roomID, senderMXID, content string) {
 	if h.memory == nil || h.memory.STM == nil {
+		if h.nlHistoryFallback != nil {
+			h.nlHistoryFallback.append(roomID, senderMXID, "assistant", content)
+		}
 		return
 	}
 	h.memory.STM.RecordMessage(roomID, senderMXID, "assistant", content)

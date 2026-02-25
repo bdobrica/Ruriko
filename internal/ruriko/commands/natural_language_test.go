@@ -474,6 +474,49 @@ func TestActionKeyToCommand_RawText(t *testing.T) {
 	}
 }
 
+func TestActionKeyToCommand_AgentIDLowercasedInCreateFlags(t *testing.T) {
+	cmd := actionKeyToCommand(
+		"agents.create",
+		nil,
+		map[string]string{"name": "Saito", "template": "saito-agent", "image": "gitai:latest"},
+	)
+
+	got := cmd.GetFlag("name", "")
+	if got != "saito" {
+		t.Fatalf("name flag: got %q, want %q", got, "saito")
+	}
+	if err := validateAgentID(got); err != nil {
+		t.Fatalf("validateAgentID(%q): %v", got, err)
+	}
+}
+
+func TestActionKeyToCommand_AgentIDLowercasedFromCreatePositionalArg(t *testing.T) {
+	cmd := actionKeyToCommand("agents.create", []string{"Kumo-Agent", "kumo-agent"}, nil)
+
+	got := cmd.GetFlag("name", "")
+	if got != "kumo-agent" {
+		t.Fatalf("name flag: got %q, want %q", got, "kumo-agent")
+	}
+	if err := validateAgentID(got); err != nil {
+		t.Fatalf("validateAgentID(%q): %v", got, err)
+	}
+}
+
+func TestActionKeyToCommand_AgentIDLowercasedInArgBasedActions(t *testing.T) {
+	cmd := actionKeyToCommand("agents.stop", []string{"Saito"}, nil)
+
+	got, ok := cmd.GetArg(0)
+	if !ok {
+		t.Fatal("expected arg[0] to be present")
+	}
+	if got != "saito" {
+		t.Fatalf("arg[0]: got %q, want %q", got, "saito")
+	}
+	if err := validateAgentID(got); err != nil {
+		t.Fatalf("validateAgentID(%q): %v", got, err)
+	}
+}
+
 func TestBuildCanonicalAgentsFromTemplateInfos_NormalizesDedupesAndSorts(t *testing.T) {
 	infos := []templates.TemplateInfo{
 		{

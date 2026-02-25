@@ -205,23 +205,23 @@ The MVP is ready when **all** of the following are true:
 
 ### R16.4 Agent ID Sanitisation in NLP Path
 
-- [ ] Sanitise agent IDs produced by the LLM to lowercase before dispatch:
+- [x] Sanitise agent IDs produced by the LLM to lowercase before dispatch:
   - LLM returns "Saito" → normalise to "saito"
   - LLM returns "Kumo-Agent" → normalise to "kumo-agent"
-- [ ] Apply sanitisation in `actionKeyToCommand()` / the NL dispatch path
-- [ ] Test: Uppercase agent names from LLM are normalised
-- [ ] Test: Normalised names pass `validateAgentID()`
+- [x] Apply sanitisation in `actionKeyToCommand()` / the NL dispatch path
+- [x] Test: Uppercase agent names from LLM are normalised
+- [x] Test: Normalised names pass `validateAgentID()`
 
 ### R16.5 Conversation History in NLP Calls
 
-- [ ] Send conversation history (short-term memory from R10) to the NLP classifier:
+- [x] Send conversation history (short-term memory from R10) to the NLP classifier:
   - Include previous messages in the same conversation session
   - Prevents the LLM from losing context mid-conversation
   - Eliminates the "could you clarify?" clarification loops
-- [ ] If R10 is not yet implemented, maintain a simple in-memory message buffer per room+sender
+- [x] If R10 is not yet implemented, maintain a simple in-memory message buffer per room+sender
   (reuse the existing `conversationStore` pattern from R5.4)
-- [ ] Test: Second message in a conversation has context from the first
-- [ ] Test: Clarification response has context from the original request
+- [x] Test: Second message in a conversation has context from the first
+- [x] Test: Clarification response has context from the original request
 
 ### R16.6 Retry with Re-query (Not Same Broken Command)
 

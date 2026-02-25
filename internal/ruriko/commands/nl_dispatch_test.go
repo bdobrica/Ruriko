@@ -25,22 +25,36 @@ import (
 
 // nlpStub is a fixed-response nlp.Provider used in NL dispatch tests.
 type nlpStub struct {
-	resp *nlp.ClassifyResponse
-	err  error
+	resp      *nlp.ClassifyResponse
+	responses []*nlp.ClassifyResponse
+	err       error
+	requests  []nlp.ClassifyRequest
 }
 
-func (s *nlpStub) Classify(_ context.Context, _ nlp.ClassifyRequest) (*nlp.ClassifyResponse, error) {
+func (s *nlpStub) Classify(_ context.Context, req nlp.ClassifyRequest) (*nlp.ClassifyResponse, error) {
+	s.requests = append(s.requests, req)
+
 	if s.err != nil {
 		return nil, s.err
 	}
-	cp := *s.resp
+
+	selected := s.resp
+	if len(s.responses) > 0 {
+		selected = s.responses[0]
+		s.responses = s.responses[1:]
+	}
+	if selected == nil {
+		return nil, fmt.Errorf("nlp stub has no response configured")
+	}
+
+	cp := *selected
 	// Shallow-copy slices so mutations in the handler don't affect subsequent
 	// calls.
-	if s.resp.ReadQueries != nil {
-		cp.ReadQueries = append([]string(nil), s.resp.ReadQueries...)
+	if selected.ReadQueries != nil {
+		cp.ReadQueries = append([]string(nil), selected.ReadQueries...)
 	}
-	if s.resp.Steps != nil {
-		cp.Steps = append([]nlp.CommandStep(nil), s.resp.Steps...)
+	if selected.Steps != nil {
+		cp.Steps = append([]nlp.CommandStep(nil), selected.Steps...)
 	}
 	return &cp, nil
 }
@@ -775,5 +789,112 @@ func TestHandleNaturalLanguage_NilUsageNotPanics(t *testing.T) {
 	}
 	if got := budget.Used("@alice:example.com"); got != 0 {
 		t.Errorf("expected 0 tokens recorded when Usage is nil, got %d", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// R16.5 Conversation History in NLP Calls
+// ---------------------------------------------------------------------------
+
+func TestHandleNaturalLanguage_R16History_SecondMessageIncludesFirst(t *testing.T) {
+	stub := &nlpStub{responses: []*nlp.ClassifyResponse{
+		{
+			Intent:   nlp.IntentConversational,
+			Response: "Sure — what time should this run?",
+		},
+		{
+			Intent:   nlp.IntentConversational,
+			Response: "Got it, I'll use 9:00 AM.",
+		},
+	}}
+
+	h := newNLHandlers(stub, nil)
+	evt := nlpFakeEvent()
+
+	_, err := h.HandleNaturalLanguage(context.Background(), "set up saito to send a daily summary", evt)
+	if err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+	_, err = h.HandleNaturalLanguage(context.Background(), "at 9am", evt)
+	if err != nil {
+		t.Fatalf("second call: %v", err)
+	}
+
+	if len(stub.requests) != 2 {
+		t.Fatalf("expected 2 classify calls, got %d", len(stub.requests))
+	}
+
+	if len(stub.requests[0].ConversationHistory) != 0 {
+		t.Errorf("first request history should be empty for a fresh conversation, got: %#v", stub.requests[0].ConversationHistory)
+	}
+
+	secondHistory := stub.requests[1].ConversationHistory
+	if len(secondHistory) == 0 {
+		t.Fatalf("second request should include conversation history")
+	}
+
+	var sawFirstUser bool
+	for _, msg := range secondHistory {
+		if msg.Role == "user" && strings.Contains(msg.Content, "set up saito") {
+			sawFirstUser = true
+			break
+		}
+	}
+	if !sawFirstUser {
+		t.Errorf("second request history missing first user message: %#v", secondHistory)
+	}
+}
+
+func TestHandleNaturalLanguage_R16History_ClarificationRetainsOriginalRequest(t *testing.T) {
+	stub := &nlpStub{responses: []*nlp.ClassifyResponse{
+		{
+			Intent:   nlp.IntentUnknown,
+			Response: "Could you clarify what time every morning should mean?",
+		},
+		{
+			Intent:     nlp.IntentCommand,
+			Action:     "agents.create",
+			Flags:      map[string]string{"name": "saito", "template": "saito-agent", "image": "gitai:latest"},
+			Confidence: 0.92,
+		},
+	}}
+
+	h := newNLHandlers(stub, nil)
+	evt := nlpFakeEvent()
+
+	_, err := h.HandleNaturalLanguage(context.Background(), "set up saito every morning", evt)
+	if err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+	_, err = h.HandleNaturalLanguage(context.Background(), "8am please", evt)
+	if err != nil {
+		t.Fatalf("second call: %v", err)
+	}
+
+	if len(stub.requests) != 2 {
+		t.Fatalf("expected 2 classify calls, got %d", len(stub.requests))
+	}
+
+	secondHistory := stub.requests[1].ConversationHistory
+	if len(secondHistory) == 0 {
+		t.Fatalf("second request should include history after clarification")
+	}
+
+	var sawOriginalRequest bool
+	var sawClarification bool
+	for _, msg := range secondHistory {
+		if msg.Role == "user" && strings.Contains(msg.Content, "set up saito every morning") {
+			sawOriginalRequest = true
+		}
+		if msg.Role == "assistant" && strings.Contains(msg.Content, "clarify") {
+			sawClarification = true
+		}
+	}
+
+	if !sawOriginalRequest {
+		t.Errorf("history missing original request, got: %#v", secondHistory)
+	}
+	if !sawClarification {
+		t.Errorf("history missing clarification response, got: %#v", secondHistory)
 	}
 }

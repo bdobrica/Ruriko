@@ -139,6 +139,10 @@ type Handlers struct {
 	// Nil when memory archival is disabled.
 	sealPipeline *memory.SealPipeline
 
+	// nlHistoryFallback stores short-term conversation history per room+sender
+	// for NLP calls when the R10 memory assembler is not configured.
+	nlHistoryFallback *nlHistoryStore
+
 	// nlpProviderMu guards nlpProviderCache for concurrent-safe lazy rebuilds.
 	nlpProviderMu sync.RWMutex
 
@@ -181,6 +185,7 @@ func NewHandlers(cfg HandlersConfig) *Handlers {
 		nlpEnvAPIKey:      cfg.NLPEnvAPIKey,
 		memory:            cfg.Memory,
 		sealPipeline:      cfg.SealPipeline,
+		nlHistoryFallback: newNLHistoryStore(),
 	}
 }
 
