@@ -1008,7 +1008,14 @@ func (a *App) runEventTurn(ctx context.Context, evt *envelope.Event) {
 	)
 
 	startedAt := time.Now()
-	result, toolCalls, err := a.runTurn(ctx, adminRoom, senderLabel, userText, "")
+	result := ""
+	toolCalls := 0
+
+	if isDeterministicSaitoCronEvent(cfg, evt) {
+		result, toolCalls, err = a.runDeterministicSaitoCronTurn(ctx, evt)
+	} else {
+		result, toolCalls, err = a.runTurn(ctx, adminRoom, senderLabel, userText, "")
+	}
 	durationMS := time.Since(startedAt).Milliseconds()
 
 	if err != nil {
@@ -1052,6 +1059,70 @@ func (a *App) runEventTurn(ctx context.Context, evt *envelope.Event) {
 		"status", "success",
 		"duration_ms", durationMS,
 		"tool_calls", toolCalls,
+	)
+}
+
+// isDeterministicSaitoCronEvent reports whether evt should be handled by the
+// deterministic Saito scheduler path (R6.1): no LLM reasoning, only a
+// matrix.send_message trigger to Kairo.
+func isDeterministicSaitoCronEvent(cfg *gosutospec.Config, evt *envelope.Event) bool {
+	if cfg == nil || evt == nil {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(cfg.Metadata.CanonicalName), "saito") {
+		return false
+	}
+	return evt.Type == "cron.tick"
+}
+
+// runDeterministicSaitoCronTurn handles Saito cron.tick events without using
+// the LLM. It executes the built-in matrix.send_message tool directly so that
+// policy checks, allowlist enforcement, rate limits, and audit hooks remain
+// identical to regular tool execution.
+func (a *App) runDeterministicSaitoCronTurn(ctx context.Context, evt *envelope.Event) (string, int, error) {
+	if a.builtinReg == nil || !a.builtinReg.IsBuiltin(builtin.MatrixSendToolName) {
+		return "", 0, fmt.Errorf("deterministic Saito scheduler requires built-in tool %q", builtin.MatrixSendToolName)
+	}
+
+	payload, err := json.Marshal(map[string]string{
+		"target":  "kairo",
+		"message": buildSaitoCronTriggerMessage(evt),
+	})
+	if err != nil {
+		return "", 0, fmt.Errorf("marshal deterministic Saito trigger args: %w", err)
+	}
+
+	toolResult, err := a.executeBuiltinTool(ctx, "gateway:"+evt.Source, llm.ToolCall{
+		ID:   "saito-cron-trigger",
+		Type: "function",
+		Function: llm.FunctionCall{
+			Name:      builtin.MatrixSendToolName,
+			Arguments: string(payload),
+		},
+	})
+	if err != nil {
+		return "", 1, err
+	}
+
+	return "✅ Deterministic trigger sent to kairo.\n" + toolResult, 1, nil
+}
+
+func buildSaitoCronTriggerMessage(evt *envelope.Event) string {
+	if evt == nil {
+		return "Saito scheduled trigger. Please run the portfolio analysis cycle."
+	}
+	timestamp := evt.TS.UTC().Format(time.RFC3339)
+	payload := strings.TrimSpace(evt.Payload.Message)
+	if payload == "" {
+		payload = "Run the scheduled portfolio analysis cycle."
+	}
+
+	return fmt.Sprintf(
+		"Saito scheduled trigger: please run the portfolio analysis cycle.\nsource: %s\nevent: %s\nts: %s\npayload: %s",
+		evt.Source,
+		evt.Type,
+		timestamp,
+		payload,
 	)
 }
 

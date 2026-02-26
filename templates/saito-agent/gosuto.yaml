@@ -38,7 +38,7 @@ gateways:
     type: cron
     config:
       expression: "*/15 * * * *"
-      payload: "Trigger scheduled check for all coordinated agents"
+      payload: "Time for a portfolio check."
 
 messaging:
   allowedTargets:
@@ -55,15 +55,6 @@ persona:
     intervals using the matrix.send_message tool. Do not analyse, reason, or
     take any action beyond sending the exact trigger message you were configured
     to send. Be deterministic and concise. Never deviate from your schedule.
-  llmProvider: openai
-  model: gpt-4o-mini
-  temperature: 0.0
-  apiKeySecretRef: "{{.AgentName}}.openai-api-key"
-
-secrets:
-  - name: "{{.AgentName}}.openai-api-key"
-    envVar: OPENAI_API_KEY
-    required: true
 
 instructions:
   role: |
@@ -72,7 +63,7 @@ instructions:
     analyse, or take any other action.
   workflow:
     - trigger: "cron.tick event received"
-      action: "Send a trigger message to each configured peer agent via matrix.send_message to start their workflows."
+      action: "Send a deterministic trigger message to Kairo via matrix.send_message to start the analysis workflow."
   context:
     user: "The user is the sole approver and oversees all agent workflows."
     peers: []  # populated at provision time by Ruriko

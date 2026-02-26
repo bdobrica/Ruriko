@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/bdobrica/Ruriko/common/spec/envelope"
+	"github.com/bdobrica/Ruriko/internal/gitai/builtin"
 	"github.com/bdobrica/Ruriko/internal/gitai/gosuto"
 	"github.com/bdobrica/Ruriko/internal/gitai/llm"
 	"github.com/bdobrica/Ruriko/internal/gitai/policy"
@@ -96,6 +97,33 @@ persona:
   llmProvider: openai
   model: gpt-4o-mini
   systemPrompt: "You are a helpful test agent."
+`
+
+// eventTestSaitoDeterministicYAML is a minimal config for the R6.1 scheduler
+// path: canonical Saito, cron-triggered events, and messaging target "kairo".
+const eventTestSaitoDeterministicYAML = `apiVersion: gosuto/v1
+metadata:
+  name: saito
+  canonicalName: saito
+trust:
+  allowedRooms:
+    - "!admin-room:example.com"
+  allowedSenders:
+    - "*"
+  adminRoom: "!admin-room:example.com"
+capabilities:
+  - name: allow-matrix-send
+    mcp: builtin
+    tool: matrix.send_message
+    allow: true
+  - name: deny-all
+    mcp: "*"
+    tool: "*"
+    allow: false
+messaging:
+  allowedTargets:
+    - roomId: "!kairo-room:example.com"
+      alias: kairo
 `
 
 // newEventApp builds a minimal App wired for event-turn tests:
@@ -541,5 +569,50 @@ func TestHandleEvent_AuditRecordsIncludeGatewayMetadata(t *testing.T) {
 	}
 	if durationMS < 0 {
 		t.Errorf("duration_ms = %d, want >= 0", durationMS)
+	}
+}
+
+func TestRunEventTurn_SaitoCronDeterministic_NoLLMRequired(t *testing.T) {
+	a := newEventApp(t, eventTestSaitoDeterministicYAML, nil)
+
+	sender := &recordingMatrixSender{}
+	a.eventSender = sender
+	a.builtinReg = builtin.New()
+	a.builtinReg.Register(builtin.NewMatrixSendTool(a.gosutoLdr, sender))
+
+	evt := makeTestEvent("scheduler", "cron.tick", "Trigger scheduled check for Kairo")
+	a.handleEvent(context.Background(), evt)
+
+	deadline := time.Now().Add(3 * time.Second)
+	found := false
+	for time.Now().Before(deadline) {
+		sender.mu.Lock()
+		sends := make([]matrixSend, len(sender.sends))
+		copy(sends, sender.sends)
+		sender.mu.Unlock()
+
+		for _, s := range sends {
+			if s.roomID == "!kairo-room:example.com" {
+				found = true
+				if !strings.Contains(s.text, "Saito scheduled trigger") {
+					t.Fatalf("deterministic trigger text missing header: %q", s.text)
+				}
+				if !strings.Contains(s.text, "event: cron.tick") {
+					t.Fatalf("deterministic trigger text missing event type: %q", s.text)
+				}
+				if !strings.Contains(s.text, "payload: Trigger scheduled check for Kairo") {
+					t.Fatalf("deterministic trigger text missing payload: %q", s.text)
+				}
+				break
+			}
+		}
+		if found {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if !found {
+		t.Fatal("timed out waiting for deterministic Saito trigger sent to kairo room")
 	}
 }

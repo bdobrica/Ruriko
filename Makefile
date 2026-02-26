@@ -1,4 +1,4 @@
-.PHONY: all build build-ruriko build-gitai build-tools test test-integration lint fmt clean run-ruriko run-gitai install help
+.PHONY: all build build-ruriko build-gitai build-tools test test-integration test-integration-nlp test-saito-scheduling test-saito-scheduling-live-precheck test-saito-scheduling-live lint fmt clean run-ruriko run-gitai install help
 
 # Build variables
 BINARY_DIR := bin
@@ -51,10 +51,24 @@ test-coverage: test ## Generate test coverage report
 	$(GO) tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
 
-test-integration: ## Run live LLM integration tests (requires RURIKO_NLP_API_KEY)
+test-integration: test-saito-scheduling test-integration-nlp ## Run integration tests (Saito scheduling + live NLP)
+
+test-integration-nlp: ## Run live LLM integration tests (requires RURIKO_NLP_API_KEY)
 	@echo "Running integration tests..."
 	@KEY=$${RURIKO_NLP_API_KEY:-$$(grep '^RURIKO_NLP_API_KEY=' examples/docker-compose/.env 2>/dev/null | cut -d= -f2)}; \
 	RURIKO_NLP_API_KEY=$$KEY $(GO) test -v -race -run TestR16 ./internal/ruriko/nlp/
+
+test-saito-scheduling: ## Run deterministic Saito scheduling integration checks
+	@echo "Running deterministic Saito scheduling integration test..."
+	./test/integration/test-saito-scheduling.sh
+
+test-saito-scheduling-live-precheck: ## Check live Saito scheduling prerequisites (compose/env + provisioned Saito/Kairo)
+	@echo "Running live Saito scheduling precheck..."
+	./test/integration/test-saito-scheduling-live-precheck.sh
+
+test-saito-scheduling-live: test-saito-scheduling-live-precheck ## Run live compose-backed Saito scheduling validation (requires provisioned Saito/Kairo)
+	@echo "Running live Saito scheduling validation..."
+	./test/integration/test-saito-scheduling-live-compose.sh
 
 lint: ## Run linter
 	@echo "Running linter..."

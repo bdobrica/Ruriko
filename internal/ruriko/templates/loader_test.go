@@ -165,8 +165,7 @@ func TestRegistry_Render_SaitoAgent(t *testing.T) {
 		{"correct template tag", "template: saito-agent"},
 		{"deny-all-tools capability present", "deny-all-tools"},
 		{"allow-matrix-send capability present", "allow-matrix-send"},
-		{"openai secret present", "test-agent.openai-api-key"},
-		{"gpt-4o-mini model", "gpt-4o-mini"},
+		{"default deterministic payload", "Time for a portfolio check."},
 		{"no MCP servers", "mcps:"},
 		{"cron gateway block present", "gateways:"},
 		{"scheduler gateway name", "scheduler"},
@@ -190,6 +189,10 @@ func TestRegistry_Render_SaitoAgent(t *testing.T) {
 		if !strings.Contains(got, c.contain) {
 			t.Errorf("saito-agent rendered YAML should contain %q:\n%s", c.contain, got)
 		}
+	}
+
+	if strings.Contains(got, "openai-api-key") {
+		t.Errorf("saito-agent rendered YAML should not require OpenAI secret:\n%s", got)
 	}
 }
 

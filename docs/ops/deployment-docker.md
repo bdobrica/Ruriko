@@ -267,6 +267,57 @@ curl http://localhost:8080/status
 
 ---
 
+## Verifying Saito scheduling (integration tests)
+
+Use these targets to validate the canonical Saito → Kairo trigger behavior.
+
+### Deterministic scheduling path (fast)
+
+Runs the integration test that validates the deterministic cron.tick path in
+Gitai (no LLM required):
+
+```bash
+make test-saito-scheduling
+```
+
+Optional compose configuration smoke check:
+
+```bash
+SAITO_SCHEDULING_COMPOSE_SMOKE=1 make test-saito-scheduling
+```
+
+### Live compose-backed scheduling check
+
+Preconditions:
+
+- Compose `.env` is configured
+- Saito and Kairo agents are provisioned and running
+- Saito has a cron gateway and `kairo` messaging target configured
+
+Run precheck only:
+
+```bash
+make test-saito-scheduling-live-precheck
+```
+
+Run live check (includes precheck):
+
+```bash
+make test-saito-scheduling-live
+```
+
+This live test brings up compose services, waits for Ruriko health, then scans
+Saito logs for both `event_type=cron.tick` and successful
+`matrix.send_message` calls targeting `kairo`.
+
+Keep the stack up for manual inspection:
+
+```bash
+KEEP_STACK=1 make test-saito-scheduling-live
+```
+
+---
+
 ## Upgrading Ruriko
 
 1. Pull or build the new image:

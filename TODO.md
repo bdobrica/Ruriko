@@ -261,12 +261,22 @@ The MVP is ready when **all** of the following are true:
 > peer-to-peer messaging and instruction infrastructure from R14/R15.
 
 ### R6.1 Saito Scheduling
-- [ ] Saito emits a trigger every N minutes (configurable, default 15) via its built-in cron gateway (R12 — implemented)
-- [ ] On cron.tick, Saito's turn engine runs and sends a Matrix message to Kairo via `matrix.send_message` (R15)
-- [ ] Trigger is sent as a Matrix DM to Kairo (human-readable but structured enough for parsing)
-- [ ] Saito is intentionally deterministic: no LLM reasoning, only schedule + notify
-- [ ] Saito should handle: start, stop, interval change via Gosuto
+- [x] Saito emits a trigger every N minutes (configurable, default 15) via its built-in cron gateway (R12 — implemented)
+- [x] On cron.tick, Saito's turn engine runs and sends a Matrix message to Kairo via `matrix.send_message` (R15)
+- [x] Trigger is sent as a Matrix DM to Kairo (human-readable but structured enough for parsing)
+- [x] Saito is intentionally deterministic: no LLM reasoning, only schedule + notify
+- [x] Saito should handle: start, stop, interval change via Gosuto
 - [ ] Test: Saito sends periodic triggers visible in Matrix
+
+#### R6.1 Implementation status (2026-02-26)
+
+- ✅ Gitai event-turn engine has a deterministic Saito cron path (`cron.tick` for canonical `saito`) that bypasses LLM and directly executes `matrix.send_message` to target alias `kairo`.
+- ✅ Saito template updated for deterministic scheduling-only behavior (no OpenAI secret dependency).
+- ✅ Integration coverage added:
+  - `make test-saito-scheduling` (deterministic integration test)
+  - `make test-saito-scheduling-live-precheck` (live prerequisites)
+  - `make test-saito-scheduling-live` (compose-backed live verification)
+- ⏳ Remaining item: run `make test-saito-scheduling-live` in an environment with provisioned/running Saito + Kairo and confirm periodic triggers visible in Matrix/logs.
 
 ### R6.2 Kairo Analysis Pipeline
 - [ ] Kairo receives trigger from Saito
