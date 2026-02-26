@@ -266,27 +266,22 @@ The MVP is ready when **all** of the following are true:
 - [x] Trigger is sent as a Matrix DM to Kairo (human-readable but structured enough for parsing)
 - [x] Saito is intentionally deterministic: no LLM reasoning, only schedule + notify
 - [x] Saito should handle: start, stop, interval change via Gosuto
-- [ ] Test: Saito sends periodic triggers visible in Matrix
-
-#### R6.1 Implementation status (2026-02-26)
-
-- ✅ Gitai event-turn engine has a deterministic Saito cron path (`cron.tick` for canonical `saito`) that bypasses LLM and directly executes `matrix.send_message` to target alias `kairo`.
-- ✅ Saito template updated for deterministic scheduling-only behavior (no OpenAI secret dependency).
-- ✅ Integration coverage added:
+- [x] Integration coverage added:
   - `make test-saito-scheduling` (deterministic integration test)
   - `make test-saito-scheduling-live-precheck` (live prerequisites)
   - `make test-saito-scheduling-live` (compose-backed live verification)
-- ⏳ Remaining item: run `make test-saito-scheduling-live` in an environment with provisioned/running Saito + Kairo and confirm periodic triggers visible in Matrix/logs.
+- [ ] Test: Saito sends periodic triggers visible in Matrix
+  Remaining item: run `make test-saito-scheduling-live` in an environment with provisioned/running Saito + Kairo and confirm periodic triggers visible in Matrix/logs.
 
 ### R6.2 Kairo Analysis Pipeline
-- [ ] Kairo receives trigger from Saito
-- [ ] Kairo checks for portfolio config in DB:
+- [x] Kairo receives trigger from Saito
+- [x] Kairo checks for portfolio config in DB:
   - If missing, asks Bogdan in Matrix DM for portfolio (tickers, allocations)
   - Stores portfolio in DB for subsequent runs
-- [ ] Kairo queries finnhub MCP for market data (prices, changes, fundamentals)
-- [ ] Kairo writes analysis to DB (structured: tickers, metrics, commentary)
-- [ ] Kairo sends summary report to Ruriko (or to a shared Matrix room)
-- [ ] Test: Kairo produces a portfolio analysis from finnhub data
+- [x] Kairo queries finnhub MCP for market data (prices, changes, fundamentals)
+- [x] Kairo writes analysis to DB (structured: tickers, metrics, commentary)
+- [x] Kairo sends summary report to Ruriko (or to a shared Matrix room)
+- [x] Test: Kairo produces a portfolio analysis from finnhub data
 
 ### R6.3 Peer-to-Peer Collaboration (replaces Ruriko orchestration)
 - [ ] Kairo sends relevant tickers to Kumo via `matrix.send_message` for news lookup

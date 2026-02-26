@@ -133,6 +133,9 @@ type App struct {
 	// msgOutbound counts the total number of successful matrix.send_message
 	// calls made by this agent (R15.5 audit/observability).
 	msgOutbound atomic.Int64
+	// kairoMarketDataFetcher is an optional test hook used by the deterministic
+	// Kairo pipeline (R6.2). When nil, data is fetched from the finnhub MCP.
+	kairoMarketDataFetcher func(ctx context.Context, ticker string) (kairoTickerMetrics, error)
 }
 
 // New creates and initialises all Gitai subsystems. It does NOT start any
@@ -439,7 +442,17 @@ func (a *App) handleMessage(ctx context.Context, evt *event.Event) {
 		log.Warn("could not log turn", "err", err)
 	}
 
-	result, toolCalls, err := a.runTurn(ctx, roomID, sender, text, evt.ID.String())
+	var (
+		result    string
+		toolCalls int
+	)
+	if handled, deterministicResult, deterministicToolCalls, deterministicErr := a.tryRunKairoDeterministicTurn(ctx, roomID, sender, text); handled {
+		result = deterministicResult
+		toolCalls = deterministicToolCalls
+		err = deterministicErr
+	} else {
+		result, toolCalls, err = a.runTurn(ctx, roomID, sender, text, evt.ID.String())
+	}
 	if err != nil {
 		log.Error("turn failed", "err", err)
 		_ = a.matrixCli.SendReply(roomID, evt.ID.String(), fmt.Sprintf("❌ %s", err))

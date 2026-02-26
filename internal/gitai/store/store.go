@@ -4,6 +4,7 @@ package store
 import (
 	"database/sql"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -247,6 +248,132 @@ func (s *Store) SetApprovalStatus(approvalID string, status ApprovalStatus, deci
 		string(status), nullableString(decidedBy), nullableString(reason), approvalID,
 	)
 	return err
+}
+
+// PortfolioPosition represents one user-configured portfolio allocation.
+type PortfolioPosition struct {
+	Ticker     string  `json:"ticker"`
+	Allocation float64 `json:"allocation"`
+}
+
+// GetKairoPortfolio returns the persisted Kairo portfolio configuration.
+// When no portfolio is configured, found is false and err is nil.
+func (s *Store) GetKairoPortfolio() (positions []PortfolioPosition, found bool, err error) {
+	var raw string
+	err = s.db.QueryRow("SELECT portfolio_json FROM kairo_portfolio_config WHERE id = 1").Scan(&raw)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if err := json.Unmarshal([]byte(raw), &positions); err != nil {
+		return nil, false, fmt.Errorf("decode portfolio_json: %w", err)
+	}
+	return positions, true, nil
+}
+
+// SaveKairoPortfolio upserts the Kairo portfolio configuration.
+func (s *Store) SaveKairoPortfolio(positions []PortfolioPosition) error {
+	raw, err := json.Marshal(positions)
+	if err != nil {
+		return fmt.Errorf("encode portfolio_json: %w", err)
+	}
+	_, err = s.db.Exec(`
+		INSERT INTO kairo_portfolio_config (id, portfolio_json, updated_at)
+		VALUES (1, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(id) DO UPDATE SET
+			portfolio_json = excluded.portfolio_json,
+			updated_at = excluded.updated_at
+	`, string(raw))
+	return err
+}
+
+// KairoAnalysisRun is the row-level data persisted in kairo_analysis_runs.
+type KairoAnalysisRun struct {
+	TraceID       string
+	TriggerSource string
+	RoomID        string
+	Status        string
+	Summary       string
+	Commentary    string
+}
+
+// KairoAnalysisTicker captures per-ticker metrics and commentary for one run.
+type KairoAnalysisTicker struct {
+	Ticker        string
+	Allocation    float64
+	Price         float64
+	ChangePercent float64
+	Open          float64
+	High          float64
+	Low           float64
+	PreviousClose float64
+	Metrics       map[string]interface{}
+	Commentary    string
+}
+
+// SaveKairoAnalysisRun persists a structured Kairo analysis run and all
+// per-ticker metrics in a single transaction.
+func (s *Store) SaveKairoAnalysisRun(run KairoAnalysisRun, tickers []KairoAnalysisTicker) (int64, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("begin analysis tx: %w", err)
+	}
+
+	res, err := tx.Exec(`
+		INSERT INTO kairo_analysis_runs (trace_id, trigger_source, room_id, status, summary, commentary)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, run.TraceID, run.TriggerSource, run.RoomID, run.Status, nullableString(run.Summary), nullableString(run.Commentary))
+	if err != nil {
+		tx.Rollback()
+		return 0, fmt.Errorf("insert kairo_analysis_runs: %w", err)
+	}
+
+	runID, err := res.LastInsertId()
+	if err != nil {
+		tx.Rollback()
+		return 0, fmt.Errorf("analysis run id: %w", err)
+	}
+
+	for _, ticker := range tickers {
+		metricsJSON := ""
+		if len(ticker.Metrics) > 0 {
+			b, err := json.Marshal(ticker.Metrics)
+			if err != nil {
+				tx.Rollback()
+				return 0, fmt.Errorf("encode metrics_json for %s: %w", ticker.Ticker, err)
+			}
+			metricsJSON = string(b)
+		}
+		if _, err := tx.Exec(`
+			INSERT INTO kairo_analysis_tickers (
+				run_id, ticker, allocation, price, change_percent, open, high, low, previous_close, metrics_json, commentary
+			)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`,
+			runID,
+			ticker.Ticker,
+			ticker.Allocation,
+			ticker.Price,
+			ticker.ChangePercent,
+			ticker.Open,
+			ticker.High,
+			ticker.Low,
+			ticker.PreviousClose,
+			nullableString(metricsJSON),
+			nullableString(ticker.Commentary),
+		); err != nil {
+			tx.Rollback()
+			return 0, fmt.Errorf("insert kairo_analysis_tickers for %s: %w", ticker.Ticker, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit analysis tx: %w", err)
+	}
+
+	return runID, nil
 }
 
 func nullableString(s string) interface{} {
