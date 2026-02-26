@@ -284,15 +284,16 @@ The MVP is ready when **all** of the following are true:
 - [x] Test: Kairo produces a portfolio analysis from finnhub data
 
 ### R6.3 Peer-to-Peer Collaboration (replaces Ruriko orchestration)
-- [ ] Kairo sends relevant tickers to Kumo via `matrix.send_message` for news lookup
-- [ ] Kumo receives request, searches for news, returns results to Kairo via `matrix.send_message`
-- [ ] Kairo revises analysis incorporating Kumo's news context
-- [ ] Kairo decides whether to notify user based on:
-  - [ ] Significance threshold (material changes, big news)
-  - [ ] Rate limiting (no more than N notifications per hour)
-- [ ] If significant: Kairo sends the user a concise final report via `matrix.send_message`
-- [ ] If not significant: Kairo logs but does not notify
+- [x] Kairo sends relevant tickers to Kumo via `matrix.send_message` for news lookup
+- [x] Kumo receives request, searches for news, returns results to Kairo via `matrix.send_message`
+- [x] Kairo revises analysis incorporating Kumo's news context
+- [x] Kairo decides whether to notify user based on:
+  - [x] Significance threshold (material changes, big news)
+  - [x] Rate limiting (no more than N notifications per hour)
+- [x] If significant: Kairo sends the user a concise final report via `matrix.send_message`
+- [x] If not significant: Kairo logs but does not notify
 - [ ] Test: Full peer-to-peer collaboration loop produces a final report
+  Remaining item: deterministic unit coverage is in place (`go test ./internal/gitai/app -run 'TestKairoPipeline|TestKumoPipeline'`), but full compose/live end-to-end verification remains pending under R6.5/R8.4.
 
 ### R6.4 Kumo News Search
 - [ ] Kumo receives search request from Kairo (tickers/company names)

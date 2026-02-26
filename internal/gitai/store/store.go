@@ -376,6 +376,72 @@ func (s *Store) SaveKairoAnalysisRun(run KairoAnalysisRun, tickers []KairoAnalys
 	return runID, nil
 }
 
+// GetKairoAnalysisRun loads a persisted Kairo analysis run by ID.
+// When the run does not exist, found is false and err is nil.
+func (s *Store) GetKairoAnalysisRun(runID int64) (run KairoAnalysisRun, found bool, err error) {
+	err = s.db.QueryRow(`
+		SELECT trace_id, trigger_source, room_id, status, COALESCE(summary, ''), COALESCE(commentary, '')
+		FROM kairo_analysis_runs
+		WHERE id = ?
+	`, runID).Scan(
+		&run.TraceID,
+		&run.TriggerSource,
+		&run.RoomID,
+		&run.Status,
+		&run.Summary,
+		&run.Commentary,
+	)
+	if err == sql.ErrNoRows {
+		return KairoAnalysisRun{}, false, nil
+	}
+	if err != nil {
+		return KairoAnalysisRun{}, false, err
+	}
+	return run, true, nil
+}
+
+// UpdateKairoAnalysisRunStatus updates the status and commentary fields for an
+// existing Kairo analysis run.
+func (s *Store) UpdateKairoAnalysisRunStatus(runID int64, status, commentary string) error {
+	_, err := s.db.Exec(`
+		UPDATE kairo_analysis_runs
+		SET status = ?, commentary = ?
+		WHERE id = ?
+	`, status, nullableString(commentary), runID)
+	return err
+}
+
+// GetKairoAnalysisMaxAbsChange returns the largest absolute percentage move
+// across all tickers for a given run. Returns 0 when no ticker rows exist.
+func (s *Store) GetKairoAnalysisMaxAbsChange(runID int64) (float64, error) {
+	var maxAbs float64
+	err := s.db.QueryRow(`
+		SELECT COALESCE(MAX(ABS(change_percent)), 0)
+		FROM kairo_analysis_tickers
+		WHERE run_id = ?
+	`, runID).Scan(&maxAbs)
+	if err != nil {
+		return 0, err
+	}
+	return maxAbs, nil
+}
+
+// CountKairoNotifiedRunsLastHour returns the number of Kairo analysis runs
+// marked as notified within the last hour.
+func (s *Store) CountKairoNotifiedRunsLastHour() (int, error) {
+	var count int
+	err := s.db.QueryRow(`
+		SELECT COUNT(*)
+		FROM kairo_analysis_runs
+		WHERE status = 'notified'
+		  AND created_at >= datetime('now', '-1 hour')
+	`).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 func nullableString(s string) interface{} {
 	if s == "" {
 		return nil

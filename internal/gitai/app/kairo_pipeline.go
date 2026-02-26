@@ -16,6 +16,26 @@ import (
 	"github.com/bdobrica/Ruriko/internal/gitai/store"
 )
 
+const (
+	kairoNewsRequestPrefix  = "KAIRO_NEWS_REQUEST"
+	kumoNewsResponsePrefix  = "KUMO_NEWS_RESPONSE"
+	kairoSignificantMovePct = 2.0
+	kairoMaxNotifyPerHour   = 2
+)
+
+type kairoNewsRequest struct {
+	RunID         int64    `json:"run_id"`
+	Tickers       []string `json:"tickers"`
+	MarketSummary string   `json:"market_summary"`
+}
+
+type kumoNewsResponse struct {
+	RunID     int64    `json:"run_id"`
+	Summary   string   `json:"summary"`
+	Headlines []string `json:"headlines"`
+	Material  bool     `json:"material"`
+}
+
 type kairoTickerMetrics struct {
 	Ticker        string
 	Price         float64
@@ -44,6 +64,18 @@ func (a *App) tryRunKairoDeterministicTurn(ctx context.Context, roomID, sender, 
 		return true, fmt.Sprintf("✅ Portfolio saved with %d tickers. Future Saito triggers will run analysis automatically.", len(entries)), 0, nil
 	}
 
+	if isKumoResponseMessage(sender, text) {
+		resp, ok, err := parseKumoNewsResponseMessage(text)
+		if !ok {
+			return false, "", 0, nil
+		}
+		if err != nil {
+			return true, "", 0, err
+		}
+		result, toolCalls, err := a.handleKumoNewsResponse(ctx, resp)
+		return true, result, toolCalls, err
+	}
+
 	if !isSaitoTriggerMessage(sender, text) {
 		return false, "", 0, nil
 	}
@@ -60,16 +92,29 @@ func isCanonicalKairo(cfg *gosutospec.Config) bool {
 }
 
 func isSaitoTriggerMessage(sender, text string) bool {
-	if strings.HasPrefix(sender, "@") {
-		if i := strings.Index(sender, ":"); i > 1 {
-			localpart := strings.ToLower(sender[1:i])
-			if localpart == "saito" {
-				return true
-			}
-		}
+	if matrixSenderLocalpart(sender) == "saito" {
+		return true
 	}
 	lower := strings.ToLower(text)
 	return strings.Contains(lower, "saito scheduled trigger") || strings.Contains(lower, "portfolio analysis cycle")
+}
+
+func isKumoResponseMessage(sender, text string) bool {
+	if matrixSenderLocalpart(sender) != "kumo" {
+		return false
+	}
+	return strings.HasPrefix(strings.TrimSpace(text), kumoNewsResponsePrefix+" ")
+}
+
+func matrixSenderLocalpart(sender string) string {
+	if !strings.HasPrefix(sender, "@") {
+		return ""
+	}
+	i := strings.Index(sender, ":")
+	if i <= 1 {
+		return ""
+	}
+	return strings.ToLower(sender[1:i])
 }
 
 func parseKairoPortfolioUpdate(text string) ([]store.PortfolioPosition, bool, error) {
@@ -215,7 +260,7 @@ func (a *App) runKairoAnalysisPipeline(ctx context.Context, roomID string) (stri
 		TraceID:       trace.FromContext(ctx),
 		TriggerSource: "saito",
 		RoomID:        roomID,
-		Status:        "success",
+		Status:        "awaiting_news",
 		Summary:       summary,
 		Commentary:    commentary,
 	}, tickers)
@@ -223,12 +268,216 @@ func (a *App) runKairoAnalysisPipeline(ctx context.Context, roomID string) (stri
 		return "", 0, fmt.Errorf("persist analysis run: %w", err)
 	}
 
-	report := fmt.Sprintf("📈 %s\n%s\nrun_id=%d", summary, commentary, runID)
-	if err := a.sendKairoTargetMessage(ctx, "user", report); err != nil {
-		return "", 1, fmt.Errorf("send summary report to user: %w", err)
+	requestTickers := selectKairoNewsRequestTickers(tickers)
+	request := kairoNewsRequest{
+		RunID:         runID,
+		Tickers:       requestTickers,
+		MarketSummary: summary,
+	}
+	requestMsg, err := buildKairoNewsRequestMessage(request)
+	if err != nil {
+		return "", 0, fmt.Errorf("build Kumo news request: %w", err)
 	}
 
-	return fmt.Sprintf("✅ Kairo analysis completed and reported to user (run_id=%d).", runID), 1, nil
+	if err := a.sendKairoTargetMessage(ctx, "kumo", requestMsg); err != nil {
+		return "", 1, fmt.Errorf("send news request to kumo: %w", err)
+	}
+
+	return fmt.Sprintf("✅ Kairo analysis completed (run_id=%d). Requested news context from Kumo.", runID), 1, nil
+}
+
+func (a *App) handleKumoNewsResponse(ctx context.Context, resp kumoNewsResponse) (string, int, error) {
+	run, found, err := a.db.GetKairoAnalysisRun(resp.RunID)
+	if err != nil {
+		return "", 0, fmt.Errorf("load analysis run %d: %w", resp.RunID, err)
+	}
+	if !found {
+		return fmt.Sprintf("ℹ️ Received Kumo response for unknown run_id=%d; ignoring.", resp.RunID), 0, nil
+	}
+
+	maxAbs, err := a.db.GetKairoAnalysisMaxAbsChange(resp.RunID)
+	if err != nil {
+		return "", 0, fmt.Errorf("load analysis max move for run %d: %w", resp.RunID, err)
+	}
+
+	material := resp.Material || maxAbs >= kairoSignificantMovePct
+	enrichedCommentary := buildKairoEnrichedCommentary(run.Commentary, resp, maxAbs, material)
+
+	if !material {
+		if err := a.db.UpdateKairoAnalysisRunStatus(resp.RunID, "logged_no_notify", enrichedCommentary); err != nil {
+			return "", 0, fmt.Errorf("update non-significant run status: %w", err)
+		}
+		return fmt.Sprintf("✅ Kairo run_id=%d updated with Kumo news; not significant, logged without notifying user.", resp.RunID), 0, nil
+	}
+
+	notifiedLastHour, err := a.db.CountKairoNotifiedRunsLastHour()
+	if err != nil {
+		return "", 0, fmt.Errorf("count recent notifications: %w", err)
+	}
+	if notifiedLastHour >= kairoMaxNotifyPerHour {
+		enrichedCommentary += fmt.Sprintf("\nNotification skipped: hourly rate limit reached (%d/%d).", notifiedLastHour, kairoMaxNotifyPerHour)
+		if err := a.db.UpdateKairoAnalysisRunStatus(resp.RunID, "rate_limited", enrichedCommentary); err != nil {
+			return "", 0, fmt.Errorf("update rate-limited run status: %w", err)
+		}
+		return fmt.Sprintf("ℹ️ Kairo run_id=%d is significant but user notification was rate-limited.", resp.RunID), 0, nil
+	}
+
+	finalReport := buildKairoFinalReport(resp.RunID, run.Summary, maxAbs, resp)
+	if err := a.sendKairoTargetMessage(ctx, "user", finalReport); err != nil {
+		return "", 1, fmt.Errorf("send final report to user: %w", err)
+	}
+
+	if err := a.db.UpdateKairoAnalysisRunStatus(resp.RunID, "notified", enrichedCommentary); err != nil {
+		return "", 1, fmt.Errorf("mark run as notified: %w", err)
+	}
+
+	return fmt.Sprintf("✅ Kairo run_id=%d finalized with Kumo news and user notified.", resp.RunID), 1, nil
+}
+
+func selectKairoNewsRequestTickers(tickers []store.KairoAnalysisTicker) []string {
+	if len(tickers) == 0 {
+		return nil
+	}
+	selected := make([]string, 0, len(tickers))
+	for _, t := range tickers {
+		if math.Abs(t.ChangePercent) >= 1.0 {
+			selected = append(selected, strings.ToUpper(strings.TrimSpace(t.Ticker)))
+		}
+	}
+	if len(selected) == 0 {
+		strongest := tickers[0]
+		for i := 1; i < len(tickers); i++ {
+			if math.Abs(tickers[i].ChangePercent) > math.Abs(strongest.ChangePercent) {
+				strongest = tickers[i]
+			}
+		}
+		selected = append(selected, strings.ToUpper(strings.TrimSpace(strongest.Ticker)))
+	}
+	sort.Strings(selected)
+	return dedupeStrings(selected)
+}
+
+func buildKairoNewsRequestMessage(req kairoNewsRequest) (string, error) {
+	b, err := json.Marshal(req)
+	if err != nil {
+		return "", err
+	}
+	return kairoNewsRequestPrefix + " " + string(b), nil
+}
+
+func parseKairoNewsRequestMessage(text string) (kairoNewsRequest, bool, error) {
+	raw := strings.TrimSpace(text)
+	prefix := kairoNewsRequestPrefix + " "
+	if !strings.HasPrefix(raw, prefix) {
+		return kairoNewsRequest{}, false, nil
+	}
+	var req kairoNewsRequest
+	if err := json.Unmarshal([]byte(strings.TrimSpace(strings.TrimPrefix(raw, prefix))), &req); err != nil {
+		return kairoNewsRequest{}, true, fmt.Errorf("invalid Kairo news request payload: %w", err)
+	}
+	if req.RunID <= 0 {
+		return kairoNewsRequest{}, true, fmt.Errorf("invalid Kairo news request: run_id must be > 0")
+	}
+	req.Tickers = sanitizeTickers(req.Tickers)
+	if len(req.Tickers) == 0 {
+		return kairoNewsRequest{}, true, fmt.Errorf("invalid Kairo news request: no tickers")
+	}
+	return req, true, nil
+}
+
+func buildKumoNewsResponseMessage(resp kumoNewsResponse) (string, error) {
+	b, err := json.Marshal(resp)
+	if err != nil {
+		return "", err
+	}
+	return kumoNewsResponsePrefix + " " + string(b), nil
+}
+
+func parseKumoNewsResponseMessage(text string) (kumoNewsResponse, bool, error) {
+	raw := strings.TrimSpace(text)
+	prefix := kumoNewsResponsePrefix + " "
+	if !strings.HasPrefix(raw, prefix) {
+		return kumoNewsResponse{}, false, nil
+	}
+	var resp kumoNewsResponse
+	if err := json.Unmarshal([]byte(strings.TrimSpace(strings.TrimPrefix(raw, prefix))), &resp); err != nil {
+		return kumoNewsResponse{}, true, fmt.Errorf("invalid Kumo news response payload: %w", err)
+	}
+	if resp.RunID <= 0 {
+		return kumoNewsResponse{}, true, fmt.Errorf("invalid Kumo news response: run_id must be > 0")
+	}
+	resp.Headlines = normalizeHeadlines(resp.Headlines)
+	resp.Summary = strings.TrimSpace(resp.Summary)
+	return resp, true, nil
+}
+
+func buildKairoEnrichedCommentary(existing string, resp kumoNewsResponse, maxAbs float64, material bool) string {
+	commentary := strings.TrimSpace(existing)
+	if commentary == "" {
+		commentary = "Kairo analysis commentary unavailable."
+	}
+	if resp.Summary != "" {
+		commentary += "\nNews summary: " + resp.Summary
+	}
+	if len(resp.Headlines) > 0 {
+		commentary += "\nTop headlines: " + strings.Join(resp.Headlines, " | ")
+	}
+	commentary += fmt.Sprintf("\nSignificance: market_max_abs_change=%.2f%%, news_material=%t, final_material=%t.", maxAbs, resp.Material, material)
+	return commentary
+}
+
+func buildKairoFinalReport(runID int64, marketSummary string, maxAbs float64, resp kumoNewsResponse) string {
+	lines := []string{
+		fmt.Sprintf("📊 Kairo final report (run_id=%d)", runID),
+		marketSummary,
+		fmt.Sprintf("Market significance: max absolute move %.2f%%.", maxAbs),
+	}
+	if resp.Summary != "" {
+		lines = append(lines, "📰 Kumo news context: "+resp.Summary)
+	}
+	if len(resp.Headlines) > 0 {
+		lines = append(lines, "Headlines: "+strings.Join(resp.Headlines, " | "))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func sanitizeTickers(values []string) []string {
+	normalized := make([]string, 0, len(values))
+	for _, v := range values {
+		ticker := strings.ToUpper(strings.TrimSpace(v))
+		if ticker != "" {
+			normalized = append(normalized, ticker)
+		}
+	}
+	sort.Strings(normalized)
+	return dedupeStrings(normalized)
+}
+
+func normalizeHeadlines(values []string) []string {
+	trimmed := make([]string, 0, len(values))
+	for _, v := range values {
+		h := strings.TrimSpace(v)
+		if h != "" {
+			trimmed = append(trimmed, h)
+		}
+	}
+	return dedupeStrings(trimmed)
+}
+
+func dedupeStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, v := range values {
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
 }
 
 func buildKairoRunCommentary(tickers []store.KairoAnalysisTicker) string {

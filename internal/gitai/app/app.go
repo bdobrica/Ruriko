@@ -136,6 +136,9 @@ type App struct {
 	// kairoMarketDataFetcher is an optional test hook used by the deterministic
 	// Kairo pipeline (R6.2). When nil, data is fetched from the finnhub MCP.
 	kairoMarketDataFetcher func(ctx context.Context, ticker string) (kairoTickerMetrics, error)
+	// kumoNewsFetcher is an optional test hook used by the deterministic Kumo
+	// pipeline (R6.3). When nil, news is fetched from the brave-search MCP.
+	kumoNewsFetcher func(ctx context.Context, req kairoNewsRequest) (kumoNewsResult, error)
 }
 
 // New creates and initialises all Gitai subsystems. It does NOT start any
@@ -447,6 +450,10 @@ func (a *App) handleMessage(ctx context.Context, evt *event.Event) {
 		toolCalls int
 	)
 	if handled, deterministicResult, deterministicToolCalls, deterministicErr := a.tryRunKairoDeterministicTurn(ctx, roomID, sender, text); handled {
+		result = deterministicResult
+		toolCalls = deterministicToolCalls
+		err = deterministicErr
+	} else if handled, deterministicResult, deterministicToolCalls, deterministicErr := a.tryRunKumoDeterministicTurn(ctx, sender, text); handled {
 		result = deterministicResult
 		toolCalls = deterministicToolCalls
 		err = deterministicErr
