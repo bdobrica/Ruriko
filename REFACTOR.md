@@ -18,6 +18,8 @@ That coupling is useful for validating ideas quickly, but it does not scale to m
 
 This refactor replaces canonical hard-coded pipelines with a **generic Gosuto-driven workflow engine** while preserving policy-first security and deterministic approvals.
 
+Step model details are specified in [docs/workflow-step-spec.md](docs/workflow-step-spec.md).
+
 ---
 
 ## 2) Confirmed decisions (from design review)
@@ -121,12 +123,40 @@ Add a new top-level section (name can be `workflow` or `workflows`; use singular
 
 ```yaml
 workflow:
+  schemas:
+    kairoNewsRequest:
+      type: object
+      required: [run_id, tickers]
+      properties:
+        run_id:
+          type: integer
+          minimum: 1
+        tickers:
+          type: array
+          minItems: 1
+          items:
+            type: string
+    kumoNewsResponse:
+      type: object
+      required: [run_id, summary, headlines, material]
+      properties:
+        run_id:
+          type: integer
+          minimum: 1
+        summary:
+          type: string
+        headlines:
+          type: array
+          items:
+            type: string
+        material:
+          type: boolean
   protocols:
     - id: "kairo.news.request.v1"
       trigger:
         type: "matrix.protocol_message"
         prefix: "KAIRO_NEWS_REQUEST"
-      inputSchema: "#/schemas/kairoNewsRequest"
+      inputSchemaRef: "kairoNewsRequest"
       retries: 2
       steps:
         - type: "tool"
@@ -135,12 +165,45 @@ workflow:
             query: "{{input.tickers}} stock news latest"
         - type: "summarize"
           prompt: "Summarize top material headlines"
-          outputSchema: "#/schemas/kumoNewsResponse"
+          outputSchemaRef: "kumoNewsResponse"
           retries: 2
         - type: "send_message"
           targetAlias: "kairo"
           payloadTemplate: "KUMO_NEWS_RESPONSE {{output.json}}"
 ```
+
+### Schema location and resolution (explicit)
+
+- Workflow schemas are embedded in Gosuto under `workflow.schemas`.
+- `inputSchemaRef` and `outputSchemaRef` must resolve to keys inside `workflow.schemas`.
+- No external schema URI/file lookup is allowed in v1 workflow execution.
+- Missing schema refs are validation errors and block config apply.
+
+### Validation contract (workflow schemas)
+
+Validator behavior should be deterministic and fail-fast on config apply.
+
+- `workflow.schemas` missing while a protocol/step declares `*SchemaRef`:
+  - error: `workflow schema ref requires workflow.schemas to be defined`
+- `inputSchemaRef` not found in `workflow.schemas`:
+  - error: `workflow protocol <id>: input schema ref <ref> not found`
+- `outputSchemaRef` not found in `workflow.schemas`:
+  - error: `workflow protocol <id>, step <index>: output schema ref <ref> not found`
+- Empty schema ref value (`""` after trim):
+  - error: `workflow protocol <id>: schema ref cannot be empty`
+- Duplicate schema keys in `workflow.schemas`:
+  - error: `workflow schemas contains duplicate key <name>`
+- Invalid schema object (not a JSON object / invalid JSON Schema structure):
+  - error: `workflow schema <name>: invalid JSON Schema`
+- Disallowed external schema reference syntax (e.g. URI/path/pointer outside `workflow.schemas`):
+  - error: `external schema references are not supported; use workflow.schemas`
+
+Recommended validator checks for v1 schema objects:
+
+- schema root must be an object.
+- if `type` is present it must be a valid JSON Schema type keyword value.
+- if `required` is present it must be an array of unique strings.
+- if `properties` is present it must be an object.
 
 ### Primitive step types for v1
 

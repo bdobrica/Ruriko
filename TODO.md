@@ -250,70 +250,105 @@ The MVP is ready when **all** of the following are true:
 
 ---
 
-## 📋 Phase R6: Canonical Workflow — Saito → Kairo → Kumo (3–8 days)
+## 📋 Phase R6: Workflow Engine Refactor — Gosuto-Driven Canonical Flow (4–10 days)
 
-**Goal**: Deliver the reference story end-to-end. Make it feel like "agents collaborating as people."
+**Goal**: Replace hard-coded canonical Saito/Kairo/Kumo runtime branches with a generic Gosuto workflow engine while preserving policy-first security.
 
 > Maps to REALIGNMENT_PLAN Phase 7.
 >
-> **Depends on**: R5 (agent provisioning), R14 (instructions), R15 (messaging tool).
-> R6 is the integration milestone — it wires up the canonical agents using the
-> peer-to-peer messaging and instruction infrastructure from R14/R15.
+> **Depends on**: R5 (agent provisioning), R14 (instructions), R15 (messaging tool), R16 (canonical role knowledge).
+> This phase is a single-cut refactor (no compatibility mode) based on [REFACTOR.md](REFACTOR.md).
 
-### R6.1 Saito Scheduling
-- [x] Saito emits a trigger every N minutes (configurable, default 15) via its built-in cron gateway (R12 — implemented)
-- [x] On cron.tick, Saito's turn engine runs and sends a Matrix message to Kairo via `matrix.send_message` (R15)
-- [x] Trigger is sent as a Matrix DM to Kairo (human-readable but structured enough for parsing)
-- [x] Saito is intentionally deterministic: no LLM reasoning, only schedule + notify
-- [x] Saito should handle: start, stop, interval change via Gosuto
-- [x] Integration coverage added:
-  - `make test-saito-scheduling` (deterministic integration test)
-  - `make test-saito-scheduling-live-precheck` (live prerequisites)
-  - `make test-saito-scheduling-live` (compose-backed live verification)
-- [ ] Test: Saito sends periodic triggers visible in Matrix
-  Remaining item: run `make test-saito-scheduling-live` in an environment with provisioned/running Saito + Kairo and confirm periodic triggers visible in Matrix/logs.
+### R6.1 Gosuto schema/types — `trust.trustedPeers` + `workflow`
+- [ ] Add `trust.trustedPeers` types in `common/spec/gosuto/types.go`:
+  - `mxid` (required)
+  - `roomId` (required)
+  - `alias` (optional)
+  - `protocols` (required, non-empty)
+- [ ] Add `workflow` types in `common/spec/gosuto/types.go`:
+  - `workflow.schemas` (inline JSON schemas)
+  - `workflow.protocols`
+  - protocol `trigger`
+  - protocol `inputSchemaRef`
+  - protocol/step retries
+  - step types (`parse_input`, `tool`, `branch`, `summarize`, `send_message`, `persist`)
+- [ ] Add validation in `common/spec/gosuto/validate.go` for trusted peers:
+  - MXID format (`@` prefix)
+  - room format (`!` prefix)
+  - duplicate `(mxid, roomId, protocol)` tuple rejection
+- [ ] Add validation for workflow schema refs:
+  - `inputSchemaRef` / `outputSchemaRef` must resolve to `workflow.schemas`
+  - disallow external schema refs
+  - fail config apply when refs are missing
+- [ ] Add unit tests in `common/spec/gosuto/validate_test.go` for all validation contract errors defined in [REFACTOR.md](REFACTOR.md)
 
-### R6.2 Kairo Analysis Pipeline
-- [x] Kairo receives trigger from Saito
-- [x] Kairo checks for portfolio config in DB:
-  - If missing, asks Bogdan in Matrix DM for portfolio (tickers, allocations)
-  - Stores portfolio in DB for subsequent runs
-- [x] Kairo queries finnhub MCP for market data (prices, changes, fundamentals)
-- [x] Kairo writes analysis to DB (structured: tickers, metrics, commentary)
-- [x] Kairo sends summary report to Ruriko (or to a shared Matrix room)
-- [x] Test: Kairo produces a portfolio analysis from finnhub data
+### R6.2 Workflow engine foundation (`internal/gitai/workflow/`)
+- [ ] Create `internal/gitai/workflow/` package with:
+  - deterministic trigger matcher
+  - protocol message parser
+  - schema validation helpers
+  - execution state/context container
+  - deterministic error types
+- [ ] Implement protocol trust gate (MXID + room + protocol) against `trust.trustedPeers`
+- [ ] Ensure protocol-triggered execution is blocked on trust mismatch with audit warning
+- [ ] Add unit tests for trusted/untrusted protocol message handling
 
-### R6.3 Peer-to-Peer Collaboration (replaces Ruriko orchestration)
-- [x] Kairo sends relevant tickers to Kumo via `matrix.send_message` for news lookup
-- [x] Kumo receives request, searches for news, returns results to Kairo via `matrix.send_message`
-- [x] Kairo revises analysis incorporating Kumo's news context
-- [x] Kairo decides whether to notify user based on:
-  - [x] Significance threshold (material changes, big news)
-  - [x] Rate limiting (no more than N notifications per hour)
-- [x] If significant: Kairo sends the user a concise final report via `matrix.send_message`
-- [x] If not significant: Kairo logs but does not notify
-- [ ] Test: Full peer-to-peer collaboration loop produces a final report
-  Remaining item: deterministic unit coverage is in place (`go test ./internal/gitai/app -run 'TestKairoPipeline|TestKumoPipeline'`), but full compose/live end-to-end verification remains pending under R6.5/R8.4.
+### R6.3 Unified tool dispatch boundary (no direct MCP calls)
+- [ ] Implement/standardize one dispatcher API (e.g. `DispatchToolCall`) for both LLM and workflow execution paths
+- [ ] Route workflow `tool` and `send_message` steps through dispatcher only
+- [ ] Ensure dispatcher performs deterministic policy evaluation before execution
+- [ ] Ensure approval-required tools pause and resume via approval decision (no bypass)
+- [ ] Remove direct `supv.Get(...).CallTool(...)` usage from workflow/canonical code paths
+- [ ] Add tests proving workflow tool calls are denied/approved by policy exactly like LLM tool calls
 
-### R6.4 Kumo News Search
-- [ ] Kumo receives search request from Kairo (tickers/company names)
-- [ ] Kumo uses Brave Search MCP to fetch news
-- [ ] Kumo summarizes results (structured output + short narrative)
-- [ ] Kumo returns results to Kairo via `matrix.send_message`
-- [ ] Test: Kumo searches and returns relevant news summaries
+### R6.4 Approvals via Ruriko (transport unification)
+- [ ] Enforce via-Ruriko as the only approval transport for workflow tool calls
+- [ ] Include in approval request payload: `trace_id`, tool reference, normalized arg hash, caller context
+- [ ] Enforce deterministic decision handling (`approve` / `deny` / timeout => deny)
+- [ ] Add tests for:
+  - approval required + approved => executes
+  - approval required + denied => refuses
+  - approval timeout => refuses
 
-### R6.5 End-to-End Story Validation
-- [ ] Full cycle test: Saito triggers → Kairo analyzes → Kumo searches → Kairo revises → Bogdan gets report
-- [ ] Validate: No secrets visible in any Matrix room
-- [ ] Validate: Control operations happen via ACP, not Matrix
-- [ ] Validate: Report is coherent, timely, and actionable
-- [ ] Validate: User can intervene mid-cycle (e.g., "stop", "skip this one")
+### R6.5 Remove canonical hard-coded runtime branches
+- [ ] Remove Saito deterministic event branch from `internal/gitai/app/app.go`
+- [ ] Remove Kairo deterministic message branch hooks from `internal/gitai/app/app.go`
+- [ ] Remove Kumo deterministic message branch hooks from `internal/gitai/app/app.go`
+- [ ] Remove or migrate canonical-specific pipeline helpers that encode behavior in code rather than workflow config
+- [ ] Ensure canonical behavior is triggered only through workflow config + policy engine
+
+### R6.6 Port canonical templates to workflow config
+- [ ] Update `templates/saito-agent/gosuto.yaml` to express scheduling/trigger behavior via `workflow`
+- [ ] Update `templates/kairo-agent/gosuto.yaml` to express analysis + peer protocol handling via `workflow`
+- [ ] Update `templates/kumo-agent/gosuto.yaml` to express news request/response behavior via `workflow`
+- [ ] Add `trust.trustedPeers` to canonical templates with MXID + room + protocol mappings
+- [ ] Define inline `workflow.schemas` for canonical protocol payloads in templates
+
+### R6.7 Tests + end-to-end verification
+- [ ] Unit: schema-ref validation and trusted peer enforcement
+- [ ] Unit: retry-then-refuse for parse/summarize schema failures
+- [ ] Integration: canonical loop uses workflow config only (no agent-name branching)
+- [ ] Integration: protocol message from untrusted peer is rejected even with `allowedSenders: "*"`
+- [ ] Integration: approval-required workflow tool step blocks until Ruriko decision
+- [ ] Live compose: run at least 3 consecutive canonical cycles successfully
+- [ ] Live security checks:
+  - no secrets in Matrix logs/history
+  - no direct MCP call bypass from workflow path
+  - approval ledger complete in Ruriko for approved/denied actions
+
+### R6.8 Docs alignment
+- [ ] Update `docs/gosuto-spec.md` with `trust.trustedPeers`, `workflow`, and inline schema ref rules
+- [ ] Update `docs/architecture.md` to describe workflow engine execution path and trust gate
+- [ ] Update `docs/invariants.md` if needed to explicitly reference protocol-trust gating semantics
+- [ ] Keep [REFACTOR.md](REFACTOR.md) and [TODO.md](TODO.md) in sync as implementation lands
 
 ### Definition of done
-- The full Saito → Kairo → Kumo workflow runs reliably using peer-to-peer messaging
-- The user receives a coherent, useful final report
-- No secrets are visible in chat
-- Agents collaborate directly without Ruriko relaying messages
+- No hard-coded Saito/Kairo/Kumo turn branches remain in Gitai runtime.
+- Canonical behavior is defined in Gosuto templates via `workflow` + `trust.trustedPeers`.
+- Workflow-triggered tool calls use the same policy + approval path as LLM-triggered calls.
+- Approval transport for workflow tools is via Ruriko and fully audited.
+- Canonical deterministic + live compose tests pass with at least 3 consecutive successful cycles.
+- Docs/specs are updated and consistent with implementation.
 
 ---
 
