@@ -27,7 +27,7 @@ func baseConfig() *gosutospec.Config {
 						"type":     "object",
 						"required": []interface{}{"run_id", "tickers"},
 						"properties": map[string]interface{}{
-							"run_id": map[string]interface{}{"type": "integer"},
+							"run_id":  map[string]interface{}{"type": "integer"},
 							"tickers": map[string]interface{}{"type": "array"},
 						},
 					},

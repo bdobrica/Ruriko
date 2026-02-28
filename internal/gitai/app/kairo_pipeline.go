@@ -12,7 +12,6 @@ import (
 	gosutospec "github.com/bdobrica/Ruriko/common/spec/gosuto"
 	"github.com/bdobrica/Ruriko/common/trace"
 	"github.com/bdobrica/Ruriko/internal/gitai/builtin"
-	"github.com/bdobrica/Ruriko/internal/gitai/llm"
 	"github.com/bdobrica/Ruriko/internal/gitai/store"
 )
 
@@ -509,13 +508,16 @@ func (a *App) sendKairoTargetMessage(ctx context.Context, target, message string
 		return fmt.Errorf("marshal matrix.send_message args: %w", err)
 	}
 
-	_, err = a.executeBuiltinTool(ctx, "kairo-pipeline", llm.ToolCall{
-		ID:   "kairo-pipeline-message",
-		Type: "function",
-		Function: llm.FunctionCall{
-			Name:      builtin.MatrixSendToolName,
-			Arguments: string(raw),
-		},
+	var args map[string]interface{}
+	if err := json.Unmarshal(raw, &args); err != nil {
+		return fmt.Errorf("unmarshal matrix.send_message args: %w", err)
+	}
+
+	_, err = a.DispatchToolCall(ctx, ToolDispatchRequest{
+		Caller: dispatchCallerPipeline,
+		Sender: "kairo-pipeline",
+		Name:   builtin.MatrixSendToolName,
+		Args:   args,
 	})
 	return err
 }
@@ -559,16 +561,17 @@ func (a *App) fetchKairoTickerMetrics(ctx context.Context, ticker string) (kairo
 	var lastErr error
 	for _, toolName := range ordered {
 		for _, args := range argVariants {
-			res, err := client.CallTool(ctx, toolName, args)
+			resText, err := a.DispatchToolCall(ctx, ToolDispatchRequest{
+				Caller: dispatchCallerPipeline,
+				Sender: "kairo-pipeline",
+				Name:   "finnhub__" + toolName,
+				Args:   args,
+			})
 			if err != nil {
 				lastErr = err
 				continue
 			}
-			if res.IsError {
-				lastErr = fmt.Errorf("tool returned error")
-				continue
-			}
-			metrics, ok := parseFinnhubMetrics(ticker, res)
+			metrics, ok := parseFinnhubMetricsText(ticker, resText)
 			if ok {
 				return metrics, nil
 			}
@@ -616,75 +619,48 @@ func selectFinnhubQuoteTools(toolNames []string) []string {
 	return out
 }
 
-func parseFinnhubMetrics(ticker string, result interface { /* *mcp.CallToolResult */
-}) (kairoTickerMetrics, bool) {
-	callResult, ok := result.(interface {
-		GetContent() []map[string]interface{}
-	})
-	if ok {
-		_ = callResult
-	}
-
-	// We keep this parser decoupled from the concrete type to simplify tests.
-	// The caller passes *mcp.CallToolResult and we unwrap it via JSON.
-	b, err := json.Marshal(result)
-	if err != nil {
+func parseFinnhubMetricsText(ticker, rawResult string) (kairoTickerMetrics, bool) {
+	raw := strings.TrimSpace(rawResult)
+	if raw == "" {
 		return kairoTickerMetrics{}, false
 	}
 
-	var payload struct {
-		Content []struct {
-			Text string `json:"text"`
-		} `json:"content"`
-	}
-	if err := json.Unmarshal(b, &payload); err != nil {
+	metricsMap, ok := parseFirstJSONObject(raw)
+	if !ok {
 		return kairoTickerMetrics{}, false
 	}
 
-	for _, item := range payload.Content {
-		raw := strings.TrimSpace(item.Text)
-		if raw == "" {
-			continue
-		}
-		metricsMap, ok := parseFirstJSONObject(raw)
-		if !ok {
-			continue
-		}
-
-		price, ok := extractFloat(metricsMap, "c", "current", "price", "last")
-		if !ok {
-			continue
-		}
-		open, _ := extractFloat(metricsMap, "o", "open")
-		high, _ := extractFloat(metricsMap, "h", "high")
-		low, _ := extractFloat(metricsMap, "l", "low")
-		prevClose, _ := extractFloat(metricsMap, "pc", "previous_close", "previousClose")
-		changePct, hasChange := extractFloat(metricsMap, "dp", "change_percent", "changePercent")
-		if !hasChange && prevClose != 0 {
-			changePct = ((price - prevClose) / prevClose) * 100
-		}
-
-		commentary := "stable"
-		if math.Abs(changePct) >= 3 {
-			commentary = "material move"
-		} else if math.Abs(changePct) >= 1 {
-			commentary = "notable move"
-		}
-
-		return kairoTickerMetrics{
-			Ticker:        ticker,
-			Price:         price,
-			ChangePercent: changePct,
-			Open:          open,
-			High:          high,
-			Low:           low,
-			PreviousClose: prevClose,
-			Raw:           metricsMap,
-			Commentary:    commentary,
-		}, true
+	price, ok := extractFloat(metricsMap, "c", "current", "price", "last")
+	if !ok {
+		return kairoTickerMetrics{}, false
+	}
+	open, _ := extractFloat(metricsMap, "o", "open")
+	high, _ := extractFloat(metricsMap, "h", "high")
+	low, _ := extractFloat(metricsMap, "l", "low")
+	prevClose, _ := extractFloat(metricsMap, "pc", "previous_close", "previousClose")
+	changePct, hasChange := extractFloat(metricsMap, "dp", "change_percent", "changePercent")
+	if !hasChange && prevClose != 0 {
+		changePct = ((price - prevClose) / prevClose) * 100
 	}
 
-	return kairoTickerMetrics{}, false
+	commentary := "stable"
+	if math.Abs(changePct) >= 3 {
+		commentary = "material move"
+	} else if math.Abs(changePct) >= 1 {
+		commentary = "notable move"
+	}
+
+	return kairoTickerMetrics{
+		Ticker:        ticker,
+		Price:         price,
+		ChangePercent: changePct,
+		Open:          open,
+		High:          high,
+		Low:           low,
+		PreviousClose: prevClose,
+		Raw:           metricsMap,
+		Commentary:    commentary,
+	}, true
 }
 
 func parseFirstJSONObject(raw string) (map[string]interface{}, bool) {

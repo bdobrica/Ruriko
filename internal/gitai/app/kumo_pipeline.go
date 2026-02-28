@@ -92,7 +92,7 @@ func (a *App) fetchKumoNews(ctx context.Context, req kairoNewsRequest) (kumoNews
 
 	for _, ticker := range req.Tickers {
 		query := fmt.Sprintf("%s stock news latest", ticker)
-		resultText, err := callKumoSearchTool(ctx, client, searchTool, query)
+		resultText, err := a.callKumoSearchTool(ctx, client, searchTool, query)
 		if err != nil {
 			return kumoNewsResult{}, fmt.Errorf("search %s news: %w", ticker, err)
 		}
@@ -139,7 +139,7 @@ func chooseKumoSearchTool(tools []mcp.Tool) (string, bool) {
 	return "", false
 }
 
-func callKumoSearchTool(ctx context.Context, client *mcp.Client, toolName, query string) (string, error) {
+func (a *App) callKumoSearchTool(ctx context.Context, client *mcp.Client, toolName, query string) (string, error) {
 	argVariants := []map[string]interface{}{
 		{"query": query},
 		{"q": query},
@@ -148,16 +148,17 @@ func callKumoSearchTool(ctx context.Context, client *mcp.Client, toolName, query
 
 	var lastErr error
 	for _, args := range argVariants {
-		res, err := client.CallTool(ctx, toolName, args)
+		resultText, err := a.DispatchToolCall(ctx, ToolDispatchRequest{
+			Caller: dispatchCallerPipeline,
+			Sender: "kumo-pipeline",
+			Name:   "brave-search__" + toolName,
+			Args:   args,
+		})
 		if err != nil {
 			lastErr = err
 			continue
 		}
-		if res.IsError {
-			lastErr = fmt.Errorf("tool returned error")
-			continue
-		}
-		if text := flattenToolText(res); strings.TrimSpace(text) != "" {
+		if text := strings.TrimSpace(resultText); text != "" {
 			return text, nil
 		}
 		lastErr = fmt.Errorf("empty tool response")
@@ -167,19 +168,6 @@ func callKumoSearchTool(ctx context.Context, client *mcp.Client, toolName, query
 		lastErr = fmt.Errorf("no successful search call")
 	}
 	return "", lastErr
-}
-
-func flattenToolText(res *mcp.CallToolResult) string {
-	if res == nil || len(res.Content) == 0 {
-		return ""
-	}
-	parts := make([]string, 0, len(res.Content))
-	for _, c := range res.Content {
-		if t := strings.TrimSpace(c.Text); t != "" {
-			parts = append(parts, t)
-		}
-	}
-	return strings.Join(parts, "\n")
 }
 
 func extractHeadlines(raw string, limit int) []string {

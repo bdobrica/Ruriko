@@ -39,6 +39,28 @@ import (
 
 const maxToolCallRounds = 10
 
+const (
+	dispatchCallerLLM      = "llm"
+	dispatchCallerWorkflow = "workflow"
+	dispatchCallerGateway  = "gateway"
+	dispatchCallerPipeline = "pipeline"
+)
+
+// approvalGate is the subset of approvals.Gate used by the app dispatcher.
+type approvalGate interface {
+	Request(ctx context.Context, approvalsRoom, requestorMXID, action, target string, params map[string]interface{}, ttl time.Duration) error
+	RecordDecision(approvalID string, status store.ApprovalStatus, decidedBy, reason string) error
+}
+
+// ToolDispatchRequest is the unified request shape for all tool execution
+// paths (LLM, workflow, gateway, deterministic pipelines).
+type ToolDispatchRequest struct {
+	Caller string
+	Sender string
+	Name   string
+	Args   map[string]interface{}
+}
+
 // eventMatrixSender abstracts the Matrix send operations needed by
 // runEventTurn.  It is satisfied by *matrix.Client and can be replaced with
 // a lightweight recording stub in unit tests without spinning up a real
@@ -121,7 +143,7 @@ type App struct {
 	llmProvMu   sync.RWMutex // guards llmProv
 	llmProv     llm.Provider
 	matrixCli   *matrix.Client
-	approvalGt  *approvals.Gate
+	approvalGt  approvalGate
 	acpServer   *control.Server
 	startedAt   time.Time
 	restartCh   chan struct{}
@@ -573,17 +595,6 @@ func (a *App) runTurn(ctx context.Context, roomID, sender, userText, replyToEven
 // Built-in tools (registered in a.builtinReg) are dispatched to
 // executeBuiltinTool; all other tool calls route through MCP clients.
 func (a *App) executeToolCall(ctx context.Context, roomID, sender string, tc llm.ToolCall) (string, error) {
-	// Built-in tools take priority — they do not use the MCP client path.
-	if a.builtinReg != nil && a.builtinReg.IsBuiltin(tc.Function.Name) {
-		return a.executeBuiltinTool(ctx, sender, tc)
-	}
-
-	log := observability.WithTrace(ctx)
-
-	// Parse tool name: "mcpServer__toolName"
-	mcpName, toolName := splitToolName(tc.Function.Name)
-
-	// Parse args.
 	var args map[string]interface{}
 	if tc.Function.Arguments != "" {
 		if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
@@ -591,10 +602,41 @@ func (a *App) executeToolCall(ctx context.Context, roomID, sender string, tc llm
 		}
 	}
 
-	// Policy evaluation.
-	result := a.policyEng.Evaluate(mcpName, toolName, args)
+	_ = roomID
+	return a.DispatchToolCall(ctx, ToolDispatchRequest{
+		Caller: dispatchCallerLLM,
+		Sender: sender,
+		Name:   tc.Function.Name,
+		Args:   args,
+	})
+}
+
+// DispatchToolCall is the single deterministic tool execution boundary used by
+// both LLM and non-LLM execution paths (workflow, gateway, deterministic flows).
+func (a *App) DispatchToolCall(ctx context.Context, req ToolDispatchRequest) (string, error) {
+	log := observability.WithTrace(ctx)
+
+	isBuiltin := a.builtinReg != nil && a.builtinReg.IsBuiltin(req.Name)
+	namespace := ""
+	mcpName := ""
+	toolName := req.Name
+	approvalAction := "mcp.call"
+
+	if isBuiltin {
+		namespace = builtin.BuiltinMCPNamespace
+		approvalAction = "builtin.call"
+	} else {
+		mcpName, toolName = splitToolName(req.Name)
+		namespace = mcpName
+		if strings.TrimSpace(mcpName) == "" || strings.TrimSpace(toolName) == "" {
+			return "", fmt.Errorf("invalid MCP tool name %q: expected mcp__tool", req.Name)
+		}
+	}
+
+	result := a.policyEng.Evaluate(namespace, toolName, req.Args)
 	log.Info("policy evaluation",
-		"mcp", mcpName,
+		"caller", req.Caller,
+		"mcp", namespace,
 		"tool", toolName,
 		"decision", result.Decision,
 		"rule", result.MatchedRule,
@@ -606,31 +648,45 @@ func (a *App) executeToolCall(ctx context.Context, roomID, sender string, tc llm
 
 	case policy.DecisionRequireApproval:
 		cfg := a.gosutoLdr.Config()
-		if !cfg.Approvals.Enabled || cfg.Approvals.Room == "" {
+		if cfg == nil || !cfg.Approvals.Enabled || cfg.Approvals.Room == "" {
 			return "", fmt.Errorf("approval required but approvals not configured")
 		}
+		if a.approvalGt == nil {
+			return "", fmt.Errorf("approval required but approval gate is not configured")
+		}
 		ttl := time.Duration(cfg.Approvals.TTLSeconds) * time.Second
-		log.Info("requesting approval", "mcp", mcpName, "tool", toolName)
-		if err := a.approvalGt.Request(ctx, cfg.Approvals.Room, sender, "mcp.call", tc.Function.Name, args, ttl); err != nil {
+		log.Info("requesting approval",
+			"caller", req.Caller,
+			"mcp", namespace,
+			"tool", req.Name,
+		)
+		if err := a.approvalGt.Request(ctx, cfg.Approvals.Room, req.Sender, approvalAction, req.Name, req.Args, ttl); err != nil {
 			return "", fmt.Errorf("approval: %w", err)
 		}
-		// Approved — fall through to execution.
 
 	case policy.DecisionAllow:
-		// Proceed immediately.
+		// Continue.
 	}
 
-	// Execute via MCP client.
+	if isBuiltin {
+		tool := a.builtinReg.Get(req.Name)
+		if tool == nil {
+			return "", fmt.Errorf("built-in tool %q not found in registry", req.Name)
+		}
+
+		toolResult, execErr := tool.Execute(ctx, req.Args)
+		if req.Name == builtin.MatrixSendToolName {
+			a.auditMessagingSend(ctx, req.Args, execErr)
+		}
+		return toolResult, execErr
+	}
+
 	client := a.supv.Get(mcpName)
 	if client == nil {
 		return "", fmt.Errorf("MCP server %q is not running", mcpName)
 	}
 
-	// Resolve any {{secret:ref}} placeholders in tool arguments before the
-	// call reaches the MCP server. This allows Gosuto-defined capabilities to
-	// include secret references in tool argument defaults without embedding
-	// plaintext credentials in the config.
-	args, err := a.resolveSecretArgs(args)
+	args, err := a.resolveSecretArgs(req.Args)
 	if err != nil {
 		return "", fmt.Errorf("resolving secret args for %s.%s: %w", mcpName, toolName, err)
 	}
@@ -812,9 +868,6 @@ func (a *App) gatherTools(ctx context.Context) ([]llm.ToolDefinition, map[string
 // Gosuto capability rules of the form (mcp: builtin, tool: <name>) apply with
 // the same first-match-wins semantics as MCP tool rules.
 func (a *App) executeBuiltinTool(ctx context.Context, sender string, tc llm.ToolCall) (string, error) {
-	log := observability.WithTrace(ctx)
-
-	// Parse args.
 	var args map[string]interface{}
 	if tc.Function.Arguments != "" {
 		if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
@@ -822,51 +875,12 @@ func (a *App) executeBuiltinTool(ctx context.Context, sender string, tc llm.Tool
 		}
 	}
 
-	// Policy evaluation using "builtin" as the pseudo-MCP namespace.
-	result := a.policyEng.Evaluate(builtin.BuiltinMCPNamespace, tc.Function.Name, args)
-	log.Info("policy evaluation",
-		"mcp", builtin.BuiltinMCPNamespace,
-		"tool", tc.Function.Name,
-		"decision", result.Decision,
-		"rule", result.MatchedRule,
-	)
-
-	switch result.Decision {
-	case policy.DecisionDeny:
-		return "", fmt.Errorf("policy denied: %s", result.Violation.Message)
-
-	case policy.DecisionRequireApproval:
-		cfg := a.gosutoLdr.Config()
-		if !cfg.Approvals.Enabled || cfg.Approvals.Room == "" {
-			return "", fmt.Errorf("approval required but approvals not configured")
-		}
-		ttl := time.Duration(cfg.Approvals.TTLSeconds) * time.Second
-		log.Info("requesting approval", "mcp", builtin.BuiltinMCPNamespace, "tool", tc.Function.Name)
-		if err := a.approvalGt.Request(ctx, cfg.Approvals.Room, sender, "builtin.call", tc.Function.Name, args, ttl); err != nil {
-			return "", fmt.Errorf("approval: %w", err)
-		}
-		// Approved — fall through to execution.
-
-	case policy.DecisionAllow:
-		// Proceed immediately.
-	}
-
-	tool := a.builtinReg.Get(tc.Function.Name)
-	if tool == nil {
-		return "", fmt.Errorf("built-in tool %q not found in registry", tc.Function.Name)
-	}
-
-	toolResult, execErr := tool.Execute(ctx, args)
-
-	// R15.5: Audit logging for matrix.send_message.
-	// Log at INFO: agent_id, target alias, room_id, status.
-	// trace_id is implicit via observability.WithTrace(ctx).
-	// Message content is never logged at INFO (only DEBUG with redaction).
-	if tc.Function.Name == builtin.MatrixSendToolName {
-		a.auditMessagingSend(ctx, args, execErr)
-	}
-
-	return toolResult, execErr
+	return a.DispatchToolCall(ctx, ToolDispatchRequest{
+		Caller: dispatchCallerLLM,
+		Sender: sender,
+		Name:   tc.Function.Name,
+		Args:   args,
+	})
 }
 
 // auditMessagingSend logs a matrix.send_message call at INFO and, on success,
@@ -1130,13 +1144,16 @@ func (a *App) runDeterministicSaitoCronTurn(ctx context.Context, evt *envelope.E
 		return "", 0, fmt.Errorf("marshal deterministic Saito trigger args: %w", err)
 	}
 
-	toolResult, err := a.executeBuiltinTool(ctx, "gateway:"+evt.Source, llm.ToolCall{
-		ID:   "saito-cron-trigger",
-		Type: "function",
-		Function: llm.FunctionCall{
-			Name:      builtin.MatrixSendToolName,
-			Arguments: string(payload),
-		},
+	var args map[string]interface{}
+	if err := json.Unmarshal(payload, &args); err != nil {
+		return "", 0, fmt.Errorf("unmarshal deterministic Saito trigger args: %w", err)
+	}
+
+	toolResult, err := a.DispatchToolCall(ctx, ToolDispatchRequest{
+		Caller: dispatchCallerGateway,
+		Sender: "gateway:" + evt.Source,
+		Name:   builtin.MatrixSendToolName,
+		Args:   args,
 	})
 	if err != nil {
 		return "", 1, err
