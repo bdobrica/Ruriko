@@ -42,6 +42,11 @@ func Validate(cfg *Config) error {
 		return fmt.Errorf("trust: %w", err)
 	}
 
+	// ── Workflow ─────────────────────────────────────────────────────────────
+	if err := validateWorkflow(cfg.Workflow); err != nil {
+		return fmt.Errorf("workflow: %w", err)
+	}
+
 	// ── Limits ───────────────────────────────────────────────────────────────
 	if err := validateLimits(cfg.Limits); err != nil {
 		return fmt.Errorf("limits: %w", err)
@@ -204,7 +209,164 @@ func validateTrust(t Trust) error {
 			return fmt.Errorf("allowedSenders entry %q must start with '@' or be \"*\"", sender)
 		}
 	}
+
+	seen := make(map[string]struct{})
+	for i, peer := range t.TrustedPeers {
+		if !strings.HasPrefix(peer.MXID, "@") {
+			return fmt.Errorf("trustedPeers[%d]: mxid %q must start with '@'", i, peer.MXID)
+		}
+		if !strings.HasPrefix(peer.RoomID, "!") {
+			return fmt.Errorf("trustedPeers[%d]: roomId %q must start with '!'", i, peer.RoomID)
+		}
+		if len(peer.Protocols) == 0 {
+			return fmt.Errorf("trustedPeers[%d]: protocols must not be empty", i)
+		}
+		for j, protocol := range peer.Protocols {
+			protocol = strings.TrimSpace(protocol)
+			if protocol == "" {
+				return fmt.Errorf("trustedPeers[%d]: protocols[%d] must not be empty", i, j)
+			}
+			tuple := peer.MXID + "|" + peer.RoomID + "|" + protocol
+			if _, dup := seen[tuple]; dup {
+				return fmt.Errorf("trustedPeers[%d]: duplicate trusted peer tuple (%s, %s, %s)", i, peer.MXID, peer.RoomID, protocol)
+			}
+			seen[tuple] = struct{}{}
+		}
+	}
 	return nil
+}
+
+func validateWorkflow(w Workflow) error {
+	for _, key := range w.Schemas.Duplicates {
+		return fmt.Errorf("workflow schemas contains duplicate key %s", key)
+	}
+
+	schemas := w.Schemas.Definitions
+
+	validateSchemaRef := func(protocolID, fieldName, ref string, stepIndex int) error {
+		trimmed := strings.TrimSpace(ref)
+		if trimmed == "" {
+			return fmt.Errorf("workflow protocol %s: schema ref cannot be empty", protocolID)
+		}
+		if isExternalSchemaRef(trimmed) {
+			return fmt.Errorf("external schema references are not supported; use workflow.schemas")
+		}
+		if len(schemas) == 0 {
+			return fmt.Errorf("workflow schema ref requires workflow.schemas to be defined")
+		}
+		if _, ok := schemas[trimmed]; !ok {
+			switch fieldName {
+			case "inputSchemaRef":
+				return fmt.Errorf("workflow protocol %s: input schema ref %s not found", protocolID, trimmed)
+			case "outputSchemaRef":
+				return fmt.Errorf("workflow protocol %s, step %d: output schema ref %s not found", protocolID, stepIndex, trimmed)
+			default:
+				return fmt.Errorf("workflow protocol %s: schema ref %s not found", protocolID, trimmed)
+			}
+		}
+		return nil
+	}
+
+	for name, schema := range schemas {
+		if err := validateWorkflowSchemaObject(name, schema); err != nil {
+			return err
+		}
+	}
+
+	validStepTypes := map[string]struct{}{
+		"parse_input":  {},
+		"tool":         {},
+		"branch":       {},
+		"summarize":    {},
+		"send_message": {},
+		"persist":      {},
+	}
+
+	for i, protocol := range w.Protocols {
+		if strings.TrimSpace(protocol.ID) == "" {
+			return fmt.Errorf("protocols[%d]: id must not be empty", i)
+		}
+		if protocol.Retries < 0 {
+			return fmt.Errorf("workflow protocol %s: retries must be >= 0", protocol.ID)
+		}
+		if ref := protocol.InputSchemaRef; ref != "" {
+			if err := validateSchemaRef(protocol.ID, "inputSchemaRef", ref, -1); err != nil {
+				return err
+			}
+		}
+		for stepIndex, step := range protocol.Steps {
+			if _, ok := validStepTypes[step.Type]; !ok {
+				return fmt.Errorf("workflow protocol %s, step %d: unknown step type %q", protocol.ID, stepIndex, step.Type)
+			}
+			if step.Retries < 0 {
+				return fmt.Errorf("workflow protocol %s, step %d: retries must be >= 0", protocol.ID, stepIndex)
+			}
+			if ref := step.InputSchemaRef; ref != "" {
+				if err := validateSchemaRef(protocol.ID, "inputSchemaRef", ref, stepIndex); err != nil {
+					return err
+				}
+			}
+			if ref := step.OutputSchemaRef; ref != "" {
+				if err := validateSchemaRef(protocol.ID, "outputSchemaRef", ref, stepIndex); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func validateWorkflowSchemaObject(name string, schema interface{}) error {
+	obj, ok := schema.(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("workflow schema %s: invalid JSON Schema", name)
+	}
+
+	if typeValue, hasType := obj["type"]; hasType {
+		if _, ok := typeValue.(string); !ok {
+			return fmt.Errorf("workflow schema %s: invalid JSON Schema", name)
+		}
+	}
+
+	if requiredValue, hasRequired := obj["required"]; hasRequired {
+		requiredList, ok := requiredValue.([]interface{})
+		if !ok {
+			return fmt.Errorf("workflow schema %s: invalid JSON Schema", name)
+		}
+		seen := make(map[string]struct{}, len(requiredList))
+		for _, raw := range requiredList {
+			requiredField, ok := raw.(string)
+			if !ok {
+				return fmt.Errorf("workflow schema %s: invalid JSON Schema", name)
+			}
+			if _, dup := seen[requiredField]; dup {
+				return fmt.Errorf("workflow schema %s: invalid JSON Schema", name)
+			}
+			seen[requiredField] = struct{}{}
+		}
+	}
+
+	if propertiesValue, hasProperties := obj["properties"]; hasProperties {
+		if _, ok := propertiesValue.(map[string]interface{}); !ok {
+			return fmt.Errorf("workflow schema %s: invalid JSON Schema", name)
+		}
+	}
+
+	return nil
+}
+
+func isExternalSchemaRef(ref string) bool {
+	if strings.Contains(ref, "://") {
+		return true
+	}
+	if strings.HasPrefix(ref, "#") {
+		return true
+	}
+	if strings.ContainsAny(ref, `/\\`) {
+		return true
+	}
+	return false
 }
 
 func validateLimits(l Limits) error {

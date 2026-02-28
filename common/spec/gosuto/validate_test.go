@@ -1599,3 +1599,265 @@ messaging:
 		t.Errorf("error should mention maxMessagesPerMinute, got: %v", err)
 	}
 }
+
+const r61Base = `
+apiVersion: gosuto/v1
+metadata:
+	name: test-agent
+`
+
+const r61Trust = `
+trust:
+	allowedRooms:
+		- "!room:example.com"
+	allowedSenders:
+		- "@alice:example.com"
+`
+
+func parseR61YAML(raw string) (*gosuto.Config, error) {
+	return gosuto.Parse([]byte(strings.ReplaceAll(raw, "\t", "  ")))
+}
+
+func TestValidate_TrustedPeers_Valid(t *testing.T) {
+	_, err := parseR61YAML(r61Base + `
+trust:
+	allowedRooms:
+		- "!room:example.com"
+	allowedSenders:
+		- "@alice:example.com"
+	trustedPeers:
+		- mxid: "@kairo:example.com"
+			roomId: "!kairo-room:example.com"
+			alias: "kairo"
+			protocols:
+				- "kairo.news.request.v1"
+`)
+	if err != nil {
+		t.Fatalf("expected trustedPeers config to be valid, got: %v", err)
+	}
+}
+
+func TestValidate_TrustedPeers_InvalidMXID(t *testing.T) {
+	_, err := parseR61YAML(r61Base + `
+trust:
+	allowedRooms:
+		- "!room:example.com"
+	allowedSenders:
+		- "@alice:example.com"
+	trustedPeers:
+		- mxid: "kairo:example.com"
+			roomId: "!kairo-room:example.com"
+			protocols:
+				- "kairo.news.request.v1"
+`)
+	if err == nil {
+		t.Fatal("expected error for invalid trustedPeers mxid, got nil")
+	}
+	if !strings.Contains(err.Error(), "must start with '@'") {
+		t.Errorf("error should mention trustedPeers mxid format, got: %v", err)
+	}
+}
+
+func TestValidate_TrustedPeers_InvalidRoomID(t *testing.T) {
+	_, err := parseR61YAML(r61Base + `
+trust:
+	allowedRooms:
+		- "!room:example.com"
+	allowedSenders:
+		- "@alice:example.com"
+	trustedPeers:
+		- mxid: "@kairo:example.com"
+			roomId: "kairo-room:example.com"
+			protocols:
+				- "kairo.news.request.v1"
+`)
+	if err == nil {
+		t.Fatal("expected error for invalid trustedPeers roomId, got nil")
+	}
+	if !strings.Contains(err.Error(), "must start with '!'") {
+		t.Errorf("error should mention trustedPeers roomId format, got: %v", err)
+	}
+}
+
+func TestValidate_TrustedPeers_EmptyProtocols(t *testing.T) {
+	_, err := parseR61YAML(r61Base + `
+trust:
+	allowedRooms:
+		- "!room:example.com"
+	allowedSenders:
+		- "@alice:example.com"
+	trustedPeers:
+		- mxid: "@kairo:example.com"
+			roomId: "!kairo-room:example.com"
+			protocols: []
+`)
+	if err == nil {
+		t.Fatal("expected error for empty trustedPeers protocols, got nil")
+	}
+	if !strings.Contains(err.Error(), "protocols must not be empty") {
+		t.Errorf("error should mention empty trustedPeers protocols, got: %v", err)
+	}
+}
+
+func TestValidate_TrustedPeers_DuplicateTuple(t *testing.T) {
+	_, err := parseR61YAML(r61Base + `
+trust:
+	allowedRooms:
+		- "!room:example.com"
+	allowedSenders:
+		- "@alice:example.com"
+	trustedPeers:
+		- mxid: "@kairo:example.com"
+			roomId: "!kairo-room:example.com"
+			protocols:
+				- "kairo.news.request.v1"
+		- mxid: "@kairo:example.com"
+			roomId: "!kairo-room:example.com"
+			protocols:
+				- "kairo.news.request.v1"
+`)
+	if err == nil {
+		t.Fatal("expected error for duplicate trusted peer tuple, got nil")
+	}
+	if !strings.Contains(err.Error(), "duplicate trusted peer tuple") {
+		t.Errorf("error should mention duplicate trusted peer tuple, got: %v", err)
+	}
+}
+
+func TestValidate_WorkflowSchemaRef_RequiresSchemas(t *testing.T) {
+	_, err := parseR61YAML(r61Base + r61Trust + `
+workflow:
+	protocols:
+		- id: "kairo.news.request.v1"
+			trigger:
+				type: "matrix.protocol_message"
+			inputSchemaRef: "kairoNewsRequest"
+			steps: []
+`)
+	if err == nil {
+		t.Fatal("expected error when workflow schema ref is used without workflow.schemas, got nil")
+	}
+	if !strings.Contains(err.Error(), "workflow schema ref requires workflow.schemas to be defined") {
+		t.Errorf("error should mention missing workflow.schemas, got: %v", err)
+	}
+}
+
+func TestValidate_WorkflowSchemaRef_InputNotFound(t *testing.T) {
+	_, err := parseR61YAML(r61Base + r61Trust + `
+workflow:
+	schemas:
+		otherSchema:
+			type: object
+	protocols:
+		- id: "kairo.news.request.v1"
+			trigger:
+				type: "matrix.protocol_message"
+			inputSchemaRef: "kairoNewsRequest"
+			steps: []
+`)
+	if err == nil {
+		t.Fatal("expected error for missing workflow input schema ref, got nil")
+	}
+	if !strings.Contains(err.Error(), "workflow protocol kairo.news.request.v1: input schema ref kairoNewsRequest not found") {
+		t.Errorf("unexpected input schema ref error: %v", err)
+	}
+}
+
+func TestValidate_WorkflowSchemaRef_OutputNotFound(t *testing.T) {
+	_, err := parseR61YAML(r61Base + r61Trust + `
+workflow:
+	schemas:
+		kairoNewsRequest:
+			type: object
+	protocols:
+		- id: "kairo.news.request.v1"
+			trigger:
+				type: "matrix.protocol_message"
+			inputSchemaRef: "kairoNewsRequest"
+			steps:
+				- type: "summarize"
+					prompt: "Summarize"
+					outputSchemaRef: "kumoNewsResponse"
+`)
+	if err == nil {
+		t.Fatal("expected error for missing workflow output schema ref, got nil")
+	}
+	if !strings.Contains(err.Error(), "workflow protocol kairo.news.request.v1, step 0: output schema ref kumoNewsResponse not found") {
+		t.Errorf("unexpected output schema ref error: %v", err)
+	}
+}
+
+func TestValidate_WorkflowSchemaRef_EmptyRef(t *testing.T) {
+	_, err := parseR61YAML(r61Base + r61Trust + `
+workflow:
+	schemas:
+		kairoNewsRequest:
+			type: object
+	protocols:
+		- id: "kairo.news.request.v1"
+			trigger:
+				type: "matrix.protocol_message"
+			inputSchemaRef: "   "
+			steps: []
+`)
+	if err == nil {
+		t.Fatal("expected error for empty workflow schema ref, got nil")
+	}
+	if !strings.Contains(err.Error(), "workflow protocol kairo.news.request.v1: schema ref cannot be empty") {
+		t.Errorf("unexpected empty schema ref error: %v", err)
+	}
+}
+
+func TestValidate_WorkflowSchemaRef_DuplicateSchemaKey(t *testing.T) {
+	_, err := parseR61YAML(r61Base + r61Trust + `
+workflow:
+	schemas:
+		kairoNewsRequest:
+			type: object
+		kairoNewsRequest:
+			type: object
+	protocols: []
+`)
+	if err == nil {
+		t.Fatal("expected error for duplicate workflow schema key, got nil")
+	}
+	if !strings.Contains(err.Error(), "workflow schemas contains duplicate key kairoNewsRequest") {
+		t.Errorf("unexpected duplicate schema key error: %v", err)
+	}
+}
+
+func TestValidate_WorkflowSchemaRef_InvalidSchemaObject(t *testing.T) {
+	_, err := parseR61YAML(r61Base + r61Trust + `
+workflow:
+	schemas:
+		kairoNewsRequest: "not-an-object"
+	protocols: []
+`)
+	if err == nil {
+		t.Fatal("expected error for invalid workflow schema object, got nil")
+	}
+	if !strings.Contains(err.Error(), "workflow schema kairoNewsRequest: invalid JSON Schema") {
+		t.Errorf("unexpected invalid schema object error: %v", err)
+	}
+}
+
+func TestValidate_WorkflowSchemaRef_ExternalReference(t *testing.T) {
+	_, err := parseR61YAML(r61Base + r61Trust + `
+workflow:
+	schemas:
+		kairoNewsRequest:
+			type: object
+	protocols:
+		- id: "kairo.news.request.v1"
+			trigger:
+				type: "matrix.protocol_message"
+			inputSchemaRef: "https://example.com/schema.json"
+			steps: []
+`)
+	if err == nil {
+		t.Fatal("expected error for external schema reference, got nil")
+	}
+	if !strings.Contains(err.Error(), "external schema references are not supported; use workflow.schemas") {
+		t.Errorf("unexpected external schema ref error: %v", err)
+	}
+}

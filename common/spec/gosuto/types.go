@@ -4,6 +4,12 @@
 // policy (deterministic, enforced) from persona (cosmetic, advisory).
 package gosuto
 
+import (
+	"fmt"
+
+	"gopkg.in/yaml.v3"
+)
+
 // SpecVersion is the API version string required in every Gosuto config.
 const SpecVersion = "gosuto/v1"
 
@@ -48,6 +54,11 @@ type Config struct {
 	// via the built-in matrix.send_message tool. Default is deny-all: if this
 	// section is absent the agent cannot send messages to anyone.
 	Messaging Messaging `yaml:"messaging,omitempty" json:"messaging,omitempty"`
+
+	// Workflow defines deterministic protocol-triggered workflows used by the
+	// runtime workflow engine. This is independent from instructions.workflow,
+	// which is prompt-only guidance for the LLM.
+	Workflow Workflow `yaml:"workflow,omitempty" json:"workflow,omitempty"`
 }
 
 // Metadata holds descriptive information about a Gosuto config.
@@ -84,6 +95,138 @@ type Trust struct {
 
 	// AdminRoom is the Matrix room ID used for operator control messages.
 	AdminRoom string `yaml:"adminRoom,omitempty" json:"adminRoom,omitempty"`
+
+	// TrustedPeers defines which peer agents are trusted to send
+	// machine-protocol messages for protocol-triggered workflow execution.
+	TrustedPeers []TrustedPeer `yaml:"trustedPeers,omitempty" json:"trustedPeers,omitempty"`
+}
+
+// TrustedPeer is a protocol-trusted peer mapping used for workflow triggers.
+type TrustedPeer struct {
+	// MXID is the exact Matrix user ID for the trusted peer.
+	MXID string `yaml:"mxid" json:"mxid"`
+
+	// RoomID is the exact Matrix room where this peer is trusted.
+	RoomID string `yaml:"roomId" json:"roomId"`
+
+	// Alias is an optional human-friendly peer name for UX/audit context.
+	Alias string `yaml:"alias,omitempty" json:"alias,omitempty"`
+
+	// Protocols is the list of protocol identifiers this peer may send.
+	Protocols []string `yaml:"protocols" json:"protocols"`
+}
+
+// Workflow defines declarative protocol workflows.
+type Workflow struct {
+	// Schemas contains inline JSON Schema-like definitions indexed by local key.
+	Schemas WorkflowSchemas `yaml:"schemas,omitempty" json:"schemas,omitempty"`
+
+	// Protocols is the list of protocol handlers configured for this agent.
+	Protocols []WorkflowProtocol `yaml:"protocols,omitempty" json:"protocols,omitempty"`
+}
+
+// WorkflowSchemas stores workflow schema definitions and preserves duplicate
+// key information found during YAML decode so validation can fail deterministically.
+type WorkflowSchemas struct {
+	Definitions map[string]interface{} `json:"-"`
+	Duplicates  []string               `json:"-"`
+}
+
+// UnmarshalYAML decodes workflow.schemas while tracking duplicate keys.
+func (w *WorkflowSchemas) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind != yaml.MappingNode {
+		return fmt.Errorf("workflow.schemas must be a mapping")
+	}
+
+	w.Definitions = make(map[string]interface{}, len(value.Content)/2)
+	w.Duplicates = nil
+
+	for i := 0; i < len(value.Content); i += 2 {
+		keyNode := value.Content[i]
+		valueNode := value.Content[i+1]
+		key := keyNode.Value
+		if _, exists := w.Definitions[key]; exists {
+			w.Duplicates = append(w.Duplicates, key)
+		}
+
+		var schema interface{}
+		if err := valueNode.Decode(&schema); err != nil {
+			return fmt.Errorf("decode schema %q: %w", key, err)
+		}
+		w.Definitions[key] = schema
+	}
+
+	return nil
+}
+
+// MarshalYAML emits workflow.schemas as a plain mapping.
+func (w WorkflowSchemas) MarshalYAML() (interface{}, error) {
+	if len(w.Definitions) == 0 {
+		return map[string]interface{}{}, nil
+	}
+	return w.Definitions, nil
+}
+
+// WorkflowProtocol configures one protocol handler.
+type WorkflowProtocol struct {
+	// ID is the protocol identifier (e.g. "kairo.news.request.v1").
+	ID string `yaml:"id" json:"id"`
+
+	// Trigger defines how inbound events/messages map to this protocol.
+	Trigger WorkflowTrigger `yaml:"trigger" json:"trigger"`
+
+	// InputSchemaRef is an optional local ref into workflow.schemas for payload
+	// validation/parsing.
+	InputSchemaRef string `yaml:"inputSchemaRef,omitempty" json:"inputSchemaRef,omitempty"`
+
+	// Retries is the protocol-level retry budget for parse/validation failures.
+	Retries int `yaml:"retries,omitempty" json:"retries,omitempty"`
+
+	// Steps is the ordered list of workflow primitives to execute.
+	Steps []WorkflowProtocolStep `yaml:"steps,omitempty" json:"steps,omitempty"`
+}
+
+// WorkflowTrigger identifies the trigger type and optional prefix matcher.
+type WorkflowTrigger struct {
+	Type   string `yaml:"type" json:"type"`
+	Prefix string `yaml:"prefix,omitempty" json:"prefix,omitempty"`
+}
+
+// WorkflowProtocolStep is one primitive operation in a workflow protocol.
+type WorkflowProtocolStep struct {
+	// Type is one of: parse_input, tool, branch, summarize, send_message, persist.
+	Type string `yaml:"type" json:"type"`
+
+	// Tool is used by type=tool.
+	Tool string `yaml:"tool,omitempty" json:"tool,omitempty"`
+
+	// ArgsTemplate is used by type=tool.
+	ArgsTemplate map[string]interface{} `yaml:"argsTemplate,omitempty" json:"argsTemplate,omitempty"`
+
+	// BranchExpr is used by type=branch.
+	BranchExpr string `yaml:"branchExpr,omitempty" json:"branchExpr,omitempty"`
+
+	// Prompt is used by type=summarize.
+	Prompt string `yaml:"prompt,omitempty" json:"prompt,omitempty"`
+
+	// InputSchemaRef optionally points to workflow.schemas.
+	InputSchemaRef string `yaml:"inputSchemaRef,omitempty" json:"inputSchemaRef,omitempty"`
+
+	// OutputSchemaRef optionally points to workflow.schemas.
+	OutputSchemaRef string `yaml:"outputSchemaRef,omitempty" json:"outputSchemaRef,omitempty"`
+
+	// Retries is the step-level retry budget.
+	Retries int `yaml:"retries,omitempty" json:"retries,omitempty"`
+
+	// TargetAlias is used by type=send_message.
+	TargetAlias string `yaml:"targetAlias,omitempty" json:"targetAlias,omitempty"`
+
+	// PayloadTemplate is used by type=send_message.
+	PayloadTemplate string `yaml:"payloadTemplate,omitempty" json:"payloadTemplate,omitempty"`
+
+	// PersistKey and PersistValue are used by type=persist.
+	PersistKey   string `yaml:"persistKey,omitempty" json:"persistKey,omitempty"`
+	PersistValue string `yaml:"persistValue,omitempty" json:"persistValue,omitempty"`
 }
 
 // Limits defines resource constraints on agent operations.
