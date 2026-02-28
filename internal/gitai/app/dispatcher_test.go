@@ -24,12 +24,14 @@ func (s *dispatcherRecordingSender) SendText(roomID, text string) error {
 }
 
 type dispatcherGateStub struct {
-	calls int
-	err   error
+	calls      int
+	err        error
+	lastParams map[string]interface{}
 }
 
-func (g *dispatcherGateStub) Request(_ context.Context, _ string, _ string, _ string, _ string, _ map[string]interface{}, _ time.Duration) error {
+func (g *dispatcherGateStub) Request(_ context.Context, _ string, _ string, _ string, _ string, params map[string]interface{}, _ time.Duration) error {
 	g.calls++
+	g.lastParams = params
 	return g.err
 }
 
@@ -167,6 +169,14 @@ func TestDispatchToolCall_ApprovalPolicy_IsSameForLLMAndWorkflow(t *testing.T) {
 	}
 	if gate.calls != 2 {
 		t.Fatalf("approval gate calls = %d, want 2", gate.calls)
+	}
+	if gate.lastParams == nil {
+		t.Fatal("expected approval payload params to be populated")
+	}
+	for _, key := range []string{"trace_id", "tool_ref", "normalized_arg_hash", "caller_context"} {
+		if _, ok := gate.lastParams[key]; !ok {
+			t.Fatalf("approval payload missing key %q: %+v", key, gate.lastParams)
+		}
 	}
 	if len(sender.calls) != 2 {
 		t.Fatalf("outbound sends = %d, want 2", len(sender.calls))

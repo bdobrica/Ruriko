@@ -20,6 +20,7 @@
 //	POST /secrets/token       → SecretsTokenRequest → 200 OK (redeems via Kuze)
 //	POST /process/restart     → 202 Accepted (triggers shutdown via restartFn)
 //	POST /tasks/cancel        → 202 Accepted (cancels current in-flight task)
+//	POST /approvals/decision  → 202 Accepted (R6.4: approval decision via Ruriko)
 //	POST /events/{source}     → Event envelope → 202 Accepted (R12.1)
 //
 // Security hardening (Phase R4.4):
@@ -190,6 +191,15 @@ type SecretsTokenRequest struct {
 	Leases []SecretLease `json:"leases"`
 }
 
+// ApprovalDecisionRequest is the body for POST /approvals/decision.
+// This endpoint is called by Ruriko to deliver approval outcomes to Gitai.
+type ApprovalDecisionRequest struct {
+	ApprovalID string `json:"approval_id"`
+	Decision   string `json:"decision"` // approve|deny
+	DecidedBy  string `json:"decided_by,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+}
+
 // kuzeRedeemResponse mirrors the JSON returned by GET /kuze/redeem/<token>.
 type kuzeRedeemResponse struct {
 	SecretRef  string `json:"secret_ref"`
@@ -257,6 +267,10 @@ type Handlers struct {
 	// When nil the /tasks/cancel endpoint returns 503 Service Unavailable.
 	RequestCancel func()
 
+	// RecordApprovalDecision applies an approval decision delivered by Ruriko.
+	// Called by POST /approvals/decision.
+	RecordApprovalDecision func(approvalID, decision, decidedBy, reason string) error
+
 	// ActiveConfig returns the currently applied Gosuto config, or nil when no
 	// config has been loaded. Used by POST /events/{source} to validate gateway
 	// names and read MaxEventsPerMinute rate-limit settings.
@@ -311,6 +325,7 @@ func New(addr string, h Handlers) *Server {
 	innerMux.HandleFunc("/secrets/token", s.handleSecretsToken)
 	innerMux.HandleFunc("/process/restart", s.handleRestart)
 	innerMux.HandleFunc("/tasks/cancel", s.handleCancel)
+	innerMux.HandleFunc("/approvals/decision", s.handleApprovalDecision)
 
 	// outerMux: event ingress lives here with its own per-handler auth
 	// (built-in gateways on localhost bypass bearer-token auth; external
@@ -682,6 +697,40 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
 		s.idemCache.set(key, http.StatusAccepted, body)
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "cancelling"})
+}
+
+func (s *Server) handleApprovalDecision(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.handlers.RecordApprovalDecision == nil {
+		writeError(w, http.StatusServiceUnavailable, "approval decision handling not available")
+		return
+	}
+
+	var req ApprovalDecisionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request: "+err.Error())
+		return
+	}
+	req.ApprovalID = strings.TrimSpace(req.ApprovalID)
+	req.Decision = strings.TrimSpace(strings.ToLower(req.Decision))
+	if req.ApprovalID == "" {
+		writeError(w, http.StatusBadRequest, "approval_id is required")
+		return
+	}
+	if req.Decision != "approve" && req.Decision != "deny" {
+		writeError(w, http.StatusBadRequest, "decision must be 'approve' or 'deny'")
+		return
+	}
+
+	if err := s.handlers.RecordApprovalDecision(req.ApprovalID, req.Decision, req.DecidedBy, req.Reason); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "recorded"})
 }
 
 // handleEventIngress handles POST /events/{source} (R12.1 + R12.4).

@@ -4,6 +4,8 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -308,6 +310,13 @@ func New(cfg *Config) (*App, error) {
 			default:
 			}
 		},
+		RecordApprovalDecision: func(approvalID, decision, decidedBy, reason string) error {
+			status := store.ApprovalDenied
+			if strings.EqualFold(decision, "approve") {
+				status = store.ApprovalApproved
+			}
+			return app.approvalGt.RecordDecision(approvalID, status, decidedBy, reason)
+		},
 		// HandleEvent dispatches inbound gateway events to the turn engine.
 		// The method must be non-blocking; the actual work runs in a goroutine.
 		HandleEvent: func(ctx context.Context, evt *envelope.Event) {
@@ -439,14 +448,6 @@ func (a *App) handleMessage(ctx context.Context, evt *event.Event) {
 	text := msgContent.Body
 	roomID := evt.RoomID.String()
 	sender := evt.Sender.String()
-
-	// --- Approval decision handling (from an approver replying in the approvals room) ---
-	if approvalID, decision, reason, ok := approvals.ParseDecision(text); ok {
-		if err := a.approvalGt.RecordDecision(approvalID, decision, sender, reason); err != nil {
-			slog.Warn("could not record approval decision", "err", err)
-		}
-		return
-	}
 
 	// --- Policy: check room and sender ---
 	if !a.policyEng.IsRoomAllowed(roomID) {
@@ -655,12 +656,19 @@ func (a *App) DispatchToolCall(ctx context.Context, req ToolDispatchRequest) (st
 			return "", fmt.Errorf("approval required but approval gate is not configured")
 		}
 		ttl := time.Duration(cfg.Approvals.TTLSeconds) * time.Second
+		approvalPayload := map[string]interface{}{
+			"trace_id":            trace.FromContext(ctx),
+			"tool_ref":            req.Name,
+			"normalized_arg_hash": normalizedArgsHash(req.Args),
+			"caller_context":      req.Caller,
+			"args":                req.Args,
+		}
 		log.Info("requesting approval",
 			"caller", req.Caller,
 			"mcp", namespace,
 			"tool", req.Name,
 		)
-		if err := a.approvalGt.Request(ctx, cfg.Approvals.Room, req.Sender, approvalAction, req.Name, req.Args, ttl); err != nil {
+		if err := a.approvalGt.Request(ctx, cfg.Approvals.Room, req.Sender, approvalAction, req.Name, approvalPayload, ttl); err != nil {
 			return "", fmt.Errorf("approval: %w", err)
 		}
 
@@ -987,6 +995,20 @@ func formatToolResult(result *mcp.CallToolResult) string {
 		out += p + "\n"
 	}
 	return out
+}
+
+func normalizedArgsHash(args map[string]interface{}) string {
+	if len(args) == 0 {
+		sum := sha256.Sum256([]byte("{}"))
+		return hex.EncodeToString(sum[:])
+	}
+	b, err := json.Marshal(args)
+	if err != nil {
+		sum := sha256.Sum256([]byte("{}"))
+		return hex.EncodeToString(sum[:])
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }
 
 // buildLLMProvider creates the LLM provider from config.

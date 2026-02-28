@@ -271,6 +271,72 @@ func TestCancelEndpoint_Unavailable(t *testing.T) {
 	}
 }
 
+func TestApprovalDecisionEndpoint_RecordsApprove(t *testing.T) {
+	var (
+		called     bool
+		approvalID string
+		decision   string
+		decidedBy  string
+		reason     string
+	)
+
+	srv := control.New(":0", control.Handlers{
+		AgentID:   "test",
+		Version:   "v0.1",
+		StartedAt: time.Now(),
+		RecordApprovalDecision: func(id, d, by, r string) error {
+			called = true
+			approvalID = id
+			decision = d
+			decidedBy = by
+			reason = r
+			return nil
+		},
+	})
+	ts := httptest.NewServer(srv.TestHandler())
+	defer ts.Close()
+
+	body := `{"approval_id":"appr_123","decision":"approve","decided_by":"@alice:example.com","reason":"looks good"}`
+	resp, err := http.Post(ts.URL+"/approvals/decision", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /approvals/decision: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusAccepted {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 202, got %d: %s", resp.StatusCode, b)
+	}
+	if !called {
+		t.Fatal("expected RecordApprovalDecision to be called")
+	}
+	if approvalID != "appr_123" || decision != "approve" || decidedBy != "@alice:example.com" || reason != "looks good" {
+		t.Fatalf("unexpected callback payload: id=%q decision=%q by=%q reason=%q", approvalID, decision, decidedBy, reason)
+	}
+}
+
+func TestApprovalDecisionEndpoint_RejectsInvalidDecision(t *testing.T) {
+	srv := control.New(":0", control.Handlers{
+		AgentID:                "test",
+		Version:                "v0.1",
+		StartedAt:              time.Now(),
+		RecordApprovalDecision: func(_, _, _, _ string) error { return nil },
+	})
+	ts := httptest.NewServer(srv.TestHandler())
+	defer ts.Close()
+
+	body := `{"approval_id":"appr_123","decision":"maybe"}`
+	resp, err := http.Post(ts.URL+"/approvals/decision", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /approvals/decision: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", resp.StatusCode)
+	}
+}
+
 // --- Secrets token (R4.2) --------------------------------------------------
 
 // fakeKuzeServer creates an httptest.Server that simulates the Kuze
