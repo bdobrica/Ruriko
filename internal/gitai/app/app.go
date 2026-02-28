@@ -34,6 +34,7 @@ import (
 	"github.com/bdobrica/Ruriko/internal/gitai/secrets"
 	"github.com/bdobrica/Ruriko/internal/gitai/store"
 	"github.com/bdobrica/Ruriko/internal/gitai/supervisor"
+	"github.com/bdobrica/Ruriko/internal/gitai/workflow"
 )
 
 const maxToolCallRounds = 10
@@ -433,6 +434,23 @@ func (a *App) handleMessage(ctx context.Context, evt *event.Event) {
 	if !a.policyEng.IsSenderAllowed(sender) {
 		slog.Debug("message from disallowed sender; ignoring", "sender", sender)
 		return
+	}
+
+	if cfg := a.gosutoLdr.Config(); cfg != nil {
+		match, werr := workflow.MatchInboundProtocol(cfg, roomID, sender, text)
+		if werr != nil && workflow.HasCode(werr, workflow.CodeTrustMismatch) {
+			protocolID := ""
+			if match != nil {
+				protocolID = match.Protocol.ID
+			}
+			slog.Warn("workflow protocol message rejected by trust gate",
+				"room", roomID,
+				"sender", sender,
+				"protocol", protocolID,
+				"err", werr,
+			)
+			return
+		}
 	}
 
 	// Generate trace ID for this turn.
