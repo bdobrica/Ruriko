@@ -13,6 +13,12 @@ trust:
     - "{{.AdminRoom}}"
   allowedSenders:
     - "*"
+  trustedPeers:
+    - mxid: "{{.OperatorMXID}}"
+      roomId: "{{.AdminRoom}}"
+      alias: operator
+      protocols:
+        - saito.schedule.override.v1
   requireE2EE: false
   adminRoom: "{{.AdminRoom}}"
 
@@ -47,6 +53,60 @@ messaging:
     - roomId: "{{.UserRoom}}"
       alias: user
   maxMessagesPerMinute: 10
+
+workflow:
+  schemas:
+    saitoScheduleOverride:
+      type: object
+      required:
+        - schedule
+      properties:
+        schedule:
+          type: string
+        reason:
+          type: string
+    kairoTriggerPayload:
+      type: object
+      required:
+        - trigger
+        - source
+        - event
+        - ts
+      properties:
+        trigger:
+          type: string
+        source:
+          type: string
+        event:
+          type: string
+        ts:
+          type: string
+        payload:
+          type: string
+  protocols:
+    - id: saito.schedule.override.v1
+      trigger:
+        type: matrix.protocol_message
+        prefix: SAITO_SCHEDULE_OVERRIDE
+      inputSchemaRef: saitoScheduleOverride
+      retries: 1
+      steps:
+        - type: parse_input
+          inputSchemaRef: saitoScheduleOverride
+          retries: 1
+        - type: persist
+          persistKey: saito.schedule.override
+          persistValue: "$input.json"
+    - id: saito.cron.tick.v1
+      trigger:
+        type: gateway.event
+        prefix: cron.tick
+      inputSchemaRef: kairoTriggerPayload
+      retries: 0
+      steps:
+        - type: send_message
+          targetAlias: kairo
+          payloadTemplate: 'KAIRO_TRIGGER {"trigger":"scheduled","source":"saito","event":"cron.tick","ts":"$now.rfc3339","payload":"$event.payload.message"}'
 
 persona:
   systemPrompt: |

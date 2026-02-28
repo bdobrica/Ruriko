@@ -13,6 +13,12 @@ trust:
     - "{{.AdminRoom}}"
   allowedSenders:
     - "*"
+  trustedPeers:
+    - mxid: "@kairo:localhost"
+      roomId: "{{.AdminRoom}}"
+      alias: kairo
+      protocols:
+        - kairo.news.request.v1
   requireE2EE: false
   adminRoom: "{{.AdminRoom}}"
 
@@ -52,6 +58,62 @@ messaging:
     - roomId: "{{.UserRoom}}"
       alias: user
   maxMessagesPerMinute: 30
+
+workflow:
+  schemas:
+    kairoNewsRequest:
+      type: object
+      required:
+        - run_id
+        - tickers
+      properties:
+        run_id:
+          type: integer
+        tickers:
+          type: array
+        market_summary:
+          type: string
+    kumoNewsResponse:
+      type: object
+      required:
+        - run_id
+        - summary
+        - headlines
+        - material
+      properties:
+        run_id:
+          type: integer
+        summary:
+          type: string
+        headlines:
+          type: array
+        material:
+          type: boolean
+  protocols:
+    - id: kairo.news.request.v1
+      trigger:
+        type: matrix.protocol_message
+        prefix: KAIRO_NEWS_REQUEST
+      inputSchemaRef: kairoNewsRequest
+      retries: 1
+      steps:
+        - type: parse_input
+          inputSchemaRef: kairoNewsRequest
+          retries: 1
+        - type: tool
+          tool: brave-search__web_search
+          argsTemplate:
+            query: "$input.tickers stock news latest"
+        - type: summarize
+          prompt: Summarize material news and provide concise headlines for Kairo.
+          outputSchemaRef: kumoNewsResponse
+          retries: 2
+        - type: send_message
+          targetAlias: kairo
+          payloadTemplate: "KUMO_NEWS_RESPONSE $output.json"
+        - type: persist
+          persistKey: kumo.last_response
+          persistValue: "$output.json"
 
 persona:
   systemPrompt: |

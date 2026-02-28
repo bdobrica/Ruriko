@@ -14,6 +14,17 @@ trust:
     - "{{.AdminRoom}}"
   allowedSenders:
     - "*"
+  trustedPeers:
+    - mxid: "@saito:localhost"
+      roomId: "{{.AdminRoom}}"
+      alias: saito
+      protocols:
+        - saito.trigger.v1
+    - mxid: "@kumo:localhost"
+      roomId: "{{.AdminRoom}}"
+      alias: kumo
+      protocols:
+        - kumo.news.response.v1
   requireE2EE: false
   adminRoom: "{{.AdminRoom}}"
 
@@ -93,6 +104,99 @@ messaging:
     - roomId: "{{.UserRoom}}"
       alias: user
   maxMessagesPerMinute: 30
+
+workflow:
+  schemas:
+    saitoTrigger:
+      type: object
+      required:
+        - trigger
+        - source
+        - event
+      properties:
+        trigger:
+          type: string
+        source:
+          type: string
+        event:
+          type: string
+        ts:
+          type: string
+        payload:
+          type: string
+    kairoNewsRequest:
+      type: object
+      required:
+        - run_id
+        - tickers
+      properties:
+        run_id:
+          type: integer
+        tickers:
+          type: array
+        market_summary:
+          type: string
+    kumoNewsResponse:
+      type: object
+      required:
+        - run_id
+        - summary
+        - headlines
+        - material
+      properties:
+        run_id:
+          type: integer
+        summary:
+          type: string
+        headlines:
+          type: array
+        material:
+          type: boolean
+  protocols:
+    - id: saito.trigger.v1
+      trigger:
+        type: matrix.protocol_message
+        prefix: KAIRO_TRIGGER
+      inputSchemaRef: saitoTrigger
+      retries: 1
+      steps:
+        - type: parse_input
+          inputSchemaRef: saitoTrigger
+          retries: 1
+        - type: tool
+          tool: finnhub__get_quote
+          argsTemplate:
+            symbol: "$state.primary_ticker"
+        - type: summarize
+          prompt: Summarize portfolio movement and decide whether news enrichment is required.
+          outputSchemaRef: kairoNewsRequest
+          retries: 2
+        - type: send_message
+          targetAlias: kumo
+          payloadTemplate: "KAIRO_NEWS_REQUEST $output.json"
+        - type: persist
+          persistKey: kairo.last_request
+          persistValue: "$output.json"
+    - id: kumo.news.response.v1
+      trigger:
+        type: matrix.protocol_message
+        prefix: KUMO_NEWS_RESPONSE
+      inputSchemaRef: kumoNewsResponse
+      retries: 1
+      steps:
+        - type: parse_input
+          inputSchemaRef: kumoNewsResponse
+          retries: 1
+        - type: summarize
+          prompt: Produce the final user-facing market report using the latest market analysis and Kumo news context.
+          outputSchemaRef: kumoNewsResponse
+          retries: 1
+        - type: send_message
+          targetAlias: user
+          payloadTemplate: "$output.summary"
+        - type: persist
+          persistKey: kairo.last_response
+          persistValue: "$input.json"
 
 persona:
   systemPrompt: |
