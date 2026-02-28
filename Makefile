@@ -1,4 +1,4 @@
-.PHONY: all build build-ruriko build-gitai build-tools test test-integration test-integration-nlp test-saito-scheduling test-saito-scheduling-live-precheck test-saito-scheduling-live lint fmt clean run-ruriko run-gitai install help
+.PHONY: all build build-ruriko build-gitai build-tools test test-integration test-integration-nlp test-saito-scheduling test-saito-scheduling-live-precheck test-saito-scheduling-live test-r6-workflow-live-compose test-r6-workflow-live-security test-r6-workflow-live lint fmt clean run-ruriko run-gitai install help
 
 # Build variables
 BINARY_DIR := bin
@@ -69,6 +69,16 @@ test-saito-scheduling-live-precheck: ## Check live Saito scheduling prerequisite
 test-saito-scheduling-live: test-saito-scheduling-live-precheck ## Run live compose-backed Saito scheduling validation (requires provisioned Saito/Kairo)
 	@echo "Running live Saito scheduling validation..."
 	./test/integration/test-saito-scheduling-live-compose.sh
+
+test-r6-workflow-live-compose: ## Run R6.7 live compose canonical cycle verification (requires provisioned Saito/Kairo/Kumo)
+	@echo "Running R6.7 live compose canonical cycle verification..."
+	bash ./test/integration/test-r6-workflow-live-compose.sh
+
+test-r6-workflow-live-security: ## Run R6.7 live security checks (secrets/logs, workflow MCP-bypass guard, approval ledger)
+	@echo "Running R6.7 live security checks..."
+	bash ./test/integration/test-r6-workflow-live-security.sh
+
+test-r6-workflow-live: test-r6-workflow-live-compose test-r6-workflow-live-security ## Run full R6.7 live verification bundle
 
 lint: ## Run linter
 	@echo "Running linter..."

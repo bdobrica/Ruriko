@@ -95,6 +95,9 @@ func (h *Handlers) HandleAgentsCreate(ctx context.Context, cmd *Command, evt *ev
 
 	// Check that agent ID is not already taken
 	if existing, _ := h.store.GetAgent(ctx, agentID); existing != nil {
+		if h.runtime != nil && (!existing.ContainerID.Valid || strings.TrimSpace(existing.ContainerID.String) == "") {
+			return "", fmt.Errorf("agent %q already exists in database but has no container; run '/ruriko agents start %s' to recover or '/ruriko agents delete %s' before re-creating", agentID, agentID, agentID)
+		}
 		return "", fmt.Errorf("agent %q already exists", agentID)
 	}
 
@@ -345,17 +348,30 @@ func (h *Handlers) HandleAgentsStart(ctx context.Context, cmd *Command, evt *eve
 		return fmt.Sprintf("⚠️  Agent **%s** is already running\n\n(trace: %s)", agentID, traceID), nil
 	}
 
+	recovered := false
 	if h.runtime != nil {
-		if !agent.ContainerID.Valid {
-			return "", fmt.Errorf("agent %s has no container; use 'agents create' first", agentID)
-		}
-		handle := runtime.AgentHandle{
-			AgentID:     agentID,
-			ContainerID: agent.ContainerID.String,
-		}
-		if err := h.runtime.Start(ctx, handle); err != nil {
-			h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.start", agentID, "error", nil, err.Error())
-			return "", fmt.Errorf("failed to start container: %w", err)
+		if !agent.ContainerID.Valid || strings.TrimSpace(agent.ContainerID.String) == "" {
+			if _, err := h.recoverAgentContainer(ctx, agent); err != nil {
+				h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.start", agentID, "error", nil, err.Error())
+				return "", err
+			}
+			recovered = true
+		} else {
+			handle := runtime.AgentHandle{
+				AgentID:     agentID,
+				ContainerID: agent.ContainerID.String,
+			}
+			if err := h.runtime.Start(ctx, handle); err != nil {
+				if !isContainerMissingErr(err) {
+					h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.start", agentID, "error", nil, err.Error())
+					return "", fmt.Errorf("failed to start container: %w", err)
+				}
+				if _, recErr := h.recoverAgentContainer(ctx, agent); recErr != nil {
+					h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.start", agentID, "error", nil, recErr.Error())
+					return "", recErr
+				}
+				recovered = true
+			}
 		}
 	}
 
@@ -368,6 +384,9 @@ func (h *Handlers) HandleAgentsStart(ctx context.Context, cmd *Command, evt *eve
 		Message: "started", TraceID: traceID,
 	})
 
+	if recovered {
+		return fmt.Sprintf("♻️  Agent **%s** recovered and started (container re-created)\n\n(trace: %s)", agentID, traceID), nil
+	}
 	return fmt.Sprintf("▶️  Agent **%s** started\n\n(trace: %s)", agentID, traceID), nil
 }
 
@@ -389,14 +408,30 @@ func (h *Handlers) HandleAgentsRespawn(ctx context.Context, cmd *Command, evt *e
 		return "", fmt.Errorf("agent not found: %s", agentID)
 	}
 
-	if h.runtime != nil && agent.ContainerID.Valid {
-		handle := runtime.AgentHandle{
-			AgentID:     agentID,
-			ContainerID: agent.ContainerID.String,
-		}
-		if err := h.runtime.Restart(ctx, handle); err != nil {
-			h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.respawn", agentID, "error", nil, err.Error())
-			return "", fmt.Errorf("failed to respawn container: %w", err)
+	recovered := false
+	if h.runtime != nil {
+		if !agent.ContainerID.Valid || strings.TrimSpace(agent.ContainerID.String) == "" {
+			if _, err := h.recoverAgentContainer(ctx, agent); err != nil {
+				h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.respawn", agentID, "error", nil, err.Error())
+				return "", err
+			}
+			recovered = true
+		} else {
+			handle := runtime.AgentHandle{
+				AgentID:     agentID,
+				ContainerID: agent.ContainerID.String,
+			}
+			if err := h.runtime.Restart(ctx, handle); err != nil {
+				if !isContainerMissingErr(err) {
+					h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.respawn", agentID, "error", nil, err.Error())
+					return "", fmt.Errorf("failed to respawn container: %w", err)
+				}
+				if _, recErr := h.recoverAgentContainer(ctx, agent); recErr != nil {
+					h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "agents.respawn", agentID, "error", nil, recErr.Error())
+					return "", recErr
+				}
+				recovered = true
+			}
 		}
 	}
 
@@ -409,7 +444,78 @@ func (h *Handlers) HandleAgentsRespawn(ctx context.Context, cmd *Command, evt *e
 		Message: "respawned", TraceID: traceID,
 	})
 
+	if recovered {
+		return fmt.Sprintf("♻️  Agent **%s** recovered and respawned (container re-created)\n\n(trace: %s)", agentID, traceID), nil
+	}
 	return fmt.Sprintf("🔄 Agent **%s** respawned\n\n(trace: %s)", agentID, traceID), nil
+}
+
+func isContainerMissingErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "no such container") || strings.Contains(msg, "not found")
+}
+
+func (h *Handlers) recoverAgentContainer(ctx context.Context, agent *store.Agent) (runtime.AgentHandle, error) {
+	if h.runtime == nil {
+		return runtime.AgentHandle{}, fmt.Errorf("runtime is not configured")
+	}
+	if !agent.Image.Valid || strings.TrimSpace(agent.Image.String) == "" {
+		return runtime.AgentHandle{}, fmt.Errorf("agent %s has no image metadata; delete and recreate the agent with --image", agent.ID)
+	}
+
+	acpToken := strings.TrimSpace(agent.ACPToken.String)
+	if !agent.ACPToken.Valid || acpToken == "" {
+		generated, err := generateACPToken()
+		if err != nil {
+			return runtime.AgentHandle{}, fmt.Errorf("failed to generate ACP token for recovery: %w", err)
+		}
+		if err := h.store.SetAgentACPToken(ctx, agent.ID, generated); err != nil {
+			return runtime.AgentHandle{}, fmt.Errorf("failed to persist ACP token for recovery: %w", err)
+		}
+		acpToken = generated
+	}
+
+	env := map[string]string{
+		"GITAI_AGENT_ID":  agent.ID,
+		"GITAI_ACP_TOKEN": acpToken,
+	}
+	if h.matrixHomeserver != "" {
+		env["MATRIX_HOMESERVER"] = h.matrixHomeserver
+	}
+	mxid := strings.TrimSpace(agent.MXID.String)
+	if !agent.MXID.Valid || mxid == "" {
+		return runtime.AgentHandle{}, fmt.Errorf("agent %s has no Matrix identity; run '/ruriko agents matrix register %s' then retry '/ruriko agents start %s'", agent.ID, agent.ID, agent.ID)
+	}
+	env["MATRIX_USER_ID"] = mxid
+	secretName := fmt.Sprintf("agent.%s.matrix_token", agent.ID)
+	matrixToken, err := h.secrets.Get(ctx, secretName)
+	if err != nil {
+		return runtime.AgentHandle{}, fmt.Errorf("agent %s has MXID %s but missing secret %q; store and bind a matrix token, then retry", agent.ID, mxid, secretName)
+	}
+	if len(matrixToken) == 0 {
+		return runtime.AgentHandle{}, fmt.Errorf("agent %s has empty matrix token secret %q; set a valid token and retry", agent.ID, secretName)
+	}
+	env["MATRIX_ACCESS_TOKEN"] = string(matrixToken)
+
+	handle, err := h.runtime.Spawn(ctx, runtime.AgentSpec{
+		ID:          agent.ID,
+		DisplayName: agent.DisplayName,
+		Image:       strings.TrimSpace(agent.Image.String),
+		Template:    agent.Template,
+		Env:         env,
+	})
+	if err != nil {
+		return runtime.AgentHandle{}, fmt.Errorf("failed to recover container for %s: %w", agent.ID, err)
+	}
+
+	if err := h.store.UpdateAgentHandle(ctx, agent.ID, handle.ContainerID, handle.ControlURL, strings.TrimSpace(agent.Image.String)); err != nil {
+		return runtime.AgentHandle{}, fmt.Errorf("container recovered but failed to persist handle: %w", err)
+	}
+
+	return handle, nil
 }
 
 // HandleAgentsDelete removes an agent and its container.

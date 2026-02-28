@@ -17,7 +17,8 @@
 
 networks:
   ruriko-net:
-    driver: bridge
+    name: ${DOCKER_NETWORK:-ruriko-net}
+    external: true
 
 volumes:
   ruriko-data:

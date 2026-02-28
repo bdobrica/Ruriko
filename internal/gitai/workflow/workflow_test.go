@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -144,5 +145,59 @@ func TestNewExecutionContext_FromMatch(t *testing.T) {
 	}
 	if got := ctx.State["run_id"]; got != float64(7) {
 		t.Fatalf("State.run_id = %#v, want 7", got)
+	}
+}
+
+func TestRunStepWithRetryThenRefuse_ParseInput_SucceedsAfterRetry(t *testing.T) {
+	attempts := 0
+	err := RunStepWithRetryThenRefuse("kairo.news.request.v1", "parse_input", 2, func() error {
+		attempts++
+		if attempts < 2 {
+			return fmt.Errorf("schema parse failed")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("RunStepWithRetryThenRefuse returned error: %v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("attempts = %d, want 2", attempts)
+	}
+}
+
+func TestRunStepWithRetryThenRefuse_Summarize_FailsAfterExhaustion(t *testing.T) {
+	attempts := 0
+	err := RunStepWithRetryThenRefuse("kairo.news.request.v1", "summarize", 1, func() error {
+		attempts++
+		return fmt.Errorf("summary schema mismatch")
+	})
+	if err == nil {
+		t.Fatal("expected error after retry exhaustion, got nil")
+	}
+	if attempts != 2 {
+		t.Fatalf("attempts = %d, want 2", attempts)
+	}
+	if !HasCode(err, CodeSchemaValidation) {
+		t.Fatalf("expected schema validation error code, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "failed after 2 attempt(s)") {
+		t.Fatalf("expected retry exhaustion message, got: %v", err)
+	}
+}
+
+func TestRunStepWithRetryThenRefuse_NonSchemaStep_NoRetry(t *testing.T) {
+	attempts := 0
+	err := RunStepWithRetryThenRefuse("kairo.news.request.v1", "tool", 3, func() error {
+		attempts++
+		return fmt.Errorf("tool failed")
+	})
+	if err == nil {
+		t.Fatal("expected error for failed tool step, got nil")
+	}
+	if attempts != 1 {
+		t.Fatalf("attempts = %d, want 1", attempts)
+	}
+	if HasCode(err, CodeSchemaValidation) {
+		t.Fatalf("tool step error should not be reclassified as schema validation: %v", err)
 	}
 }

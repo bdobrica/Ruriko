@@ -302,3 +302,59 @@ func matchesJSONSchemaType(expected string, value interface{}) bool {
 		return false
 	}
 }
+
+// RunStepWithRetryThenRefuse executes a workflow step with deterministic retry
+// semantics for schema-sensitive steps (parse_input, summarize).
+//
+// Behavior:
+//   - parse_input / summarize: retries up to retries+1 total attempts.
+//   - all other step types: executes exactly once.
+//   - after retry exhaustion for parse_input/summarize: returns a
+//     CodeSchemaValidation error (fail-safe refuse).
+func RunStepWithRetryThenRefuse(protocolID, stepType string, retries int, run func() error) error {
+	if run == nil {
+		return &Error{
+			Code:       CodeSchemaValidation,
+			ProtocolID: protocolID,
+			Message:    fmt.Sprintf("step %s execution failed: runner is nil", stepType),
+		}
+	}
+
+	if retries < 0 {
+		retries = 0
+	}
+
+	attempts := 1
+	if isSchemaRetryStep(stepType) {
+		attempts += retries
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		err := run()
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+	}
+
+	if !isSchemaRetryStep(stepType) {
+		return lastErr
+	}
+
+	return &Error{
+		Code:       CodeSchemaValidation,
+		ProtocolID: protocolID,
+		Message:    fmt.Sprintf("step %s failed after %d attempt(s)", stepType, attempts),
+		Cause:      lastErr,
+	}
+}
+
+func isSchemaRetryStep(stepType string) bool {
+	switch strings.TrimSpace(stepType) {
+	case "parse_input", "summarize":
+		return true
+	default:
+		return false
+	}
+}

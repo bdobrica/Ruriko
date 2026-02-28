@@ -504,6 +504,51 @@ Every command Ruriko executes is logged with a trace ID.
 
 Trace IDs appear in most Ruriko responses. You can use them to correlate actions across the audit log.
 
+### Flow 9: R6.7 Live Workflow Verification (Canonical Saito → Kairo → Kumo)
+
+Use this flow to run the remaining live checks from Phase R6.7.
+
+Prerequisites:
+- Compose stack is running (`docker compose up -d` in `examples/docker-compose`)
+- Canonical agents are provisioned and running (`saito`, `kairo`, `kumo`)
+- Saito cron gateway is enabled
+
+Run live canonical cycle verification:
+
+```bash
+make test-r6-workflow-live-compose
+```
+
+Default assertions (`R6_REQUIRED_CYCLES=3`):
+- Saito logs show `cron.tick`
+- Saito → Kairo successful `matrix.send_message`
+- Kairo → Kumo successful `matrix.send_message`
+- Kumo → Kairo successful `matrix.send_message`
+
+Run live security checks:
+
+```bash
+make test-r6-workflow-live-security
+```
+
+Assertions:
+- No configured secret patterns appear in compose logs
+- No direct MCP bypass signatures exist in workflow-path source
+- Ruriko approvals ledger includes approved + denied decisions (strict mode)
+
+Run both checks together:
+
+```bash
+make test-r6-workflow-live
+```
+
+Useful overrides:
+- `R6_REQUIRED_CYCLES=3`
+- `R6_LIVE_TIMEOUT_SECONDS=2400`
+- `R6_SECURITY_LOOKBACK=30m`
+- `R6_SECURITY_REQUIRE_APPROVAL_COUNTS=1`
+- `KEEP_STACK=1`
+
 ---
 
 ## Environment Variable Reference

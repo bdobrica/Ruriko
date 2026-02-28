@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bdobrica/Ruriko/common/trace"
+	"github.com/bdobrica/Ruriko/internal/gitai/approvals"
 	"github.com/bdobrica/Ruriko/internal/gitai/builtin"
 	"github.com/bdobrica/Ruriko/internal/gitai/gosuto"
 	"github.com/bdobrica/Ruriko/internal/gitai/policy"
@@ -183,5 +185,52 @@ func TestDispatchToolCall_ApprovalPolicy_IsSameForLLMAndWorkflow(t *testing.T) {
 	}
 	if sender.calls[0].roomID != "!kairo-room:example.com" || sender.calls[1].roomID != "!kairo-room:example.com" {
 		t.Fatalf("unexpected room dispatches: %+v", sender.calls)
+	}
+}
+
+func TestDispatchToolCall_WorkflowApproval_BlocksUntilDecision(t *testing.T) {
+	a, sender := newDispatcherTestApp(t, dispatcherApprovalYAML)
+	a.approvalGt = approvals.New(a.db, nil)
+
+	ctx := trace.WithTraceID(context.Background(), "workflow-block-test")
+	args := map[string]interface{}{"target": "kairo", "message": "approved message"}
+
+	type result struct {
+		value string
+		err   error
+	}
+	resultCh := make(chan result, 1)
+
+	go func() {
+		res, err := a.DispatchToolCall(ctx, ToolDispatchRequest{
+			Caller: dispatchCallerWorkflow,
+			Sender: "@kumo:example.com",
+			Name:   builtin.MatrixSendToolName,
+			Args:   args,
+		})
+		resultCh <- result{value: res, err: err}
+	}()
+
+	select {
+	case <-resultCh:
+		t.Fatal("workflow dispatch returned before approval decision; expected blocking behavior")
+	case <-time.After(250 * time.Millisecond):
+	}
+
+	if err := a.approvalGt.RecordDecision("appr_workflow-block-test", store.ApprovalApproved, "@approver:example.com", "ok"); err != nil {
+		t.Fatalf("RecordDecision: %v", err)
+	}
+
+	select {
+	case out := <-resultCh:
+		if out.err != nil {
+			t.Fatalf("DispatchToolCall returned error after approval: %v", out.err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for workflow dispatch to resume after approval decision")
+	}
+
+	if len(sender.calls) != 1 {
+		t.Fatalf("outbound sends = %d, want 1 after approval", len(sender.calls))
 	}
 }
