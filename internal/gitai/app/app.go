@@ -45,7 +45,6 @@ const (
 	dispatchCallerLLM      = "llm"
 	dispatchCallerWorkflow = "workflow"
 	dispatchCallerGateway  = "gateway"
-	dispatchCallerPipeline = "pipeline"
 )
 
 // approvalGate is the subset of approvals.Gate used by the app dispatcher.
@@ -158,12 +157,6 @@ type App struct {
 	// msgOutbound counts the total number of successful matrix.send_message
 	// calls made by this agent (R15.5 audit/observability).
 	msgOutbound atomic.Int64
-	// kairoMarketDataFetcher is an optional test hook used by the deterministic
-	// Kairo pipeline (R6.2). When nil, data is fetched from the finnhub MCP.
-	kairoMarketDataFetcher func(ctx context.Context, ticker string) (kairoTickerMetrics, error)
-	// kumoNewsFetcher is an optional test hook used by the deterministic Kumo
-	// pipeline (R6.3). When nil, news is fetched from the brave-search MCP.
-	kumoNewsFetcher func(ctx context.Context, req kairoNewsRequest) (kumoNewsResult, error)
 }
 
 // New creates and initialises all Gitai subsystems. It does NOT start any
@@ -490,17 +483,7 @@ func (a *App) handleMessage(ctx context.Context, evt *event.Event) {
 		result    string
 		toolCalls int
 	)
-	if handled, deterministicResult, deterministicToolCalls, deterministicErr := a.tryRunKairoDeterministicTurn(ctx, roomID, sender, text); handled {
-		result = deterministicResult
-		toolCalls = deterministicToolCalls
-		err = deterministicErr
-	} else if handled, deterministicResult, deterministicToolCalls, deterministicErr := a.tryRunKumoDeterministicTurn(ctx, sender, text); handled {
-		result = deterministicResult
-		toolCalls = deterministicToolCalls
-		err = deterministicErr
-	} else {
-		result, toolCalls, err = a.runTurn(ctx, roomID, sender, text, evt.ID.String())
-	}
+	result, toolCalls, err = a.runTurn(ctx, roomID, sender, text, evt.ID.String())
 	if err != nil {
 		log.Error("turn failed", "err", err)
 		_ = a.matrixCli.SendReply(roomID, evt.ID.String(), fmt.Sprintf("❌ %s", err))
@@ -1084,12 +1067,7 @@ func (a *App) runEventTurn(ctx context.Context, evt *envelope.Event) {
 	startedAt := time.Now()
 	result := ""
 	toolCalls := 0
-
-	if isDeterministicSaitoCronEvent(cfg, evt) {
-		result, toolCalls, err = a.runDeterministicSaitoCronTurn(ctx, evt)
-	} else {
-		result, toolCalls, err = a.runTurn(ctx, adminRoom, senderLabel, userText, "")
-	}
+	result, toolCalls, err = a.runTurn(ctx, adminRoom, senderLabel, userText, "")
 	durationMS := time.Since(startedAt).Milliseconds()
 
 	if err != nil {
@@ -1133,73 +1111,6 @@ func (a *App) runEventTurn(ctx context.Context, evt *envelope.Event) {
 		"status", "success",
 		"duration_ms", durationMS,
 		"tool_calls", toolCalls,
-	)
-}
-
-// isDeterministicSaitoCronEvent reports whether evt should be handled by the
-// deterministic Saito scheduler path (R6.1): no LLM reasoning, only a
-// matrix.send_message trigger to Kairo.
-func isDeterministicSaitoCronEvent(cfg *gosutospec.Config, evt *envelope.Event) bool {
-	if cfg == nil || evt == nil {
-		return false
-	}
-	if !strings.EqualFold(strings.TrimSpace(cfg.Metadata.CanonicalName), "saito") {
-		return false
-	}
-	return evt.Type == "cron.tick"
-}
-
-// runDeterministicSaitoCronTurn handles Saito cron.tick events without using
-// the LLM. It executes the built-in matrix.send_message tool directly so that
-// policy checks, allowlist enforcement, rate limits, and audit hooks remain
-// identical to regular tool execution.
-func (a *App) runDeterministicSaitoCronTurn(ctx context.Context, evt *envelope.Event) (string, int, error) {
-	if a.builtinReg == nil || !a.builtinReg.IsBuiltin(builtin.MatrixSendToolName) {
-		return "", 0, fmt.Errorf("deterministic Saito scheduler requires built-in tool %q", builtin.MatrixSendToolName)
-	}
-
-	payload, err := json.Marshal(map[string]string{
-		"target":  "kairo",
-		"message": buildSaitoCronTriggerMessage(evt),
-	})
-	if err != nil {
-		return "", 0, fmt.Errorf("marshal deterministic Saito trigger args: %w", err)
-	}
-
-	var args map[string]interface{}
-	if err := json.Unmarshal(payload, &args); err != nil {
-		return "", 0, fmt.Errorf("unmarshal deterministic Saito trigger args: %w", err)
-	}
-
-	toolResult, err := a.DispatchToolCall(ctx, ToolDispatchRequest{
-		Caller: dispatchCallerGateway,
-		Sender: "gateway:" + evt.Source,
-		Name:   builtin.MatrixSendToolName,
-		Args:   args,
-	})
-	if err != nil {
-		return "", 1, err
-	}
-
-	return "✅ Deterministic trigger sent to kairo.\n" + toolResult, 1, nil
-}
-
-func buildSaitoCronTriggerMessage(evt *envelope.Event) string {
-	if evt == nil {
-		return "Saito scheduled trigger. Please run the portfolio analysis cycle."
-	}
-	timestamp := evt.TS.UTC().Format(time.RFC3339)
-	payload := strings.TrimSpace(evt.Payload.Message)
-	if payload == "" {
-		payload = "Run the scheduled portfolio analysis cycle."
-	}
-
-	return fmt.Sprintf(
-		"Saito scheduled trigger: please run the portfolio analysis cycle.\nsource: %s\nevent: %s\nts: %s\npayload: %s",
-		evt.Source,
-		evt.Type,
-		timestamp,
-		payload,
 	)
 }
 
