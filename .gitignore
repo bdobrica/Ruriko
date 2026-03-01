@@ -66,3 +66,8 @@ coverage.html
 # Temporary files
 tmp/
 temp/
+
+# Python cache
+__pycache__/
+*.py[codz]
+*$py.class
