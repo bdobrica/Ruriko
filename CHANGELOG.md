@@ -20,6 +20,23 @@
 
 ---
 
+## 🧹 Maintenance Updates (2026-03-01 · Phase 2 de-dup)
+
+- Extracted shared webhook signature validation helpers to:
+  - `common/webhookauth/hmac.go`
+- Extracted shared fixed-window keyed rate limiter primitive to:
+  - `common/ratelimit/fixed_window.go`
+- Refactored integrations to consume shared helpers:
+  - `internal/gitai/gateway/webhook.go`
+  - `internal/ruriko/webhook/proxy.go`
+  - `internal/ruriko/webhook/ratelimit.go`
+  - `internal/gitai/control/server.go`
+- Added unit tests for new shared packages:
+  - `common/webhookauth/hmac_test.go`
+  - `common/ratelimit/fixed_window_test.go`
+
+---
+
 ## 🎯 Infrastructure Scope (COMPLETED)
 
 The following foundations were built in Phases 0–9 and are functional:

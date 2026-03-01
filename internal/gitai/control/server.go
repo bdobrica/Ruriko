@@ -53,6 +53,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bdobrica/Ruriko/common/ratelimit"
 	acpspec "github.com/bdobrica/Ruriko/common/spec/acp"
 	"github.com/bdobrica/Ruriko/common/spec/envelope"
 	gosutospec "github.com/bdobrica/Ruriko/common/spec/gosuto"
@@ -85,63 +86,22 @@ func newIdempotencyCache() *idempotencyCache {
 
 // --- event rate limiter ---
 
-// fixedWindow is a single fixed-window event counter.
-type fixedWindow struct {
-	count       int
-	windowStart time.Time
-}
-
 // eventRateLimiter enforces per-source and global event ingress rate limits
 // using a fixed 1-minute window. When maxPerMinute is 0 all events are allowed.
 type eventRateLimiter struct {
-	mu      sync.Mutex
-	sources map[string]*fixedWindow
-	global  fixedWindow
+	limiter *ratelimit.KeyedFixedWindow
 }
 
 func newEventRateLimiter() *eventRateLimiter {
 	return &eventRateLimiter{
-		sources: make(map[string]*fixedWindow),
+		limiter: ratelimit.NewKeyedFixedWindow(time.Minute),
 	}
 }
 
 // allow returns true when the event may proceed. It checks both the per-source
 // window and the global window; both must have remaining capacity.
 func (l *eventRateLimiter) allow(source string, maxPerMinute int) bool {
-	if maxPerMinute <= 0 {
-		return true
-	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	now := time.Now()
-
-	// Refresh global window.
-	if now.Sub(l.global.windowStart) >= time.Minute {
-		l.global.count = 0
-		l.global.windowStart = now
-	}
-	if l.global.count >= maxPerMinute {
-		return false
-	}
-
-	// Refresh per-source window.
-	src, ok := l.sources[source]
-	if !ok {
-		src = &fixedWindow{}
-		l.sources[source] = src
-	}
-	if now.Sub(src.windowStart) >= time.Minute {
-		src.count = 0
-		src.windowStart = now
-	}
-	if src.count >= maxPerMinute {
-		return false
-	}
-
-	// Both windows have capacity — consume one token from each.
-	l.global.count++
-	src.count++
-	return true
+	return l.limiter.AllowAll(maxPerMinute, "__global__", "source:"+source)
 }
 
 // get returns the cached entry (ok=true) if the key exists and has not expired.

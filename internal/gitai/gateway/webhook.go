@@ -18,15 +18,13 @@
 package gateway
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/bdobrica/Ruriko/common/spec/envelope"
+	"github.com/bdobrica/Ruriko/common/webhookauth"
 )
 
 // ValidateHMACSHA256 checks whether sigHeader matches the HMAC-SHA256
@@ -38,21 +36,7 @@ import (
 // Comparison is performed using hmac.Equal (constant-time) to prevent timing
 // side-channel attacks.
 func ValidateHMACSHA256(secret, body []byte, sigHeader string) bool {
-	const prefix = "sha256="
-	if !strings.HasPrefix(sigHeader, prefix) {
-		return false
-	}
-	expectedHex := sigHeader[len(prefix):]
-	expected, err := hex.DecodeString(expectedHex)
-	if err != nil {
-		return false
-	}
-
-	mac := hmac.New(sha256.New, secret)
-	mac.Write(body)
-	computed := mac.Sum(nil)
-
-	return hmac.Equal(computed, expected)
+	return webhookauth.VerifyHMACSHA256(secret, body, sigHeader)
 }
 
 // WrapRawWebhookBody wraps a raw webhook POST body in a normalised Event

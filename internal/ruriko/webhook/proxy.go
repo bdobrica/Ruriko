@@ -24,9 +24,6 @@ package webhook
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
@@ -35,6 +32,7 @@ import (
 	"time"
 
 	gosutospec "github.com/bdobrica/Ruriko/common/spec/gosuto"
+	"github.com/bdobrica/Ruriko/common/webhookauth"
 	"github.com/bdobrica/Ruriko/internal/ruriko/store"
 )
 
@@ -279,24 +277,8 @@ func (p *Proxy) validateHMAC(ctx context.Context, r *http.Request, body []byte, 
 	}
 
 	sigHdr := r.Header.Get("X-Hub-Signature-256")
-	if sigHdr == "" {
-		return fmt.Errorf("missing X-Hub-Signature-256 header")
-	}
-	const prefix = "sha256="
-	if !strings.HasPrefix(sigHdr, prefix) {
-		return fmt.Errorf("X-Hub-Signature-256 must start with %q", prefix)
-	}
-	provided, err := hex.DecodeString(strings.TrimPrefix(sigHdr, prefix))
-	if err != nil {
-		return fmt.Errorf("invalid hex in X-Hub-Signature-256: %w", err)
-	}
-
-	mac := hmac.New(sha256.New, secretVal)
-	mac.Write(body)
-	expected := mac.Sum(nil)
-
-	if !hmac.Equal(expected, provided) {
-		return fmt.Errorf("HMAC signature mismatch")
+	if err := webhookauth.ValidateHMACSHA256(secretVal, body, sigHdr); err != nil {
+		return err
 	}
 	return nil
 }

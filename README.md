@@ -71,6 +71,8 @@ Each agent runs as a separate single binary:
 
 Runtime is immutable. Behavior is controlled by structured configuration. Agents collaborate **peer-to-peer** over Matrix — Ruriko is not in the message path.
 
+Shared transport/security primitives used by both binaries live under `common/` (for example ACP specs, webhook signature validation, and rate-limiting utilities) to keep behavior consistent and reduce duplication.
+
 ---
 
 ## 👻 Gosuto (Agent Configuration — Policy, Instructions, Persona)
