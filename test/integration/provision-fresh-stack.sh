@@ -98,8 +98,23 @@ join_room() {
 # ============================================================
 # 1. Start fresh Tuwunel
 # ============================================================
-info "Starting fresh Tuwunel"
+info "Resetting compose services and volumes for a truly fresh Tuwunel state"
 cd "$COMPOSE_DIR"
+docker compose down -v --remove-orphans >/dev/null 2>&1 || true
+
+info "Removing stale managed agent containers"
+stale_agents="$(docker ps -a --format '{{.Names}}' | grep '^ruriko-agent-' || true)"
+if [[ -n "$stale_agents" ]]; then
+    while IFS= read -r cname; do
+        [[ -n "$cname" ]] || continue
+        docker rm -f "$cname" >/dev/null 2>&1 || true
+    done <<< "$stale_agents"
+    pass "Removed stale agent containers"
+else
+    pass "No stale agent containers found"
+fi
+
+info "Starting fresh Tuwunel"
 docker compose up -d tuwunel
 
 info "Waiting for Tuwunel to be ready..."

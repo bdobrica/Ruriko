@@ -112,6 +112,13 @@ type Config struct {
 	LogLevel string
 	// LogFormat is "text" or "json". Defaults to "text".
 	LogFormat string
+
+	// LLMCallHardLimit is a strict upper bound on total LLM completion calls
+	// made by this agent process. 0 disables the limiter.
+	//
+	// When exceeded, the process terminates immediately to prevent runaway cost.
+	// Primarily intended for test and safety-constrained environments.
+	LLMCallHardLimit int
 }
 
 // LLMConfig configures the language model backend.
@@ -158,6 +165,11 @@ type App struct {
 	// msgOutbound counts the total number of successful matrix.send_message
 	// calls made by this agent (R15.5 audit/observability).
 	msgOutbound atomic.Int64
+	// llmCalls counts the total number of LLM completion calls made by this
+	// process. Used by the hard limit kill-switch.
+	llmCalls atomic.Int64
+	// terminateProcess exits the current process; defaults to os.Exit.
+	terminateProcess func(code int)
 }
 
 // New creates and initialises all Gitai subsystems. It does NOT start any
@@ -212,20 +224,21 @@ func New(cfg *Config) (*App, error) {
 	builtinReg.Register(builtin.NewMatrixSendTool(gosutoLdr, matrixCli))
 
 	app := &App{
-		cfg:         cfg,
-		db:          db,
-		gosutoLdr:   gosutoLdr,
-		secretsStr:  secStore,
-		secretsMgr:  secMgr,
-		policyEng:   policyEng,
-		supv:        supv,
-		llmProv:     llmProv,
-		matrixCli:   matrixCli,
-		eventSender: matrixCli,
-		startedAt:   time.Now(),
-		restartCh:   restartCh,
-		cancelCh:    cancelCh,
-		builtinReg:  builtinReg,
+		cfg:              cfg,
+		db:               db,
+		gosutoLdr:        gosutoLdr,
+		secretsStr:       secStore,
+		secretsMgr:       secMgr,
+		policyEng:        policyEng,
+		supv:             supv,
+		llmProv:          llmProv,
+		matrixCli:        matrixCli,
+		eventSender:      matrixCli,
+		startedAt:        time.Now(),
+		restartCh:        restartCh,
+		cancelCh:         cancelCh,
+		builtinReg:       builtinReg,
+		terminateProcess: os.Exit,
 	}
 
 	// Approval gate (needs matrix sender for posting to approvals room).
@@ -468,7 +481,26 @@ func (a *App) handleMessage(ctx context.Context, evt *event.Event) {
 		return
 	}
 
-	if cfg := a.gosutoLdr.Config(); cfg != nil {
+	cfg := a.gosutoLdr.Config()
+	if cfg != nil {
+		if target, directedBody, directed := parseDirectedAgentMessage(text); directed {
+			fallbackAgentID := ""
+			if a.cfg != nil {
+				fallbackAgentID = a.cfg.AgentID
+			}
+			self := agentIdentity(cfg, fallbackAgentID)
+			if !strings.EqualFold(target, self) {
+				slog.Debug("ignoring directed message intended for another agent",
+					"room", roomID,
+					"sender", sender,
+					"target", target,
+					"self", self,
+				)
+				return
+			}
+			text = directedBody
+		}
+
 		match, werr := workflow.MatchInboundProtocol(cfg, roomID, sender, text)
 		if werr != nil && workflow.HasCode(werr, workflow.CodeTrustMismatch) {
 			protocolID := ""
@@ -502,13 +534,15 @@ func (a *App) handleMessage(ctx context.Context, evt *event.Event) {
 	result, toolCalls, err = a.runTurn(ctx, roomID, sender, text, evt.ID.String())
 	if err != nil {
 		log.Error("turn failed", "err", err)
-		_ = a.matrixCli.SendReply(roomID, evt.ID.String(), fmt.Sprintf("❌ %s", err))
+		if a.matrixCli != nil && shouldSendTurnErrorReply(cfg, sender, err) {
+			_ = a.matrixCli.SendReply(roomID, evt.ID.String(), fmt.Sprintf("❌ %s", err))
+		}
 		if turnID > 0 {
 			_ = a.db.FinishTurn(turnID, toolCalls, "error", err.Error())
 		}
 		return
 	}
-	if result != "" {
+	if result != "" && a.matrixCli != nil {
 		if err := a.matrixCli.SendReply(roomID, evt.ID.String(), result); err != nil {
 			log.Error("could not send reply", "err", err)
 		}
@@ -516,6 +550,73 @@ func (a *App) handleMessage(ctx context.Context, evt *event.Event) {
 	if turnID > 0 {
 		_ = a.db.FinishTurn(turnID, toolCalls, "success", "")
 	}
+}
+
+func parseDirectedAgentMessage(text string) (target, body string, ok bool) {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return "", "", false
+	}
+	if len(trimmed) < 4 || !strings.EqualFold(trimmed[:4], "hey ") {
+		return "", "", false
+	}
+	remainder := strings.TrimSpace(trimmed[4:])
+	if remainder == "" {
+		return "", "", false
+	}
+	comma := strings.Index(remainder, ",")
+	if comma <= 0 {
+		return "", "", false
+	}
+	target = strings.TrimSpace(remainder[:comma])
+	target = strings.TrimPrefix(target, "@")
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return "", "", false
+	}
+	body = strings.TrimSpace(remainder[comma+1:])
+	if body == "" {
+		return "", "", false
+	}
+	return target, body, true
+}
+
+func agentIdentity(cfg *gosutospec.Config, fallback string) string {
+	if cfg != nil {
+		if canonical := strings.TrimSpace(cfg.Metadata.CanonicalName); canonical != "" {
+			return canonical
+		}
+		if name := strings.TrimSpace(cfg.Metadata.Name); name != "" {
+			return name
+		}
+	}
+	return strings.TrimSpace(fallback)
+}
+
+func isTrustedPeerSender(cfg *gosutospec.Config, sender string) bool {
+	if cfg == nil {
+		return false
+	}
+	for _, peer := range cfg.Trust.TrustedPeers {
+		if strings.EqualFold(strings.TrimSpace(peer.MXID), strings.TrimSpace(sender)) {
+			return true
+		}
+	}
+	return false
+}
+
+func shouldSendTurnErrorReply(cfg *gosutospec.Config, sender string, err error) bool {
+	if err == nil {
+		return false
+	}
+	if !isTrustedPeerSender(cfg, sender) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "llm provider not configured") || strings.Contains(msg, "llm call failed") {
+		return false
+	}
+	return true
 }
 
 // runTurn executes the full turn loop: prompt → LLM → tool calls → response.
@@ -557,6 +658,9 @@ func (a *App) runTurn(ctx context.Context, roomID, sender, userText, replyToEven
 	}
 
 	for round := 0; round < maxToolCallRounds; round++ {
+		if err := a.enforceLLMCallHardLimit(); err != nil {
+			return "", totalToolCalls, err
+		}
 		resp, err := prov.Complete(ctx, llm.CompletionRequest{
 			Model:     "",
 			Messages:  messages,
@@ -597,6 +701,28 @@ func (a *App) runTurn(ctx context.Context, roomID, sender, userText, replyToEven
 	}
 
 	return "", totalToolCalls, fmt.Errorf("exceeded maximum tool call rounds (%d)", maxToolCallRounds)
+}
+
+func (a *App) enforceLLMCallHardLimit() error {
+	if a == nil || a.cfg == nil || a.cfg.LLMCallHardLimit <= 0 {
+		return nil
+	}
+	count := a.llmCalls.Add(1)
+	limit := int64(a.cfg.LLMCallHardLimit)
+	if count <= limit {
+		return nil
+	}
+	slog.Error("LLM hard call limit exceeded; terminating process",
+		"agent_id", a.cfg.AgentID,
+		"llm_calls", count,
+		"limit", limit,
+	)
+	if a.terminateProcess != nil {
+		a.terminateProcess(1)
+	} else {
+		os.Exit(1)
+	}
+	return fmt.Errorf("LLM hard call limit exceeded (%d)", limit)
 }
 
 var nonOpenAIToolNameChars = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
@@ -1057,17 +1183,26 @@ func normalizedArgsHash(args map[string]interface{}) string {
 
 // buildLLMProvider creates the LLM provider from config.
 func buildLLMProvider(cfg LLMConfig) llm.Provider {
+	apiKey := strings.TrimSpace(cfg.APIKey)
 	switch cfg.Provider {
 	case "openai", "":
+		if apiKey == "" {
+			slog.Warn("LLM provider disabled: missing OpenAI API key")
+			return nil
+		}
 		return llm.NewOpenAI(llm.OpenAIConfig{
-			APIKey:  cfg.APIKey,
+			APIKey:  apiKey,
 			BaseURL: cfg.BaseURL,
 			Model:   cfg.Model,
 		})
 	default:
 		slog.Warn("unknown LLM provider; defaulting to OpenAI", "provider", cfg.Provider)
+		if apiKey == "" {
+			slog.Warn("LLM provider disabled: missing OpenAI API key")
+			return nil
+		}
 		return llm.NewOpenAI(llm.OpenAIConfig{
-			APIKey:  cfg.APIKey,
+			APIKey:  apiKey,
 			BaseURL: cfg.BaseURL,
 			Model:   cfg.Model,
 		})

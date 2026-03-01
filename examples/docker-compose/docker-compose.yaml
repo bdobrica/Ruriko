@@ -92,6 +92,7 @@ services:
       # GLOBAL_LLM_API_KEY is a dev/test convenience fallback injected into
       # all spawned agents as LLM_API_KEY when agent-specific keys are absent.
       GLOBAL_LLM_API_KEY:    ${GLOBAL_LLM_API_KEY:-}
+      GITAI_LLM_CALL_HARD_LIMIT: ${GITAI_LLM_CALL_HARD_LIMIT:-0}
       RURIKO_NLP_API_KEY:     ${RURIKO_NLP_API_KEY:-}
       NLP_MODEL:              ${NLP_MODEL:-}
       NLP_ENDPOINT:           ${NLP_ENDPOINT:-}
@@ -100,6 +101,7 @@ services:
       # --- Docker runtime (optional) ---
       DOCKER_ENABLE:          ${DOCKER_ENABLE:-false}
       DOCKER_NETWORK:         ${DOCKER_NETWORK:-ruriko-net}
+      RURIKO_AGENT_RESTART_POLICY: ${RURIKO_AGENT_RESTART_POLICY:-unless-stopped}
 
       # --- Storage ---
       DATABASE_PATH:          /data/ruriko.db

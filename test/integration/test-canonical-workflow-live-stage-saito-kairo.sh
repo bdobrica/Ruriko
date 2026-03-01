@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+info() { echo -e "${YELLOW}[INFO]${NC} $*"; }
+pass() { echo -e "${GREEN}[PASS]${NC} $*"; }
+
+info "Stage check: saito -> kairo"
+CANONICAL_VERIFY_STAGE="saito-kairo" \
+CANONICAL_REQUIRED_CYCLES="${CANONICAL_REQUIRED_CYCLES_STAGE1:-1}" \
+CANONICAL_AUTO_BOOTSTRAP="${CANONICAL_AUTO_BOOTSTRAP_STAGE1:-1}" \
+CANONICAL_ENFORCE_ROOM_JOINS="${CANONICAL_ENFORCE_ROOM_JOINS_STAGE1:-1}" \
+CANONICAL_STOP_SAITO_AFTER_CRONS="${CANONICAL_STOP_SAITO_AFTER_CRONS_STAGE1:-0}" \
+KEEP_STACK="1" \
+CANONICAL_LIVE_TIMEOUT_SECONDS="${CANONICAL_STAGE_TIMEOUT_SECONDS:-180}" \
+CANONICAL_FAILFAST_AFTER_SECONDS="${CANONICAL_STAGE_FAILFAST_SECONDS:-45}" \
+bash "$ROOT_DIR/test/integration/test-canonical-workflow-live-compose.sh"
+
+pass "Stage saito -> kairo passed"

@@ -9,6 +9,7 @@ KEEP_STACK="${KEEP_STACK:-0}"
 TIMEOUT_SECONDS="${CANONICAL_LIVE_TIMEOUT_SECONDS:-600}"
 POLL_SECONDS="${CANONICAL_LIVE_POLL_SECONDS:-5}"
 REQUIRED_CYCLES="${CANONICAL_REQUIRED_CYCLES:-2}"
+VERIFY_STAGE="${CANONICAL_VERIFY_STAGE:-full}"
 AUTO_BOOTSTRAP_CANONICAL="${CANONICAL_AUTO_BOOTSTRAP:-1}"
 BOOTSTRAP_STATUS_TIMEOUT="${CANONICAL_BOOTSTRAP_STATUS_TIMEOUT:-120}"
 CANONICAL_FAST_CRON_EVERY="${CANONICAL_FAST_CRON_EVERY:-10s}"
@@ -16,6 +17,7 @@ FAILFAST_AFTER_SECONDS="${CANONICAL_FAILFAST_AFTER_SECONDS:-45}"
 ENFORCE_ROOM_JOINS="${CANONICAL_ENFORCE_ROOM_JOINS:-1}"
 DB_AGENT_WAIT_SECONDS="${CANONICAL_DB_AGENT_WAIT_SECONDS:-20}"
 AUTO_PROVISION_CANONICAL="${CANONICAL_AUTO_PROVISION:-0}"
+STOP_SAITO_AFTER_CRONS="${CANONICAL_STOP_SAITO_AFTER_CRONS:-0}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -244,6 +246,78 @@ count_deliveries() {
 		--status "success"
 }
 
+maybe_stop_saito_after_crons() {
+	local cron_count="$1"
+	if [[ "$STOP_SAITO_AFTER_CRONS" == "0" || -z "$STOP_SAITO_AFTER_CRONS" ]]; then
+		return
+	fi
+	if [[ "${SAITO_STOPPED:-0}" == "1" ]]; then
+		return
+	fi
+	if (( cron_count < STOP_SAITO_AFTER_CRONS )); then
+		return
+	fi
+	if docker ps --format '{{.Names}}' | grep -q "^${SAITO_CONTAINER}$"; then
+		info "Stopping ${SAITO_CONTAINER} after ${cron_count} cron events (limit=${STOP_SAITO_AFTER_CRONS})"
+		docker stop "$SAITO_CONTAINER" >/dev/null 2>&1 || true
+	fi
+	SAITO_STOPPED=1
+}
+
+stage_passed() {
+	local stage="$1"
+	local required="$2"
+	local cron_count="$3"
+	local sk_count="$4"
+	local kk_count="$5"
+	local delivery_count="$6"
+
+	case "$stage" in
+		full)
+			(( cron_count >= required )) && (( sk_count >= required )) && (( kk_count >= required )) && (( delivery_count >= required ))
+			;;
+		saito-kairo)
+			(( cron_count >= required )) && (( sk_count >= required ))
+			;;
+		kairo-kumo)
+			(( sk_count >= required )) && (( kk_count >= required ))
+			;;
+		kumo-kairo)
+			(( kk_count >= required )) && (( delivery_count >= required ))
+			;;
+		*)
+			fail "unsupported CANONICAL_VERIFY_STAGE=${stage}; expected one of: full, saito-kairo, kairo-kumo, kumo-kairo"
+			;;
+	esac
+}
+
+stage_stalled() {
+	local stage="$1"
+	local required="$2"
+	local cron_count="$3"
+	local sk_count="$4"
+	local kk_count="$5"
+	local delivery_count="$6"
+
+	case "$stage" in
+		full)
+			(( cron_count >= required )) && (( sk_count < required || kk_count == 0 || delivery_count == 0 ))
+			;;
+		saito-kairo)
+			(( cron_count >= required )) && (( sk_count < required ))
+			;;
+		kairo-kumo)
+			(( sk_count >= required )) && (( kk_count < required ))
+			;;
+		kumo-kairo)
+			(( kk_count >= required )) && (( delivery_count < required ))
+			;;
+		*)
+			return 1
+			;;
+	esac
+}
+
 discover_admin_rooms() {
 	python3 "$HELPER_PY" admin-rooms-csv --env-file "$COMPOSE_ENV_FILE"
 }
@@ -358,7 +432,8 @@ fi
 
 START_EPOCH="$(date +%s)"
 START_TS="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-info "Watching for canonical cycles (required=${REQUIRED_CYCLES}, timeout=${TIMEOUT_SECONDS}s, poll=${POLL_SECONDS}s)"
+SAITO_STOPPED=0
+info "Watching canonical stage=${VERIFY_STAGE} (required=${REQUIRED_CYCLES}, timeout=${TIMEOUT_SECONDS}s, poll=${POLL_SECONDS}s)"
 
 while true; do
 	NOW_EPOCH="$(date +%s)"
@@ -371,13 +446,14 @@ while true; do
 	SK_COUNT="$(count_saito_to_kairo "$START_TS")"
 	KK_COUNT="$(count_kairo_to_kumo "$START_TS")"
 	DELIVERY_COUNT="$(count_deliveries "$START_TS")"
+	maybe_stop_saito_after_crons "$CRON_COUNT"
 
 	info "elapsed=${ELAPSED}s cron=${CRON_COUNT} saito→kairo=${SK_COUNT} kairo→kumo=${KK_COUNT} deliveries=${DELIVERY_COUNT}"
 
 	# Fail-fast: once cron ticks are flowing, continuing to wait is usually wasted
 	# time if any downstream stage remains stalled (most often room-membership,
 	# policy, or config propagation issues). Bail out early with focused diagnostics.
-	if (( ELAPSED >= FAILFAST_AFTER_SECONDS )) && (( CRON_COUNT >= REQUIRED_CYCLES )) && (( SK_COUNT < REQUIRED_CYCLES || KK_COUNT == 0 || DELIVERY_COUNT == 0 )); then
+	if (( ELAPSED >= FAILFAST_AFTER_SECONDS )) && stage_stalled "$VERIFY_STAGE" "$REQUIRED_CYCLES" "$CRON_COUNT" "$SK_COUNT" "$KK_COUNT" "$DELIVERY_COUNT"; then
 		info "Fail-fast triggered after ${ELAPSED}s: cron active but chain is stalled"
 		info "Recent Saito logs:"
 		docker logs --since 10m "$SAITO_CONTAINER" 2>&1 | tail -n 60 || true
@@ -388,8 +464,8 @@ while true; do
 		fail "canonical chain stalled (cron=${CRON_COUNT}, saito→kairo=${SK_COUNT}, kairo→kumo=${KK_COUNT}, deliveries=${DELIVERY_COUNT}) after ${ELAPSED}s; avoid waiting full timeout"
 	fi
 
-	if (( CRON_COUNT >= REQUIRED_CYCLES )) && (( SK_COUNT >= REQUIRED_CYCLES )) && (( KK_COUNT >= REQUIRED_CYCLES )) && (( DELIVERY_COUNT >= REQUIRED_CYCLES )); then
-		pass "canonical live cycle observed for required threshold"
+	if stage_passed "$VERIFY_STAGE" "$REQUIRED_CYCLES" "$CRON_COUNT" "$SK_COUNT" "$KK_COUNT" "$DELIVERY_COUNT"; then
+		pass "canonical live stage ${VERIFY_STAGE} observed for required threshold"
 		break
 	fi
 
@@ -398,4 +474,4 @@ done
 
 rm -rf "$DB_SNAPSHOT_DIR"
 
-pass "Canonical live compose workflow check passed"
+pass "Canonical live compose workflow check passed (stage=${VERIFY_STAGE})"

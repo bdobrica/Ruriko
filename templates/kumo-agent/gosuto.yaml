@@ -110,7 +110,7 @@ workflow:
           retries: 2
         - type: send_message
           targetAlias: kairo
-          payloadTemplate: "KUMO_NEWS_RESPONSE $output.json"
+          payloadTemplate: "Hey kairo, KUMO_NEWS_RESPONSE $output.json"
         - type: persist
           persistKey: kumo.last_response
           persistValue: "$output.json"

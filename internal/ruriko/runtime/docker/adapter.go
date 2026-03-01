@@ -128,8 +128,12 @@ func (a *Adapter) Spawn(ctx context.Context, spec runtime.AgentSpec) (runtime.Ag
 	}
 
 	// Host config
+	restartPolicy := strings.TrimSpace(spec.RestartPolicy)
+	if restartPolicy == "" {
+		restartPolicy = "unless-stopped"
+	}
 	hostCfg := &container.HostConfig{
-		RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyMode(restartPolicy)},
 	}
 
 	// Network config

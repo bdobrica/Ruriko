@@ -21,6 +21,7 @@
 //	LLM_BASE_URL          - override LLM API base URL (e.g. for Ollama)
 //	LLM_MODEL             - model name (e.g. "gpt-4o")
 //	LLM_MAX_TOKENS        - max tokens per response (default: provider default)
+//	GITAI_LLM_CALL_HARD_LIMIT - hard cap on total LLM calls before exit (default: 0=disabled)
 //	LOG_LEVEL             - "debug", "info", "warn", "error" (default: "info")
 //	LOG_FORMAT            - "text" or "json" (default: "text")
 package main
@@ -84,6 +85,7 @@ func loadConfig() (*app.Config, error) {
 		DirectSecretPushEnabled: environment.BoolOr("FEATURE_DIRECT_SECRET_PUSH", false),
 		LogLevel:                environment.StringOr("LOG_LEVEL", "info"),
 		LogFormat:               environment.StringOr("LOG_FORMAT", "text"),
+		LLMCallHardLimit:        environment.IntOr("GITAI_LLM_CALL_HARD_LIMIT", 0),
 		Matrix: matrix.Config{
 			Homeserver:  homeserver,
 			UserID:      userID,

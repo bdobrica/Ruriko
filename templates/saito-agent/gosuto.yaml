@@ -106,7 +106,7 @@ workflow:
       steps:
         - type: send_message
           targetAlias: kairo
-          payloadTemplate: 'KAIRO_TRIGGER {"trigger":"scheduled","source":"saito","event":"cron.tick","ts":"$now.rfc3339","payload":"$event.payload.message"}'
+          payloadTemplate: 'Hey kairo, KAIRO_TRIGGER {"trigger":"scheduled","source":"saito","event":"cron.tick","ts":"$now.rfc3339","payload":"$event.payload.message"}'
 
 persona:
   systemPrompt: |

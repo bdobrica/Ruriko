@@ -72,6 +72,18 @@ func injectAgentLLMEnv(agentEnv map[string]string) {
 	if maxTokens != "" {
 		agentEnv["LLM_MAX_TOKENS"] = maxTokens
 	}
+	hardLimit := strings.TrimSpace(os.Getenv("GITAI_LLM_CALL_HARD_LIMIT"))
+	if hardLimit != "" {
+		agentEnv["GITAI_LLM_CALL_HARD_LIMIT"] = hardLimit
+	}
+}
+
+func agentRestartPolicyFromEnv() string {
+	policy := strings.TrimSpace(os.Getenv("RURIKO_AGENT_RESTART_POLICY"))
+	if policy == "" {
+		return "unless-stopped"
+	}
+	return policy
 }
 
 // generateACPToken returns a 32-char hex string (128 bits of entropy) suitable
@@ -216,11 +228,12 @@ func (h *Handlers) HandleAgentsCreate(ctx context.Context, cmd *Command, evt *ev
 	injectAgentLLMEnv(agentEnv)
 
 	spec := runtime.AgentSpec{
-		ID:          agentID,
-		DisplayName: displayName,
-		Image:       image,
-		Template:    template,
-		Env:         agentEnv,
+		ID:            agentID,
+		DisplayName:   displayName,
+		Image:         image,
+		Template:      template,
+		Env:           agentEnv,
+		RestartPolicy: agentRestartPolicyFromEnv(),
 	}
 
 	handle, err := h.runtime.Spawn(ctx, spec)
@@ -534,11 +547,12 @@ func (h *Handlers) recoverAgentContainer(ctx context.Context, agent *store.Agent
 	injectAgentLLMEnv(env)
 
 	handle, err := h.runtime.Spawn(ctx, runtime.AgentSpec{
-		ID:          agent.ID,
-		DisplayName: agent.DisplayName,
-		Image:       strings.TrimSpace(agent.Image.String),
-		Template:    agent.Template,
-		Env:         env,
+		ID:            agent.ID,
+		DisplayName:   agent.DisplayName,
+		Image:         strings.TrimSpace(agent.Image.String),
+		Template:      agent.Template,
+		Env:           env,
+		RestartPolicy: agentRestartPolicyFromEnv(),
 	})
 	if err != nil {
 		return runtime.AgentHandle{}, fmt.Errorf("failed to recover container for %s: %w", agent.ID, err)

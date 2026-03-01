@@ -21,6 +21,9 @@ type AgentSpec struct {
 	NetworkName string
 	// ControlPort is the HTTP port the ACP server listens on inside the container.
 	ControlPort int
+	// RestartPolicy controls Docker restart behavior (e.g. "unless-stopped", "no").
+	// Empty defaults to "unless-stopped".
+	RestartPolicy string
 }
 
 // AgentHandle identifies a running or stopped agent container.

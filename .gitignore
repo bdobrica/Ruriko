@@ -45,6 +45,9 @@ build/
 *.key
 *.pem
 *.crt
+.agent-tokens
+.agent-credentials
+.agent-secrets
 master.key
 
 # IDE and editor files
