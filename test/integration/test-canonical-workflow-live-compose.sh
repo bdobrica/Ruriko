@@ -3,6 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 COMPOSE_FILE="${CANONICAL_COMPOSE_FILE:-$ROOT_DIR/examples/docker-compose/docker-compose.yaml}"
+COMPOSE_ENV_FILE="$ROOT_DIR/examples/docker-compose/.env"
+HELPER_PY="$ROOT_DIR/test/integration/canonical_live_helpers.py"
 KEEP_STACK="${KEEP_STACK:-0}"
 TIMEOUT_SECONDS="${CANONICAL_LIVE_TIMEOUT_SECONDS:-600}"
 POLL_SECONDS="${CANONICAL_LIVE_POLL_SECONDS:-5}"
@@ -48,6 +50,7 @@ require_tool docker
 require_tool grep
 require_tool python3
 require_tool curl
+[[ -f "$HELPER_PY" ]] || fail "required helper script not found: $HELPER_PY"
 
 info "Starting compose stack"
 docker_compose up -d
@@ -74,18 +77,7 @@ wait_for_ruriko_db_ready() {
 		if docker cp ruriko:/data/ruriko.db "$tmp_db" >/dev/null 2>&1; then
 			docker cp ruriko:/data/ruriko.db-wal "${tmp_db_dir}/ruriko.db-wal" >/dev/null 2>&1 || true
 			docker cp ruriko:/data/ruriko.db-shm "${tmp_db_dir}/ruriko.db-shm" >/dev/null 2>&1 || true
-			if python3 - "$tmp_db" <<'PY'
-import sqlite3
-import sys
-
-db = sys.argv[1]
-conn = sqlite3.connect(db)
-cur = conn.cursor()
-cur.execute("select name from sqlite_master where type='table' and name='agents'")
-ok = cur.fetchone() is not None
-conn.close()
-raise SystemExit(0 if ok else 1)
-PY
+			if python3 "$HELPER_PY" db-ready --db-file "$tmp_db"
 			then
 				rm -rf "$tmp_db_dir"
 				pass "ruriko database ready (agents table present)"
@@ -134,119 +126,95 @@ docker cp ruriko:/data/ruriko.db-shm "${DB_SNAPSHOT_DIR}/ruriko.db-shm" >/dev/nu
 
 count_cron_events() {
 	local since="$1"
-	python3 - "$SAITO_CONTAINER" "$since" <<'PY'
-import re
-import subprocess
-import sys
-
-container = sys.argv[1]
-since = sys.argv[2]
-res = subprocess.run(["docker", "logs", "--since", since, container], capture_output=True, text=True)
-text = (res.stdout or "") + (res.stderr or "")
-rx = re.compile(r"event processed.*event_type=cron\.tick.*status=success")
-print(sum(1 for line in text.splitlines() if rx.search(line)))
-PY
+	python3 "$HELPER_PY" count-log \
+		--container "$SAITO_CONTAINER" \
+		--since "$since" \
+		--msg "event processed" \
+		--event-type "cron.tick" \
+		--status "success"
 }
 
 count_saito_to_kairo() {
 	local since="$1"
-	python3 - "$SAITO_CONTAINER" "$since" <<'PY'
-import re
-import subprocess
-import sys
-
-container = sys.argv[1]
-since = sys.argv[2]
-res = subprocess.run(["docker", "logs", "--since", since, container], capture_output=True, text=True)
-text = (res.stdout or "") + (res.stderr or "")
-rx = re.compile(r"msg=matrix\.send_message.*agent_id=saito.*target=kairo.*status=success")
-print(sum(1 for line in text.splitlines() if rx.search(line)))
-PY
+	python3 "$HELPER_PY" count-log \
+		--container "$SAITO_CONTAINER" \
+		--since "$since" \
+		--msg "matrix.send_message" \
+		--agent-id "saito" \
+		--target "kairo" \
+		--status "success"
 }
 
 count_kairo_to_kumo() {
 	local since="$1"
-	python3 - "$KAIRO_CONTAINER" "$since" <<'PY'
-import re
-import subprocess
-import sys
-
-container = sys.argv[1]
-since = sys.argv[2]
-res = subprocess.run(["docker", "logs", "--since", since, container], capture_output=True, text=True)
-text = (res.stdout or "") + (res.stderr or "")
-rx = re.compile(r"msg=matrix\.send_message.*agent_id=kairo.*target=kumo.*status=success")
-print(sum(1 for line in text.splitlines() if rx.search(line)))
-PY
+	python3 "$HELPER_PY" count-log \
+		--container "$KAIRO_CONTAINER" \
+		--since "$since" \
+		--msg "matrix.send_message" \
+		--agent-id "kairo" \
+		--target "kumo" \
+		--status "success"
 }
 
 count_deliveries() {
 	local since="$1"
-	python3 - "$KUMO_CONTAINER" "$since" <<'PY'
-import re
-import subprocess
-import sys
-
-container = sys.argv[1]
-since = sys.argv[2]
-res = subprocess.run(["docker", "logs", "--since", since, container], capture_output=True, text=True)
-text = (res.stdout or "") + (res.stderr or "")
-rx = re.compile(r"msg=matrix\.send_message.*agent_id=kumo.*target=kairo.*status=success")
-print(sum(1 for line in text.splitlines() if rx.search(line)))
-PY
+	python3 "$HELPER_PY" count-log \
+		--container "$KUMO_CONTAINER" \
+		--since "$since" \
+		--msg "matrix.send_message" \
+		--agent-id "kumo" \
+		--target "kairo" \
+		--status "success"
 }
 
-discover_admin_room() {
-	python3 - "$ROOT_DIR/examples/docker-compose/.env" <<'PY'
-import sys
-from pathlib import Path
-
-env = {}
-for raw in Path(sys.argv[1]).read_text(encoding='utf-8').splitlines():
-    line = raw.strip()
-    if not line or line.startswith('#') or '=' not in line:
-        continue
-    k, v = line.split('=', 1)
-    env[k.strip()] = v.strip()
-
-rooms = [r.strip() for r in env.get('MATRIX_ADMIN_ROOMS', '').split(',') if r.strip()]
-print(rooms[0] if rooms else '')
-PY
+discover_admin_rooms() {
+	python3 "$HELPER_PY" admin-rooms-csv --env-file "$COMPOSE_ENV_FILE"
 }
 
 discover_matrix_base_url() {
-	python3 - "$ROOT_DIR/examples/docker-compose/.env" <<'PY'
-import sys
-from pathlib import Path
-
-env = {}
-for raw in Path(sys.argv[1]).read_text(encoding='utf-8').splitlines():
-    line = raw.strip()
-    if not line or line.startswith('#') or '=' not in line:
-        continue
-    k, v = line.split('=', 1)
-    env[k.strip()] = v.strip()
-
-host = env.get('TUWUNEL_HOST', '127.0.0.1').strip() or '127.0.0.1'
-port = env.get('TUWUNEL_PORT', '8008').strip() or '8008'
-print(f"http://{host}:{port}")
-PY
+	python3 "$HELPER_PY" matrix-base-url --env-file "$COMPOSE_ENV_FILE"
 }
 
 urlencode() {
-	python3 - "$1" <<'PY'
-import sys
-import urllib.parse
+	python3 "$HELPER_PY" urlencode --value "$1"
+}
 
-print(urllib.parse.quote(sys.argv[1], safe=''))
-PY
+verify_room_joined() {
+	local token="$1"
+	local matrix_base="$2"
+	local room_id="$3"
+
+	curl -fsS "${matrix_base}/_matrix/client/v3/joined_rooms" \
+		-H "Authorization: Bearer ${token}" \
+		-H "Accept: application/json" | python3 "$HELPER_PY" joined-has-room --room "$room_id"
+}
+
+join_room_with_fallback() {
+	local token="$1"
+	local matrix_base="$2"
+	local room_id_or_alias="$3"
+	local encoded
+	encoded="$(urlencode "$room_id_or_alias")"
+
+	if curl -fsS -X POST "${matrix_base}/_matrix/client/v3/rooms/${encoded}/join" \
+		-H "Authorization: Bearer ${token}" \
+		-H "Content-Type: application/json" \
+		-d '{}' >/dev/null; then
+		return 0
+	fi
+
+	curl -fsS -X POST "${matrix_base}/_matrix/client/v3/join/${encoded}" \
+		-H "Authorization: Bearer ${token}" \
+		-H "Content-Type: application/json" \
+		-d '{}' >/dev/null
 }
 
 ensure_canonical_room_joins() {
-	local admin_room="$1"
+	local admin_rooms_csv="$1"
 	local matrix_base="$2"
-	local encoded_room
-	encoded_room="$(urlencode "$admin_room")"
+	local admin_rooms=()
+	IFS=',' read -r -a admin_rooms <<< "$admin_rooms_csv"
+	[[ ${#admin_rooms[@]} -gt 0 ]] || fail "MATRIX_ADMIN_ROOMS is empty; cannot enforce joins"
 
 	for agent in saito kairo kumo; do
 		local cname token
@@ -254,53 +222,28 @@ ensure_canonical_room_joins() {
 		token="$(docker exec "$cname" sh -lc 'printf %s "$MATRIX_ACCESS_TOKEN"' 2>/dev/null || true)"
 		[[ -n "$token" ]] || fail "${cname} missing MATRIX_ACCESS_TOKEN; cannot enforce room join"
 
-		if ! curl -fsS -X POST "${matrix_base}/_matrix/client/v3/rooms/${encoded_room}/join" \
-			-H "Authorization: Bearer ${token}" \
-			-H "Content-Type: application/json" \
-			-d '{}' >/dev/null; then
-			fail "failed to force ${agent} join into admin room ${admin_room}"
-		fi
+		for admin_room in "${admin_rooms[@]}"; do
+			admin_room="${admin_room## }"
+			admin_room="${admin_room%% }"
+			[[ -n "$admin_room" ]] || continue
+			if ! join_room_with_fallback "$token" "$matrix_base" "$admin_room"; then
+				fail "failed to force ${agent} join into admin room ${admin_room}"
+			fi
+			if ! verify_room_joined "$token" "$matrix_base" "$admin_room"; then
+				fail "${agent} did not appear in joined_rooms for ${admin_room} after join"
+			fi
+		done
 	done
 
-	pass "canonical agents joined admin room ${admin_room}"
+	pass "canonical agents joined admin room(s): ${admin_rooms_csv}"
 }
 
 bootstrap_canonical_configs() {
 	info "Auto-bootstrap canonical Gosuto configs for saito/kairo/kumo"
 
 	local admin_room user_room
-	admin_room="$(python3 - "$ROOT_DIR/examples/docker-compose/.env" <<'PY'
-import sys
-from pathlib import Path
-
-env = {}
-for raw in Path(sys.argv[1]).read_text(encoding='utf-8').splitlines():
-    line = raw.strip()
-    if not line or line.startswith('#') or '=' not in line:
-        continue
-    k, v = line.split('=', 1)
-    env[k.strip()] = v.strip()
-
-rooms = [r.strip() for r in env.get('MATRIX_ADMIN_ROOMS', '').split(',') if r.strip()]
-print(rooms[0] if rooms else '')
-PY
-)"
-	user_room="$(python3 - "$ROOT_DIR/examples/docker-compose/.env" <<'PY'
-import sys
-from pathlib import Path
-
-env = {}
-for raw in Path(sys.argv[1]).read_text(encoding='utf-8').splitlines():
-    line = raw.strip()
-    if not line or line.startswith('#') or '=' not in line:
-        continue
-    k, v = line.split('=', 1)
-    env[k.strip()] = v.strip()
-
-rooms = [r.strip() for r in env.get('MATRIX_ADMIN_ROOMS', '').split(',') if r.strip()]
-print(rooms[1] if len(rooms) > 1 else '!canonical-user-fallback:localhost')
-PY
-)"
+	admin_room="$(python3 "$HELPER_PY" admin-room --env-file "$COMPOSE_ENV_FILE")"
+	user_room="$(python3 "$HELPER_PY" user-room --env-file "$COMPOSE_ENV_FILE" --fallback '!canonical-user-fallback:localhost')"
 
 	[[ -n "$admin_room" ]] || fail "failed to discover MATRIX_ADMIN_ROOMS from compose .env"
 	if [[ "$user_room" == "$admin_room" ]]; then
@@ -323,10 +266,10 @@ else
 fi
 
 if [[ "$ENFORCE_ROOM_JOINS" == "1" ]]; then
-	ADMIN_ROOM="$(discover_admin_room)"
-	[[ -n "$ADMIN_ROOM" ]] || fail "failed to discover MATRIX_ADMIN_ROOMS for join enforcement"
+	ADMIN_ROOMS="$(discover_admin_rooms)"
+	[[ -n "$ADMIN_ROOMS" ]] || fail "failed to discover MATRIX_ADMIN_ROOMS for join enforcement"
 	MATRIX_BASE_URL="$(discover_matrix_base_url)"
-	ensure_canonical_room_joins "$ADMIN_ROOM" "$MATRIX_BASE_URL"
+	ensure_canonical_room_joins "$ADMIN_ROOMS" "$MATRIX_BASE_URL"
 else
 	info "CANONICAL_ENFORCE_ROOM_JOINS=0; skipping explicit room-join enforcement"
 fi
@@ -349,18 +292,18 @@ while true; do
 
 	info "elapsed=${ELAPSED}s cron=${CRON_COUNT} saito→kairo=${SK_COUNT} kairo→kumo=${KK_COUNT} deliveries=${DELIVERY_COUNT}"
 
-	# Fail-fast: once upstream is flowing, continuing to wait is usually wasted
-	# time if downstream counters are still stuck at 0 (most often room-membership
-	# or config-apply propagation issues). Bail out early with focused diagnostics.
-	if (( ELAPSED >= FAILFAST_AFTER_SECONDS )) && (( SK_COUNT >= REQUIRED_CYCLES )) && (( KK_COUNT == 0 || DELIVERY_COUNT == 0 )); then
-		info "Fail-fast triggered after ${ELAPSED}s: upstream active but downstream stalled"
+	# Fail-fast: once cron ticks are flowing, continuing to wait is usually wasted
+	# time if any downstream stage remains stalled (most often room-membership,
+	# policy, or config propagation issues). Bail out early with focused diagnostics.
+	if (( ELAPSED >= FAILFAST_AFTER_SECONDS )) && (( CRON_COUNT >= REQUIRED_CYCLES )) && (( SK_COUNT < REQUIRED_CYCLES || KK_COUNT == 0 || DELIVERY_COUNT == 0 )); then
+		info "Fail-fast triggered after ${ELAPSED}s: cron active but chain is stalled"
 		info "Recent Saito logs:"
 		docker logs --since 10m "$SAITO_CONTAINER" 2>&1 | tail -n 60 || true
 		info "Recent Kairo logs:"
 		docker logs --since 10m "$KAIRO_CONTAINER" 2>&1 | tail -n 80 || true
 		info "Recent Kumo logs:"
 		docker logs --since 10m "$KUMO_CONTAINER" 2>&1 | tail -n 80 || true
-		fail "downstream chain stalled (kairo→kumo=${KK_COUNT}, deliveries=${DELIVERY_COUNT}) after ${ELAPSED}s; avoid waiting full timeout"
+		fail "canonical chain stalled (cron=${CRON_COUNT}, saito→kairo=${SK_COUNT}, kairo→kumo=${KK_COUNT}, deliveries=${DELIVERY_COUNT}) after ${ELAPSED}s; avoid waiting full timeout"
 	fi
 
 	if (( CRON_COUNT >= REQUIRED_CYCLES )) && (( SK_COUNT >= REQUIRED_CYCLES )) && (( KK_COUNT >= REQUIRED_CYCLES )) && (( DELIVERY_COUNT >= REQUIRED_CYCLES )); then
