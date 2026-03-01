@@ -1,13 +1,12 @@
 package nlp
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"time"
+
+	openaicore "github.com/bdobrica/Ruriko/common/llm/openai"
 )
 
 const (
@@ -39,7 +38,7 @@ type Config struct {
 // with JSON-mode output to guarantee a parseable ClassifyResponse.
 type openAIProvider struct {
 	cfg    Config
-	client *http.Client
+	client *openaicore.Client
 }
 
 // New returns a Provider backed by the OpenAI (or compatible) chat API.
@@ -55,49 +54,13 @@ func New(cfg Config) Provider {
 		cfg.Timeout = defaultTimeout
 	}
 	return &openAIProvider{
-		cfg:    cfg,
-		client: &http.Client{Timeout: cfg.Timeout},
+		cfg: cfg,
+		client: openaicore.New(openaicore.Config{
+			APIKey:  cfg.APIKey,
+			BaseURL: cfg.BaseURL,
+			Timeout: cfg.Timeout,
+		}),
 	}
-}
-
-// --- minimal OpenAI wire types ---
-
-type oaiMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-type oaiRequest struct {
-	Model          string       `json:"model"`
-	Messages       []oaiMessage `json:"messages"`
-	MaxTokens      int          `json:"max_tokens,omitempty"`
-	ResponseFormat *oaiFormat   `json:"response_format,omitempty"`
-}
-
-type oaiFormat struct {
-	Type string `json:"type"` // "json_object"
-}
-
-// oaiUsage holds the token-count fields returned by the OpenAI /chat/completions
-// endpoint in the top-level "usage" object.
-type oaiUsage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
-}
-
-type oaiResponse struct {
-	Choices []oaiChoice `json:"choices"`
-	Usage   oaiUsage    `json:"usage"`
-	Error   *struct {
-		Message string `json:"message"`
-		Type    string `json:"type"`
-	} `json:"error,omitempty"`
-}
-
-type oaiChoice struct {
-	Message      oaiMessage `json:"message"`
-	FinishReason string     `json:"finish_reason"`
 }
 
 // Classify sends the user message to the LLM and returns a ClassifyResponse.
@@ -111,55 +74,29 @@ func (p *openAIProvider) Classify(ctx context.Context, req ClassifyRequest) (*Cl
 
 	// Build the messages array: system prompt, then conversation history
 	// (LTM context + STM turns), then the current user message.
-	msgs := make([]oaiMessage, 0, 2+len(req.ConversationHistory))
-	msgs = append(msgs, oaiMessage{Role: "system", Content: system})
+	msgs := make([]openaicore.Message, 0, 2+len(req.ConversationHistory))
+	msgs = append(msgs, openaicore.Message{Role: "system", Content: system})
 	for _, hm := range req.ConversationHistory {
-		msgs = append(msgs, oaiMessage{Role: hm.Role, Content: hm.Content})
+		msgs = append(msgs, openaicore.Message{Role: hm.Role, Content: hm.Content})
 	}
-	msgs = append(msgs, oaiMessage{Role: "user", Content: req.Message})
+	msgs = append(msgs, openaicore.Message{Role: "user", Content: req.Message})
 
-	body := oaiRequest{
+	body := openaicore.ChatCompletionRequest{
 		Model:          p.cfg.Model,
 		Messages:       msgs,
 		MaxTokens:      768,
-		ResponseFormat: &oaiFormat{Type: "json_object"},
+		ResponseFormat: &openaicore.ResponseFormat{Type: "json_object"},
 	}
 
-	data, err := json.Marshal(body)
+	result, err := p.client.CreateChatCompletion(ctx, body)
 	if err != nil {
-		return nil, fmt.Errorf("nlp: marshal request: %w", err)
+		return nil, fmt.Errorf("nlp: %w", err)
 	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		p.cfg.BaseURL+"/chat/completions",
-		bytes.NewReader(data),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("nlp: create http request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+p.cfg.APIKey)
-
-	start := time.Now()
-	resp, err := p.client.Do(httpReq)
-	latencyMS := time.Since(start).Milliseconds()
-	if err != nil {
-		return nil, fmt.Errorf("nlp: http request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("nlp: read response body: %w", err)
-	}
-
-	var oaiResp oaiResponse
-	if err := json.Unmarshal(respBody, &oaiResp); err != nil {
-		return nil, fmt.Errorf("nlp: decode API response: %w", err)
-	}
+	oaiResp := result.Response
+	latencyMS := result.LatencyMS
 
 	if oaiResp.Error != nil {
-		if resp.StatusCode == http.StatusTooManyRequests {
+		if result.StatusCode == 429 {
 			return nil, fmt.Errorf("nlp: API rate limit (HTTP 429): %s: %w",
 				oaiResp.Error.Message, ErrRateLimit)
 		}
@@ -167,18 +104,18 @@ func (p *openAIProvider) Classify(ctx context.Context, req ClassifyRequest) (*Cl
 	}
 
 	// A non-429 HTTP error without a structured error body (e.g. 503 upstream).
-	if resp.StatusCode >= 400 {
-		if resp.StatusCode == http.StatusTooManyRequests {
+	if result.StatusCode >= 400 {
+		if result.StatusCode == 429 {
 			return nil, fmt.Errorf("nlp: API rate limit (HTTP 429): %w", ErrRateLimit)
 		}
-		return nil, fmt.Errorf("nlp: unexpected HTTP status %d", resp.StatusCode)
+		return nil, fmt.Errorf("nlp: unexpected HTTP status %d", result.StatusCode)
 	}
 
 	if len(oaiResp.Choices) == 0 {
-		return nil, fmt.Errorf("nlp: no choices returned (HTTP %d)", resp.StatusCode)
+		return nil, fmt.Errorf("nlp: no choices returned (HTTP %d)", result.StatusCode)
 	}
 
-	content := oaiResp.Choices[0].Message.Content
+	content, _ := oaiResp.Choices[0].Message.Content.(string)
 	var classified ClassifyResponse
 	if err := json.Unmarshal([]byte(content), &classified); err != nil {
 		return nil, fmt.Errorf("nlp: decode classification JSON (%.200s): %w", content, ErrMalformedOutput)

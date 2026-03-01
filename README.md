@@ -75,6 +75,8 @@ Runtime is immutable. Behavior is controlled by structured configuration. Agents
 
 Shared transport/security primitives used by both binaries live under `common/` (for example ACP specs, webhook signature validation, and rate-limiting utilities) to keep behavior consistent and reduce duplication.
 
+OpenAI-compatible chat transport is shared under `common/llm/openai`, while Gitai (`internal/gitai/llm`) and Ruriko NLP (`internal/ruriko/nlp`) keep their domain-specific request/response mapping logic.
+
 ---
 
 ## 👻 Gosuto (Agent Configuration — Policy, Instructions, Persona)

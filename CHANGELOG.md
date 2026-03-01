@@ -53,6 +53,19 @@
 
 ---
 
+## 🧹 Maintenance Updates (2026-03-01 · Phase 4 de-dup)
+
+- Extracted shared OpenAI-compatible chat transport core to:
+  - `common/llm/openai/client.go`
+- Refactored adapters to consume shared transport while preserving
+  package-local behavior and interfaces:
+  - `internal/gitai/llm/openai.go`
+  - `internal/ruriko/nlp/openai.go`
+- Added transport-level shared tests:
+  - `common/llm/openai/client_test.go`
+
+---
+
 ## 🎯 Infrastructure Scope (COMPLETED)
 
 The following foundations were built in Phases 0–9 and are functional:
