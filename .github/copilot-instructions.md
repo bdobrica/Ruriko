@@ -241,3 +241,64 @@ The core processing loop in `internal/gitai/app/app.go`:
 Always check `TODO.md` for the current phase and what's in progress. The roadmap is organized in numbered phases (R0, R1, … R15, etc.) with sub-tasks. `CHANGELOG.md` has the full history of completed phases.
 
 The canonical end-to-end workflow being built: **Saito** (cron trigger) → **Kairo** (finance analysis) → **Kumo** (news search) → report delivered to the user.
+
+---
+
+## Using LLMs Responsibly
+
+LLM calls are expensive and can be flaky. **ALWAYS** make sure you have failsafes in place that limit the number of retries, and that any errors are properly handled and logged. When testing code that involves LLM calls for unit tests, use mocks to simulate the LLM responses instead of making real API calls. For integration tests, monitor carefully the number of calls. You can add an nginx container to count and limit outgoing API calls to LLM providers during tests. One possible configuration is to set a very low rate limit:
+```nginx
+# In http { } context:
+# 1 requests per minute per client IP, no burst.
+limit_req_zone $binary_remote_addr zone=llm_rpm:10m rate=1r/m;
+
+server {
+  listen 8080;
+  server_name localhost;
+
+  # Keep prompts small for tests
+  client_max_body_size 10k;
+  client_body_timeout 10s;
+
+  # Optional but useful: make nginx return 429 instead of the default 503 on limit
+  limit_req_status 429;
+
+  location / {
+    # Enforce 1 request/minute, no burst.
+    limit_req zone=llm_rpm burst=0;
+
+    # Proxy to upstream LLM API
+    proxy_pass https://api.openai.com;
+    proxy_http_version 1.1;
+
+    # Pass through authorization header from your test client
+    proxy_set_header Authorization $http_authorization;
+    proxy_set_header Content-Type $http_content_type;
+
+    # Host/SNI for upstream TLS
+    proxy_set_header Host api.openai.com;
+
+    # Timeouts for integration tests (tune if needed)
+    proxy_connect_timeout 10s;
+    proxy_send_timeout 60s;
+    proxy_read_timeout 60s;
+
+    # (Optional) If you accidentally use streaming in tests,
+    # these help avoid buffering surprises.
+    proxy_buffering on;
+  }
+}
+```
+
+---
+
+## Final Notes
+
+- As this is a work in progress, there's no need to worry about breaking changes or refactors. If you see an area that could be improved, just do it. **NO NEED** to preserve backward compatibility.
+- Keep unit and integration tests atomic. They should cover some specific behavior or component in isolation. End-to-end tests can cover broader workflows, but they should be built from linking together smaller, existing tests whenever it is possible. **DO NOT** write large, monolithic tests that try to cover complex flows in one go.
+- **ALWAYS** orchestrate tests via the public interfaces (e.g., Matrix messages, ACP API calls) rather than calling internal functions directly. This ensures that you are testing the system as a whole and not just individual components in isolation.
+- **ALWAYS** use Makefile for common tasks like building, testing, linting, and running the stack. This ensures consistency and makes it easier for others to get started without having to remember complex commands.
+- When writing shell scripts instead of embedding large Python scripts inside, **ALWAYS** reference the Python code from an external file (e.g., `scripts/agent_tool.py`) instead of inlining it in the shell script. This makes it easier to edit and maintain the Python code, and also allows for syntax highlighting and linting in editors.
+- **ALWAYS** keep the repository state up to date by updating the `CHANGELOG.md`, `TODO.md` and `README.md` files after successfully completing a task or phase. This ensures that the documentation reflects the current state of the project and helps other contributors understand what has been done and what is planned next.
+- **ALWAYS** keep the documentation up to date. If you make changes to the architecture, data flow, or key concepts, update the relevant sections in the `docs/` directory. This is crucial for maintaining a shared understanding of the system as it evolves.
+- **ALWAYS** keep the `OPERATIONS.md` file up to date with any changes to the deployment process, environment variables, or testing procedures. This ensures that anyone can spin up the stack and run tests without confusion.
