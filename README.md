@@ -77,6 +77,8 @@ Shared transport/security primitives used by both binaries live under `common/` 
 
 OpenAI-compatible chat transport is shared under `common/llm/openai`, while Gitai (`internal/gitai/llm`) and Ruriko NLP (`internal/ruriko/nlp`) keep their domain-specific request/response mapping logic.
 
+Matrix low-level lifecycle/transport primitives are shared under `common/matrixcore`, while app-specific routing/policy checks remain in `internal/gitai/matrix` and `internal/ruriko/matrix`.
+
 ---
 
 ## 👻 Gosuto (Agent Configuration — Policy, Instructions, Persona)

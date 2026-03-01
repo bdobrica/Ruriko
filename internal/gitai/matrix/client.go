@@ -9,9 +9,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"time"
 
-	"maunium.net/go/mautrix"
+	"github.com/bdobrica/Ruriko/common/matrixcore"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 )
@@ -28,18 +27,22 @@ type MessageHandler func(ctx context.Context, evt *event.Event)
 
 // Client is the agent-side Matrix client.
 type Client struct {
-	mxc    *mautrix.Client
+	core   *matrixcore.Client
 	cfg    *Config
 	stopCh chan struct{}
 }
 
 // New creates a Matrix client for the agent but does not start syncing yet.
 func New(cfg *Config) (*Client, error) {
-	mxc, err := mautrix.NewClient(cfg.Homeserver, id.UserID(cfg.UserID), cfg.AccessToken)
+	core, err := matrixcore.New(matrixcore.Config{
+		Homeserver:  cfg.Homeserver,
+		UserID:      cfg.UserID,
+		AccessToken: cfg.AccessToken,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("create matrix client: %w", err)
 	}
-	return &Client{mxc: mxc, cfg: cfg, stopCh: make(chan struct{})}, nil
+	return &Client{core: core, cfg: cfg, stopCh: make(chan struct{})}, nil
 }
 
 // Start joins the given rooms and begins the sync loop, calling handler for
@@ -48,8 +51,7 @@ func New(cfg *Config) (*Client, error) {
 func (c *Client) Start(ctx context.Context, rooms []string, handler MessageHandler) error {
 	slog.Warn("Matrix E2EE is not enabled; messages are in plaintext")
 
-	syncer := c.mxc.Syncer.(*mautrix.DefaultSyncer)
-	syncer.OnEventType(event.EventMessage, func(ctx2 context.Context, evt *event.Event) {
+	c.core.OnEventType(event.EventMessage, func(ctx2 context.Context, evt *event.Event) {
 		// Ignore our own messages.
 		if evt.Sender == id.UserID(c.cfg.UserID) {
 			return
@@ -58,37 +60,7 @@ func (c *Client) Start(ctx context.Context, rooms []string, handler MessageHandl
 	})
 
 	c.EnsureJoinedRooms(rooms)
-
-	go func() {
-		const backoffMax = 5 * time.Minute
-		backoff := 2 * time.Second
-		for {
-			if err := c.mxc.Sync(); err != nil {
-				select {
-				case <-c.stopCh:
-					return
-				default:
-				}
-				slog.Error("matrix sync error; reconnecting", "err", err, "backoff", backoff)
-				select {
-				case <-c.stopCh:
-					return
-				case <-time.After(backoff):
-				}
-				backoff *= 2
-				if backoff > backoffMax {
-					backoff = backoffMax
-				}
-				continue
-			}
-			select {
-			case <-c.stopCh:
-				return
-			default:
-				backoff = 2 * time.Second
-			}
-		}
-	}()
+	c.core.StartSyncLoop(c.stopCh)
 	return nil
 }
 
@@ -107,13 +79,12 @@ func (c *Client) EnsureJoinedRooms(rooms []string) {
 // Stop halts the sync loop.
 func (c *Client) Stop() {
 	close(c.stopCh)
-	c.mxc.StopSync()
+	c.core.StopSync()
 }
 
 // SendText sends a plain-text m.text message to the given room.
 func (c *Client) SendText(roomID, text string) error {
-	_, err := c.mxc.SendText(context.Background(), id.RoomID(roomID), text)
-	return err
+	return c.core.SendText(context.Background(), id.RoomID(roomID), text)
 }
 
 // SendFormattedMessage sends a message with both a plain-text fallback and
@@ -125,13 +96,7 @@ func (c *Client) SendFormattedMessage(roomID, htmlBody, plainBody string) error 
 		Format:        event.FormatHTML,
 		FormattedBody: htmlBody,
 	}
-	_, err := c.mxc.SendMessageEvent(
-		context.Background(),
-		id.RoomID(roomID),
-		event.EventMessage,
-		content,
-	)
-	return err
+	return c.core.SendMessageEvent(context.Background(), id.RoomID(roomID), event.EventMessage, content)
 }
 
 // SendReply sends a reply referencing the given event.
@@ -143,18 +108,12 @@ func (c *Client) SendReply(roomID, replyToEventID, text string) error {
 			InReplyTo: &event.InReplyTo{EventID: id.EventID(replyToEventID)},
 		},
 	}
-	_, err := c.mxc.SendMessageEvent(
-		context.Background(),
-		id.RoomID(roomID),
-		event.EventMessage,
-		content,
-	)
-	return err
+	return c.core.SendMessageEvent(context.Background(), id.RoomID(roomID), event.EventMessage, content)
 }
 
 // join joins a room, ignoring "already joined" errors.
 func (c *Client) join(roomID id.RoomID) error {
-	_, err := c.mxc.JoinRoomByID(context.Background(), roomID)
+	err := c.core.JoinRoomByID(context.Background(), roomID)
 	if err != nil {
 		// mautrix returns an error even when already a member
 		slog.Info("join room result", "room", roomID, "err", err)

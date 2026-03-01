@@ -66,6 +66,18 @@
 
 ---
 
+## 🧹 Maintenance Updates (2026-03-01 · Phase 5 de-dup)
+
+- Extracted shared Matrix low-level client core to:
+  - `common/matrixcore/client.go`
+- Refactored Matrix wrappers to consume shared core while preserving
+  app-specific behavior:
+  - `internal/gitai/matrix/client.go`
+  - `internal/ruriko/matrix/client.go`
+- Preserved Ruriko-specific admin-room filtering and optional persistent sync-store wiring.
+
+---
+
 ## 🎯 Infrastructure Scope (COMPLETED)
 
 The following foundations were built in Phases 0–9 and are functional:
