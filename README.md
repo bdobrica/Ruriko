@@ -54,6 +54,8 @@ Ruriko is the **planner and policy authority**. It does **not** sit in the hot p
 
 ---
 
+Both binaries reuse shared low-level SQLite bootstrap/migration helpers from `common/sqliteutil`, while keeping domain-specific repositories separate in `internal/ruriko/store` and `internal/gitai/store`.
+
 ## 2️⃣ Gitai (Agent Runtime)
 
 Each agent runs as a separate single binary:

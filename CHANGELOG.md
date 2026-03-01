@@ -37,6 +37,22 @@
 
 ---
 
+## 🧹 Maintenance Updates (2026-03-01 · Phase 3 de-dup)
+
+- Extracted shared SQLite bootstrap and migration runner utilities to:
+  - `common/sqliteutil/open.go`
+  - `common/sqliteutil/migrate.go`
+- Refactored store bootstrap paths to use shared utilities:
+  - `internal/gitai/store/store.go`
+  - `internal/ruriko/store/store.go`
+- Preserved app-specific behavior via options:
+  - Ruriko single-connection pool and duplicate migration version validation
+  - Gitai pragmatic defaults and migration logging style
+- Added shared sqliteutil tests:
+  - `common/sqliteutil/migrate_test.go`
+
+---
+
 ## 🎯 Infrastructure Scope (COMPLETED)
 
 The following foundations were built in Phases 0–9 and are functional:

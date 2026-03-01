@@ -7,10 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"sort"
-	"strings"
 	"time"
 
+	"github.com/bdobrica/Ruriko/common/sqliteutil"
 	_ "modernc.org/sqlite" // SQLite driver
 )
 
@@ -25,23 +24,17 @@ type Store struct {
 // New opens (or creates) the SQLite database at dbPath and runs all pending
 // migrations.
 func New(dbPath string) (*Store, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sqliteutil.Open(dbPath, sqliteutil.OpenOptions{
+		Pragmas: []string{
+			"PRAGMA foreign_keys = ON",
+			"PRAGMA journal_mode = WAL",
+			"PRAGMA synchronous = NORMAL",
+			"PRAGMA cache_size = -32000",
+			"PRAGMA busy_timeout = 5000",
+		},
+	})
 	if err != nil {
-		return nil, fmt.Errorf("open database: %w", err)
-	}
-
-	pragmas := []string{
-		"PRAGMA foreign_keys = ON",
-		"PRAGMA journal_mode = WAL",
-		"PRAGMA synchronous = NORMAL",
-		"PRAGMA cache_size = -32000",
-		"PRAGMA busy_timeout = 5000",
-	}
-	for _, p := range pragmas {
-		if _, err := db.Exec(p); err != nil {
-			db.Close()
-			return nil, fmt.Errorf("set pragma: %w", err)
-		}
+		return nil, err
 	}
 
 	s := &Store{db: db}
@@ -60,67 +53,15 @@ func (s *Store) Close() error { return s.db.Close() }
 
 // runMigrations applies any SQL files not yet recorded in schema_migrations.
 func (s *Store) runMigrations() error {
-	_, err := s.db.Exec(`
-		CREATE TABLE IF NOT EXISTS schema_migrations (
-			version    INTEGER PRIMARY KEY,
-			applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			description TEXT NOT NULL
-		)
-	`)
-	if err != nil {
-		return fmt.Errorf("create migrations table: %w", err)
-	}
-
-	var current int
-	_ = s.db.QueryRow("SELECT COALESCE(MAX(version), 0) FROM schema_migrations").Scan(&current)
-
-	entries, err := migrationsFS.ReadDir("migrations")
-	if err != nil {
-		return fmt.Errorf("read migrations: %w", err)
-	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
-
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
-			continue
-		}
-		parts := strings.SplitN(e.Name(), "_", 2)
-		if len(parts) < 2 {
-			continue
-		}
-		var version int
-		if _, err := fmt.Sscanf(parts[0], "%d", &version); err != nil {
-			continue
-		}
-		if version <= current {
-			continue
-		}
-		description := strings.TrimSuffix(parts[1], ".sql")
-
-		content, err := migrationsFS.ReadFile("migrations/" + e.Name())
-		if err != nil {
-			return fmt.Errorf("read migration %s: %w", e.Name(), err)
-		}
-
-		tx, err := s.db.Begin()
-		if err != nil {
-			return fmt.Errorf("begin migration tx: %w", err)
-		}
-		if _, err := tx.Exec(string(content)); err != nil {
-			tx.Rollback()
-			return fmt.Errorf("apply migration %s: %w", e.Name(), err)
-		}
-		if _, err := tx.Exec(
-			"INSERT INTO schema_migrations (version, description) VALUES (?, ?)",
-			version, description,
-		); err != nil {
-			tx.Rollback()
-			return fmt.Errorf("record migration %s: %w", e.Name(), err)
-		}
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("commit migration %s: %w", e.Name(), err)
-		}
-		slog.Info("applied migration", "version", version, "description", description)
+	if err := sqliteutil.RunMigrations(s.db, sqliteutil.MigrationOptions{
+		ReadDir:  migrationsFS.ReadDir,
+		ReadFile: migrationsFS.ReadFile,
+		Dir:      "migrations",
+		OnApplied: func(version int, description string) {
+			slog.Info("applied migration", "version", version, "description", description)
+		},
+	}); err != nil {
+		return fmt.Errorf("migrations: %w", err)
 	}
 	return nil
 }
