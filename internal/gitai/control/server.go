@@ -53,6 +53,7 @@ import (
 	"sync"
 	"time"
 
+	acpspec "github.com/bdobrica/Ruriko/common/spec/acp"
 	"github.com/bdobrica/Ruriko/common/spec/envelope"
 	gosutospec "github.com/bdobrica/Ruriko/common/spec/gosuto"
 	"github.com/bdobrica/Ruriko/internal/gitai/gateway"
@@ -165,40 +166,15 @@ func (c *idempotencyCache) set(key string, status int, body []byte) {
 	}
 }
 
-// ConfigApplyRequest mirrors the Ruriko ACP client's request body.
-type ConfigApplyRequest struct {
-	YAML string `json:"yaml"`
-	Hash string `json:"hash"`
-}
-
-// SecretsApplyRequest mirrors the Ruriko ACP client's request body.
-type SecretsApplyRequest struct {
-	Secrets map[string]string `json:"secrets"`
-}
-
-// SecretLease is a single token-based secret lease delivered by Ruriko.
-// The agent redeems RedemptionToken from KuzeURL to obtain the plaintext
-// secret value; the raw secret never travels in the ACP payload.
-type SecretLease struct {
-	SecretRef       string `json:"secret_ref"`
-	RedemptionToken string `json:"redemption_token"`
-	KuzeURL         string `json:"kuze_url"`
-}
-
-// SecretsTokenRequest is the body for POST /secrets/token.
-// The agent redeems each lease from Kuze rather than receiving plaintext.
-type SecretsTokenRequest struct {
-	Leases []SecretLease `json:"leases"`
-}
-
-// ApprovalDecisionRequest is the body for POST /approvals/decision.
-// This endpoint is called by Ruriko to deliver approval outcomes to Gitai.
-type ApprovalDecisionRequest struct {
-	ApprovalID string `json:"approval_id"`
-	Decision   string `json:"decision"` // approve|deny
-	DecidedBy  string `json:"decided_by,omitempty"`
-	Reason     string `json:"reason,omitempty"`
-}
+// ACP wire schema aliases (Phase 1 deduplication).
+//
+// Keep these aliases in the control package for backward compatibility with
+// existing imports and tests while using a single shared schema source.
+type ConfigApplyRequest = acpspec.ConfigApplyRequest
+type SecretsApplyRequest = acpspec.SecretsApplyRequest
+type SecretLease = acpspec.SecretLease
+type SecretsTokenRequest = acpspec.SecretsTokenRequest
+type ApprovalDecisionRequest = acpspec.ApprovalDecisionRequest
 
 // kuzeRedeemResponse mirrors the JSON returned by GET /kuze/redeem/<token>.
 type kuzeRedeemResponse struct {
@@ -212,24 +188,8 @@ type kuzeRedeemResponse struct {
 // memory exhaustion from a misbehaving (or compromised) Kuze endpoint.
 const maxRedeemResponseBytes = 64 * 1024 // 64 KiB
 
-// HealthResponse is returned by GET /health.
-type HealthResponse struct {
-	Status  string `json:"status"`
-	AgentID string `json:"agent_id"`
-}
-
-// StatusResponse is returned by GET /status.
-type StatusResponse struct {
-	AgentID    string    `json:"agent_id"`
-	Version    string    `json:"version"`
-	GosutoHash string    `json:"gosuto_hash"`
-	Uptime     float64   `json:"uptime_seconds"`
-	StartedAt  time.Time `json:"started_at"`
-	MCPs       []string  `json:"mcps"`
-	// MessagesOutbound is the total number of successful matrix.send_message
-	// calls made by this agent since startup (R15.5 audit/observability).
-	MessagesOutbound int64 `json:"messages_outbound,omitempty"`
-}
+type HealthResponse = acpspec.HealthResponse
+type StatusResponse = acpspec.StatusResponse
 
 // Handlers bundles the callbacks the server delegates to.
 type Handlers struct {

@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"time"
 
+	acpspec "github.com/bdobrica/Ruriko/common/spec/acp"
 	"github.com/bdobrica/Ruriko/common/trace"
 )
 
@@ -63,68 +64,17 @@ func New(baseURL string, opts ...Options) *Client {
 	}
 }
 
-// HealthResponse is returned by GET /health.
-type HealthResponse struct {
-	Status  string `json:"status"`
-	AgentID string `json:"agent_id"`
-}
-
-// StatusResponse is returned by GET /status.
-type StatusResponse struct {
-	AgentID    string    `json:"agent_id"`
-	Version    string    `json:"version"`
-	GosutoHash string    `json:"gosuto_hash"`
-	Uptime     float64   `json:"uptime_seconds"`
-	StartedAt  time.Time `json:"started_at"`
-	MCPs       []string  `json:"mcps"`
-	// Gateways lists the names of gateway processes currently supervised by the
-	// agent runtime (R13.2). Populated by Gitai once the Gosuto config has been
-	// applied and the gateway supervisor has started the processes.
-	Gateways []string `json:"gateways,omitempty"`
-	// MessagesOutbound is the total number of successful matrix.send_message
-	// calls made by the agent since startup (R15.5 audit/observability).
-	MessagesOutbound int64 `json:"messages_outbound,omitempty"`
-}
-
-// ConfigApplyRequest is the body for POST /config/apply.
-type ConfigApplyRequest struct {
-	// YAML is the raw Gosuto configuration YAML to apply.
-	YAML string `json:"yaml"`
-	// Hash is the sha256 of the YAML content for verification.
-	Hash string `json:"hash"`
-}
-
-// SecretsApplyRequest is the body for POST /secrets/apply.
-type SecretsApplyRequest struct {
-	// Secrets is a map of secret name → base64-encoded value.
-	Secrets map[string]string `json:"secrets"`
-}
-
-// SecretLease is a single token-based secret lease issued to the agent.
-// The agent redeems RedemptionToken from KuzeURL to obtain the plaintext value.
-// Secrets never travel in this payload; only the token reference does.
-type SecretLease struct {
-	// SecretRef is the name of the secret this lease is for.
-	SecretRef string `json:"secret_ref"`
-	// RedemptionToken is the one-time Kuze token the agent presents on redemption.
-	RedemptionToken string `json:"redemption_token"`
-	// KuzeURL is the fully-qualified URL the agent calls to redeem the token.
-	// Example: "https://ruriko.example.com/kuze/redeem/<token>"
-	KuzeURL string `json:"kuze_url"`
-}
-
-// SecretsTokenRequest is the body for POST /secrets/token.
-// It replaces SecretsApplyRequest in the token-based distribution model:
-// secrets are pulled by the agent from Kuze rather than pushed as plaintext.
-type SecretsTokenRequest struct {
-	// Leases is the list of token leases; one entry per bound secret.
-	Leases []SecretLease `json:"leases"`
-}
-
-// ErrorResponse is returned by the ACP server on errors.
-type ErrorResponse struct {
-	Error string `json:"error"`
-}
+// ACP wire schema aliases (Phase 1 deduplication).
+//
+// Keep these aliases in runtime/acp for backward compatibility with existing
+// imports/tests while using common/spec/acp as the single schema source.
+type HealthResponse = acpspec.HealthResponse
+type StatusResponse = acpspec.StatusResponse
+type ConfigApplyRequest = acpspec.ConfigApplyRequest
+type SecretsApplyRequest = acpspec.SecretsApplyRequest
+type SecretLease = acpspec.SecretLease
+type SecretsTokenRequest = acpspec.SecretsTokenRequest
+type ErrorResponse = acpspec.ErrorResponse
 
 // Health calls GET /health and returns the response.
 func (c *Client) Health(ctx context.Context) (*HealthResponse, error) {
