@@ -42,7 +42,6 @@ dist/
 build/
 
 # Secrets and sensitive data
-secrets/
 *.key
 *.pem
 *.crt
