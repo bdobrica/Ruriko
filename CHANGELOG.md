@@ -5,6 +5,21 @@
 
 ---
 
+## 🧹 Maintenance Updates (2026-03-01)
+
+- Renamed phase-specific live verification scripts to canonical names:
+  - `test/integration/test-canonical-workflow-live-compose.sh`
+  - `test/integration/test-canonical-workflow-live-security.sh`
+- Renamed Makefile targets to canonical naming:
+  - `test-canonical-workflow-live-compose`
+  - `test-canonical-workflow-live-security`
+  - `test-canonical-workflow-live`
+- Renamed live verification environment variable prefixes from `R6_*` to `CANONICAL_*` and removed legacy fallback aliases from canonical scripts.
+- Extracted canonical Gosuto bootstrap logic from embedded bash heredoc into a standalone helper script:
+  - `test/integration/canonical_workflow_bootstrap.py`
+
+---
+
 ## 🎯 Infrastructure Scope (COMPLETED)
 
 The following foundations were built in Phases 0–9 and are functional:

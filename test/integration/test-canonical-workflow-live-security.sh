@@ -1,30 +1,30 @@
 #!/usr/bin/env bash
-# test/integration/test-r6-workflow-live-security.sh
+# test/integration/test-canonical-workflow-live-security.sh
 #
-# R6.7 live security checklist verification:
+# Canonical live security checklist verification:
 #   - no secrets in compose logs
 #   - no direct MCP call bypass from workflow path (source guard)
 #   - approval ledger contains approved/denied decisions in Ruriko DB
 #
 # Usage:
-#   ./test/integration/test-r6-workflow-live-security.sh
+#   ./test/integration/test-canonical-workflow-live-security.sh
 #
 # Optional env vars:
-#   R6_COMPOSE_FILE=...                       compose file path
-#   R6_COMPOSE_ENV=...                        compose env file path
-#   R6_SECURITY_LOOKBACK=30m                  docker logs lookback
-#   R6_SECURITY_REQUIRE_APPROVAL_COUNTS=1     require >=1 approved and >=1 denied
-#   R6_SENSITIVE_PATTERNS_FILE=...            newline-delimited patterns (optional)
-#   R6_EXTRA_SENSITIVE_PATTERNS="a,b,c"      comma-separated extra patterns
+#   CANONICAL_COMPOSE_FILE=...                        compose file path
+#   CANONICAL_COMPOSE_ENV=...                         compose env file path
+#   CANONICAL_SECURITY_LOOKBACK=30m                   docker logs lookback
+#   CANONICAL_SECURITY_REQUIRE_APPROVAL_COUNTS=1      require >=1 approved and >=1 denied
+#   CANONICAL_SENSITIVE_PATTERNS_FILE=...             newline-delimited patterns (optional)
+#   CANONICAL_EXTRA_SENSITIVE_PATTERNS="a,b,c"       comma-separated extra patterns
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-COMPOSE_FILE="${R6_COMPOSE_FILE:-${REPO_ROOT}/examples/docker-compose/docker-compose.yaml}"
-COMPOSE_ENV="${R6_COMPOSE_ENV:-${REPO_ROOT}/examples/docker-compose/.env}"
-LOOKBACK="${R6_SECURITY_LOOKBACK:-30m}"
-REQUIRE_APPROVAL_COUNTS="${R6_SECURITY_REQUIRE_APPROVAL_COUNTS:-1}"
-PATTERNS_FILE="${R6_SENSITIVE_PATTERNS_FILE:-}"
-EXTRA_PATTERNS="${R6_EXTRA_SENSITIVE_PATTERNS:-}"
+COMPOSE_FILE="${CANONICAL_COMPOSE_FILE:-${REPO_ROOT}/examples/docker-compose/docker-compose.yaml}"
+COMPOSE_ENV="${CANONICAL_COMPOSE_ENV:-${REPO_ROOT}/examples/docker-compose/.env}"
+LOOKBACK="${CANONICAL_SECURITY_LOOKBACK:-30m}"
+REQUIRE_APPROVAL_COUNTS="${CANONICAL_SECURITY_REQUIRE_APPROVAL_COUNTS:-1}"
+PATTERNS_FILE="${CANONICAL_SENSITIVE_PATTERNS_FILE:-}"
+EXTRA_PATTERNS="${CANONICAL_EXTRA_SENSITIVE_PATTERNS:-}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -212,4 +212,4 @@ if [[ "${REQUIRE_APPROVAL_COUNTS}" == "1" ]]; then
 fi
 
 pass "Approval ledger check passed (approved=${APPROVED}, denied=${DENIED})"
-pass "R6.7 live security checks completed"
+pass "Canonical live security checks completed"

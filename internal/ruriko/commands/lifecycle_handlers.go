@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -41,6 +42,33 @@ func truncateID(s string, n int) string {
 		return s
 	}
 	return s[:n]
+}
+
+func injectAgentLLMEnv(agentEnv map[string]string) {
+	apiKey := strings.TrimSpace(os.Getenv("LLM_API_KEY"))
+	if apiKey == "" {
+		apiKey = strings.TrimSpace(os.Getenv("RURIKO_NLP_API_KEY"))
+	}
+	if apiKey != "" {
+		agentEnv["LLM_API_KEY"] = apiKey
+	}
+
+	provider := strings.TrimSpace(os.Getenv("LLM_PROVIDER"))
+	if provider != "" {
+		agentEnv["LLM_PROVIDER"] = provider
+	}
+	baseURL := strings.TrimSpace(os.Getenv("LLM_BASE_URL"))
+	if baseURL != "" {
+		agentEnv["LLM_BASE_URL"] = baseURL
+	}
+	model := strings.TrimSpace(os.Getenv("LLM_MODEL"))
+	if model != "" {
+		agentEnv["LLM_MODEL"] = model
+	}
+	maxTokens := strings.TrimSpace(os.Getenv("LLM_MAX_TOKENS"))
+	if maxTokens != "" {
+		agentEnv["LLM_MAX_TOKENS"] = maxTokens
+	}
 }
 
 // generateACPToken returns a 32-char hex string (128 bits of entropy) suitable
@@ -182,6 +210,7 @@ func (h *Handlers) HandleAgentsCreate(ctx context.Context, cmd *Command, evt *ev
 	if agentAccessToken != "" {
 		agentEnv["MATRIX_ACCESS_TOKEN"] = agentAccessToken
 	}
+	injectAgentLLMEnv(agentEnv)
 
 	spec := runtime.AgentSpec{
 		ID:          agentID,
@@ -499,6 +528,7 @@ func (h *Handlers) recoverAgentContainer(ctx context.Context, agent *store.Agent
 		return runtime.AgentHandle{}, fmt.Errorf("agent %s has empty matrix token secret %q; set a valid token and retry", agent.ID, secretName)
 	}
 	env["MATRIX_ACCESS_TOKEN"] = string(matrixToken)
+	injectAgentLLMEnv(env)
 
 	handle, err := h.runtime.Spawn(ctx, runtime.AgentSpec{
 		ID:          agent.ID,

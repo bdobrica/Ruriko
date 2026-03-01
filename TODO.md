@@ -311,25 +311,26 @@ The MVP is ready when **all** of the following are true:
   - approval timeout => refuses
 
 ### R6.5 Remove canonical hard-coded runtime branches
-- [ ] Remove Saito deterministic event branch from `internal/gitai/app/app.go`
-- [ ] Remove Kairo deterministic message branch hooks from `internal/gitai/app/app.go`
-- [ ] Remove Kumo deterministic message branch hooks from `internal/gitai/app/app.go`
-- [ ] Remove or migrate canonical-specific pipeline helpers that encode behavior in code rather than workflow config
-- [ ] Ensure canonical behavior is triggered only through workflow config + policy engine
+- [x] Remove Saito deterministic event branch from `internal/gitai/app/app.go`
+- [x] Remove Kairo deterministic message branch hooks from `internal/gitai/app/app.go`
+- [x] Remove Kumo deterministic message branch hooks from `internal/gitai/app/app.go`
+- [x] Remove or migrate canonical-specific pipeline helpers that encode behavior in code rather than workflow config
+- [x] Ensure canonical behavior is triggered only through workflow config + policy engine
 
 ### R6.6 Port canonical templates to workflow config
-- [ ] Update `templates/saito-agent/gosuto.yaml` to express scheduling/trigger behavior via `workflow`
-- [ ] Update `templates/kairo-agent/gosuto.yaml` to express analysis + peer protocol handling via `workflow`
-- [ ] Update `templates/kumo-agent/gosuto.yaml` to express news request/response behavior via `workflow`
-- [ ] Add `trust.trustedPeers` to canonical templates with MXID + room + protocol mappings
-- [ ] Define inline `workflow.schemas` for canonical protocol payloads in templates
+- [x] Update `templates/saito-agent/gosuto.yaml` to express scheduling/trigger behavior via `workflow`
+- [x] Update `templates/kairo-agent/gosuto.yaml` to express analysis + peer protocol handling via `workflow`
+- [x] Update `templates/kumo-agent/gosuto.yaml` to express news request/response behavior via `workflow`
+- [x] Add `trust.trustedPeers` to canonical templates with MXID + room + protocol mappings
+- [x] Define inline `workflow.schemas` for canonical protocol payloads in templates
 
 ### R6.7 Tests + end-to-end verification
-- [ ] Unit: schema-ref validation and trusted peer enforcement
-- [ ] Unit: retry-then-refuse for parse/summarize schema failures
-- [ ] Integration: canonical loop uses workflow config only (no agent-name branching)
-- [ ] Integration: protocol message from untrusted peer is rejected even with `allowedSenders: "*"`
-- [ ] Integration: approval-required workflow tool step blocks until Ruriko decision
+- [x] Unit: schema-ref validation and trusted peer enforcement
+- [x] Unit: retry-then-refuse for parse/summarize schema failures
+- [x] Integration: canonical loop uses workflow config only (no agent-name branching)
+- [x] Integration: protocol message from untrusted peer is rejected even with `allowedSenders: "*"`
+- [x] Integration: approval-required workflow tool step blocks until Ruriko decision
+- [x] Rename live verification scripts/targets/env vars to canonical names and extract bootstrap logic into a standalone Python helper
 - [ ] Live compose: run at least 3 consecutive canonical cycles successfully
 - [ ] Live security checks:
   - no secrets in Matrix logs/history
@@ -577,6 +578,39 @@ The MVP is ready when **all** of the following are true:
 
 ---
 
+## 📋 Phase R20: Runtime Reconciliation & Drift Recovery (MVP Hardening)
+
+**Goal**: Ensure agents declared in Ruriko remain operable when runtime drift occurs (e.g., containers manually removed, network drift, stale handles).
+
+> Motivation: live R6.7 verification exposed DB/runtime drift where canonical agents existed in the store but containers were missing or attached to incompatible networks.
+
+### R20.1 Self-healing container reconciliation
+
+- [ ] Extend reconciler to recover from missing containers for active agents (`status=running` intent)
+- [ ] Re-create missing containers from persisted agent spec + latest Gosuto + secret lease flow
+- [ ] Keep fail-safe behavior: bounded retries + explicit alerting when recovery fails
+- [ ] Test: delete container manually → reconciler re-creates and agent returns healthy
+
+### R20.2 Network drift detection and correction
+
+- [ ] Detect runtime/network mismatch (agent container not on configured Docker network)
+- [ ] Reattach or recreate agent container on configured network deterministically
+- [ ] Add operator-visible diagnostics (`agents status`/audit) showing expected vs actual network
+- [ ] Test: agent launched on wrong network cannot resolve homeserver; reconciler corrects and sync recovers
+
+### R20.3 Operational verification hooks
+
+- [ ] Add integration script that injects drift (remove container, wrong network) and verifies recovery
+- [ ] Add runbook steps to `OPERATIONS.md` for forced drift/recovery drills
+
+### Definition of done
+
+- Agent runtime drift (missing container or wrong network) is automatically corrected or surfaced with actionable alerts
+- Canonical agents recover without manual DB surgery
+- Drift-recovery tests run green in integration profile
+
+---
+
 ## 📋 Phase R19: Control-Plane Hardening for Untrusted Networks (Post-MVP)
 
 **Goal**: Make hardened Docker-runtime validation repeatable and add ACP mTLS for multi-host / untrusted-network deployments without regressing the single-host MVP defaults.
@@ -675,6 +709,7 @@ The MVP is ready when **all** of the following are true:
 - [ ] Phase R6: Canonical Workflow — Saito → Kairo → Kumo
 - [ ] Phase R17: Gosuto Template Customization at Provision Time
 - [ ] Phase R18: Gitai Conversation Memory — Agent-Side STM/LTM
+- [ ] Phase R20: Runtime Reconciliation & Drift Recovery
 - [ ] Phase R19: Control-Plane Hardening for Untrusted Networks (Post-MVP)
 - [ ] Phase R7: Observability, Safety, and Polish
 - [ ] Phase R8: Integration and End-to-End Testing

@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -522,6 +523,11 @@ func (a *App) runTurn(ctx context.Context, roomID, sender, userText, replyToEven
 
 	// Gather available tools: MCP servers + built-in tools (R15.2).
 	toolDefs, _ := a.gatherTools(ctx)
+	providerName := strings.ToLower(strings.TrimSpace(cfg.Persona.LLMProvider))
+	if providerName == "" {
+		providerName = strings.ToLower(strings.TrimSpace(a.cfg.LLM.Provider))
+	}
+	toolDefsForLLM, llmToolNameMap := normalizeToolDefinitionsForProvider(providerName, toolDefs)
 
 	// Initial message history.
 	messages := []llm.Message{
@@ -539,7 +545,7 @@ func (a *App) runTurn(ctx context.Context, roomID, sender, userText, replyToEven
 		resp, err := prov.Complete(ctx, llm.CompletionRequest{
 			Model:     "",
 			Messages:  messages,
-			Tools:     toolDefs,
+			Tools:     toolDefsForLLM,
 			MaxTokens: maxTokens,
 		})
 		if err != nil {
@@ -556,6 +562,9 @@ func (a *App) runTurn(ctx context.Context, roomID, sender, userText, replyToEven
 
 		// Process tool calls.
 		for _, tc := range resp.Message.ToolCalls {
+			if canonical, ok := llmToolNameMap[tc.Function.Name]; ok {
+				tc.Function.Name = canonical
+			}
 			totalToolCalls++
 			result, err := a.executeToolCall(ctx, roomID, sender, tc)
 			toolResultMsg := llm.Message{
@@ -573,6 +582,43 @@ func (a *App) runTurn(ctx context.Context, roomID, sender, userText, replyToEven
 	}
 
 	return "", totalToolCalls, fmt.Errorf("exceeded maximum tool call rounds (%d)", maxToolCallRounds)
+}
+
+var nonOpenAIToolNameChars = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
+
+func normalizeToolDefinitionsForProvider(provider string, defs []llm.ToolDefinition) ([]llm.ToolDefinition, map[string]string) {
+	if strings.ToLower(strings.TrimSpace(provider)) != "openai" {
+		return defs, map[string]string{}
+	}
+
+	normalizedDefs := make([]llm.ToolDefinition, 0, len(defs))
+	llmToCanonical := make(map[string]string, len(defs))
+	used := make(map[string]struct{}, len(defs))
+
+	for _, def := range defs {
+		canonical := def.Function.Name
+		normalized := nonOpenAIToolNameChars.ReplaceAllString(canonical, "_")
+		if normalized == "" {
+			normalized = "tool"
+		}
+		candidate := normalized
+		suffix := 2
+		for {
+			if _, exists := used[candidate]; !exists {
+				break
+			}
+			candidate = fmt.Sprintf("%s_%d", normalized, suffix)
+			suffix++
+		}
+		used[candidate] = struct{}{}
+
+		copyDef := def
+		copyDef.Function.Name = candidate
+		normalizedDefs = append(normalizedDefs, copyDef)
+		llmToCanonical[candidate] = canonical
+	}
+
+	return normalizedDefs, llmToCanonical
 }
 
 // executeToolCall performs policy evaluation and invokes a tool.
@@ -1017,7 +1063,7 @@ func buildLLMProvider(cfg LLMConfig) llm.Provider {
 // It MUST return quickly — the full turn runs in a background goroutine so that
 // the HTTP 202 is returned to the gateway before the LLM call completes.
 func (a *App) handleEvent(ctx context.Context, evt *envelope.Event) {
-	go a.runEventTurn(ctx, evt)
+	go a.runEventTurn(context.Background(), evt)
 }
 
 // runEventTurn executes the full turn pipeline for an inbound gateway event.

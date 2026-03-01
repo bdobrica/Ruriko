@@ -212,6 +212,25 @@ Canonical agents are **named singleton identities** with distinct personalities 
 
 ---
 
+# 🧪 Canonical Live Verification
+
+Run canonical live checks (compose + security):
+
+* `make test-canonical-workflow-live-compose`
+* `make test-canonical-workflow-live-security`
+* `make test-canonical-workflow-live`
+
+Useful overrides:
+
+* `CANONICAL_REQUIRED_CYCLES` (default `2`)
+* `CANONICAL_LIVE_TIMEOUT_SECONDS` (default `600`)
+* `CANONICAL_LIVE_POLL_SECONDS` (default `5`)
+* `CANONICAL_AUTO_BOOTSTRAP` (default `1`)
+* `CANONICAL_BOOTSTRAP_STATUS_TIMEOUT` (default `120`)
+* `CANONICAL_SECURITY_LOOKBACK` (default `30m`)
+
+---
+
 # 🧭 Project Goals
 
 * Make agentic AI safe for non-programmers

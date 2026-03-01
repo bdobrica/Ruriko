@@ -95,6 +95,9 @@ func recoveryEvent() *event.Event {
 }
 
 func TestHandleAgentsStart_RecoversWhenContainerMissing(t *testing.T) {
+	t.Setenv("LLM_API_KEY", "sk-live-test")
+	t.Setenv("RURIKO_NLP_API_KEY", "")
+
 	rt := &recoveryRuntime{}
 	h, s, sec := newRecoveryFixture(t, rt)
 	ctx := context.Background()
@@ -126,6 +129,9 @@ func TestHandleAgentsStart_RecoversWhenContainerMissing(t *testing.T) {
 	}
 	if got := rt.lastSpec.Env["MATRIX_ACCESS_TOKEN"]; got != "mx-token" {
 		t.Fatalf("MATRIX_ACCESS_TOKEN mismatch: got %q", got)
+	}
+	if got := rt.lastSpec.Env["LLM_API_KEY"]; got != "sk-live-test" {
+		t.Fatalf("LLM_API_KEY mismatch: got %q", got)
 	}
 
 	updated, err := s.GetAgent(ctx, "saito")
