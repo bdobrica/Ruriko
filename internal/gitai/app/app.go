@@ -20,6 +20,7 @@ import (
 
 	"maunium.net/go/mautrix/event"
 
+	commonmemory "github.com/bdobrica/Ruriko/common/memory"
 	"github.com/bdobrica/Ruriko/common/spec/envelope"
 	gosutospec "github.com/bdobrica/Ruriko/common/spec/gosuto"
 	"github.com/bdobrica/Ruriko/common/trace"
@@ -119,6 +120,10 @@ type Config struct {
 	// When exceeded, the process terminates immediately to prevent runaway cost.
 	// Primarily intended for test and safety-constrained environments.
 	LLMCallHardLimit int
+
+	// MemoryContextEnabled enables shared memory-context assembly for prompt
+	// injection (R18 prep). Disabled by default.
+	MemoryContextEnabled bool
 }
 
 // LLMConfig configures the language model backend.
@@ -170,6 +175,8 @@ type App struct {
 	llmCalls atomic.Int64
 	// terminateProcess exits the current process; defaults to os.Exit.
 	terminateProcess func(code int)
+	memorySTM        *gitaiMemorySTM
+	memoryAssembler  *commonmemory.ContextAssembler
 }
 
 // New creates and initialises all Gitai subsystems. It does NOT start any
@@ -239,6 +246,18 @@ func New(cfg *Config) (*App, error) {
 		cancelCh:         cancelCh,
 		builtinReg:       builtinReg,
 		terminateProcess: os.Exit,
+	}
+
+	if cfg.MemoryContextEnabled {
+		app.memorySTM = newGitaiMemorySTM(50)
+		app.memoryAssembler = &commonmemory.ContextAssembler{
+			STM:       app.memorySTM,
+			LTM:       gitaiNoopLTM{},
+			Embedder:  gitaiNoopEmbedder{},
+			MaxTokens: commonmemory.DefaultMaxTokens,
+			LTMTopK:   commonmemory.DefaultLTMTopK,
+		}
+		slog.Info("gitai memory context enabled")
 	}
 
 	// Approval gate (needs matrix sender for posting to approvals room).
@@ -632,10 +651,21 @@ func (a *App) runTurn(ctx context.Context, roomID, sender, userText, replyToEven
 
 	// Build messaging targets summary for the system prompt (R15.2).
 	messagingTargets := buildMessagingTargets(cfg)
+	memoryContext := ""
+	if a.memorySTM != nil {
+		a.memorySTM.RecordMessage(roomID, sender, "user", userText)
+	}
+	if a.memoryAssembler != nil {
+		msgs, err := a.memoryAssembler.Assemble(ctx, roomID, sender, userText)
+		if err != nil {
+			slog.Warn("memory context assembly failed", "err", err, "room_id", roomID, "sender", sender)
+		} else {
+			memoryContext = formatMemoryContext(msgs)
+		}
+	}
 
 	// Build system prompt from persona + instructions + messaging targets (R14.3, R15.2).
-	// Memory context is "" until R18 is wired.
-	systemPrompt := buildSystemPrompt(cfg, messagingTargets, "")
+	systemPrompt := buildSystemPrompt(cfg, messagingTargets, memoryContext)
 
 	// Gather available tools: MCP servers + built-in tools (R15.2).
 	toolDefs, _ := a.gatherTools(ctx)
@@ -676,6 +706,9 @@ func (a *App) runTurn(ctx context.Context, roomID, sender, userText, replyToEven
 
 		if resp.FinishReason != "tool_calls" || len(resp.Message.ToolCalls) == 0 {
 			// Done — return the text response.
+			if a.memorySTM != nil && resp.Message.Content != "" {
+				a.memorySTM.RecordMessage(roomID, sender, "assistant", resp.Message.Content)
+			}
 			return resp.Message.Content, totalToolCalls, nil
 		}
 

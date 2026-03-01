@@ -762,8 +762,8 @@ func (h *Handlers) handleNLClassify(ctx context.Context, text, roomID, senderMXI
 
 	// --- Memory: record user message and assemble history --------------------
 	if h.memory != nil {
-		if h.memory.STM != nil {
-			_, sealed := h.memory.STM.RecordMessage(roomID, senderMXID, "user", text)
+		if rec, ok := h.memoryRecorder(); ok {
+			_, sealed := rec.RecordMessage(roomID, senderMXID, "user", text)
 			// Hand sealed conversations to the LTM pipeline (fire-and-forget).
 			for _, s := range sealed {
 				h.handleSealedConversation(ctx, s)
@@ -1396,7 +1396,21 @@ func (h *Handlers) recordAssistantMessage(roomID, senderMXID, content string) {
 		}
 		return
 	}
-	h.memory.STM.RecordMessage(roomID, senderMXID, "assistant", content)
+	if rec, ok := h.memoryRecorder(); ok {
+		rec.RecordMessage(roomID, senderMXID, "assistant", content)
+	}
+}
+
+type memoryRecorder interface {
+	RecordMessage(roomID, senderID, role, content string) (conversationID string, sealed []memory.Conversation)
+}
+
+func (h *Handlers) memoryRecorder() (memoryRecorder, bool) {
+	if h.memory == nil || h.memory.STM == nil {
+		return nil, false
+	}
+	rec, ok := h.memory.STM.(memoryRecorder)
+	return rec, ok
 }
 
 // handleSealedConversation runs the seal pipeline for a single sealed

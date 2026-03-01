@@ -78,6 +78,24 @@
 
 ---
 
+## 🧹 Maintenance Updates (2026-03-01 · Phase 6 de-dup)
+
+- Extracted shared memory primitives to:
+  - `common/memory/types.go`
+  - `common/memory/interfaces.go`
+  - `common/memory/context.go`
+- Refactored Ruriko memory package to consume shared contracts/types/assembler while
+  preserving package-local compatibility helpers and behavior:
+  - `internal/ruriko/memory/conversation.go`
+  - `internal/ruriko/memory/embedder.go`
+  - `internal/ruriko/memory/ltm.go`
+  - `internal/ruriko/memory/context.go`
+- Added Gitai memory-context integration hook behind feature flag:
+  - `GITAI_MEMORY_CONTEXT_ENABLE`
+  - `internal/gitai/app/memory.go`
+
+---
+
 ## 🎯 Infrastructure Scope (COMPLETED)
 
 The following foundations were built in Phases 0–9 and are functional:

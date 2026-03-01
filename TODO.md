@@ -70,6 +70,7 @@ The following is built and functional:
 - ✅ **Maintenance (2026-03-01 · Phase 3 de-dup)**: shared SQLite bootstrap and migration runner extracted into `common/sqliteutil` and integrated in both stores
 - ✅ **Maintenance (2026-03-01 · Phase 4 de-dup)**: shared OpenAI transport core extracted into `common/llm/openai` and integrated in Gitai LLM + Ruriko NLP adapters
 - ✅ **Maintenance (2026-03-01 · Phase 5 de-dup)**: shared Matrix low-level client core extracted into `common/matrixcore` and integrated in Gitai/Ruriko matrix wrappers
+- ✅ **Maintenance (2026-03-01 · Phase 6 de-dup)**: shared memory contracts/context assembler extracted into `common/memory`, Ruriko memory package aligned, Gitai hook added behind `GITAI_MEMORY_CONTEXT_ENABLE`
 - ✅ **R0–R4**: Config alignment, Tuwunel switch, ACP hardening, Kuze secret entry, token-based secret distribution
 - ✅ **R9**: Natural language interface — LLM-powered command translation, NLP rate limiting, runtime config store, lazy provider rebuild
 - ✅ **R11–R13**: Event gateways — schema/types, Gitai runtime integration, Ruriko-side wiring

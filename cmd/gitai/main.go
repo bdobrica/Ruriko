@@ -86,6 +86,7 @@ func loadConfig() (*app.Config, error) {
 		LogLevel:                environment.StringOr("LOG_LEVEL", "info"),
 		LogFormat:               environment.StringOr("LOG_FORMAT", "text"),
 		LLMCallHardLimit:        environment.IntOr("GITAI_LLM_CALL_HARD_LIMIT", 0),
+		MemoryContextEnabled:    environment.BoolOr("GITAI_MEMORY_CONTEXT_ENABLE", false),
 		Matrix: matrix.Config{
 			Homeserver:  homeserver,
 			UserID:      userID,

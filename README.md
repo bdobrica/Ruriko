@@ -79,6 +79,8 @@ OpenAI-compatible chat transport is shared under `common/llm/openai`, while Gita
 
 Matrix low-level lifecycle/transport primitives are shared under `common/matrixcore`, while app-specific routing/policy checks remain in `internal/gitai/matrix` and `internal/ruriko/matrix`.
 
+Memory contracts and context-assembly primitives are shared under `common/memory`; Ruriko's memory subsystem consumes these shared definitions and Gitai can opt into prompt memory-context injection with `GITAI_MEMORY_CONTEXT_ENABLE=1`.
+
 ---
 
 ## 👻 Gosuto (Agent Configuration — Policy, Instructions, Persona)
