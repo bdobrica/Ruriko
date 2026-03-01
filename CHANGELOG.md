@@ -96,6 +96,16 @@
 
 ---
 
+## 🧹 Maintenance Updates (2026-03-01 · Phase 7 cleanup)
+
+- Added dedicated Gitai unit tests for memory hook behavior (enabled vs disabled):
+  - `internal/gitai/app/memory_hook_test.go`
+- Coverage verifies:
+  - memory context is not injected when hook is disabled
+  - prior-turn context is injected into system prompt when hook is enabled
+
+---
+
 ## 🎯 Infrastructure Scope (COMPLETED)
 
 The following foundations were built in Phases 0–9 and are functional:
