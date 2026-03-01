@@ -156,6 +156,24 @@ func (h *Handlers) runProvisioningPipeline(ctx context.Context, args provisionAr
 		DisplayName:  args.displayName,
 		OperatorMXID: args.operatorMXID,
 	}
+
+	// Populate room IDs from the admin rooms configured in MATRIX_ADMIN_ROOMS.
+	// The first entry is the primary admin room; the second (if present) is
+	// the user/report room.  These are required by Gosuto templates that
+	// reference {{.AdminRoom}} and {{.UserRoom}}.
+	if len(h.adminRooms) > 0 {
+		vars.AdminRoom = h.adminRooms[0]
+		// Default: all peer rooms point to the primary admin room unless the
+		// mesh topology injection (InjectMeshTopology below) overrides them.
+		vars.KairoAdminRoom = h.adminRooms[0]
+		vars.KumoAdminRoom = h.adminRooms[0]
+	}
+	if len(h.adminRooms) > 1 {
+		vars.UserRoom = h.adminRooms[1]
+	} else if len(h.adminRooms) > 0 {
+		vars.UserRoom = h.adminRooms[0]
+	}
+
 	renderedYAML, err := h.templates.Render(args.template, vars)
 	if err != nil {
 		failStep("gosuto-render", fmt.Errorf("render template %q: %w", args.template, err))

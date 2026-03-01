@@ -90,6 +90,11 @@ type HandlersConfig struct {
 	// summarise → embed → store pipeline.  When nil, sealed conversations are
 	// logged at DEBUG level and discarded.
 	SealPipeline *memory.SealPipeline // optional — enables conversation archival
+
+	// AdminRooms is the list of Matrix admin room IDs (from MATRIX_ADMIN_ROOMS).
+	// The first entry is the primary admin room; subsequent entries are used
+	// as the user/report room when rendering Gosuto templates.
+	AdminRooms []string // optional — populates template vars during provisioning
 }
 
 // RoomSender is the subset of the Matrix client needed for posting breadcrumb
@@ -139,6 +144,11 @@ type Handlers struct {
 	// Nil when memory archival is disabled.
 	sealPipeline *memory.SealPipeline
 
+	// adminRooms is the list of Matrix admin room IDs (from MATRIX_ADMIN_ROOMS).
+	// The first entry is the primary admin room; subsequent entries are used
+	// as the user/report room when rendering Gosuto templates.
+	adminRooms []string
+
 	// nlHistoryFallback stores short-term conversation history per room+sender
 	// for NLP calls when the R10 memory assembler is not configured.
 	nlHistoryFallback *nlHistoryStore
@@ -185,6 +195,7 @@ func NewHandlers(cfg HandlersConfig) *Handlers {
 		nlpEnvAPIKey:      cfg.NLPEnvAPIKey,
 		memory:            cfg.Memory,
 		sealPipeline:      cfg.SealPipeline,
+		adminRooms:        cfg.AdminRooms,
 		nlHistoryFallback: newNLHistoryStore(),
 	}
 }

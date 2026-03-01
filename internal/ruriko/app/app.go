@@ -419,6 +419,10 @@ func New(config *Config) (*App, error) {
 	// Wire the default agent image for the natural-language wizard (R5.4).
 	handlersCfg.DefaultAgentImage = config.DefaultAgentImage
 
+	// Wire admin rooms so the provisioning pipeline can populate Gosuto
+	// template variables ({{.AdminRoom}}, {{.UserRoom}}, etc.).
+	handlersCfg.AdminRooms = config.Matrix.AdminRooms
+
 	// --- R10: Conversation memory -------------------------------------------
 	// Wire the memory subsystem when the NLP provider is available (or will
 	// become available via lazy rebuild), or when explicitly enabled via

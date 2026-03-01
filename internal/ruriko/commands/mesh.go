@@ -69,11 +69,22 @@ func ResolveMeshTopology(
 	}
 
 	// Always add the "user" target so agents can report to the operator.
+	// Skip if the operator room is already in the target list (e.g. when all
+	// agents share the same admin room in a single-room dev/test setup).
 	if operatorRoomID != "" {
-		targets = append(targets, gosutospec.MessagingTarget{
-			RoomID: operatorRoomID,
-			Alias:  "user",
-		})
+		dup := false
+		for _, t := range targets {
+			if t.RoomID == operatorRoomID {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			targets = append(targets, gosutospec.MessagingTarget{
+				RoomID: operatorRoomID,
+				Alias:  "user",
+			})
+		}
 	}
 
 	return targets

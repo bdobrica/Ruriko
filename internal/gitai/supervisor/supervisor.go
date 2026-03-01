@@ -109,7 +109,7 @@ func (s *Supervisor) Stop() {
 // startLocked starts a single MCP server and, if auto_restart is enabled,
 // watches for unexpected exit and restarts it. Must be called with s.mu held.
 func (s *Supervisor) startLocked(sp gosutospec.MCPServer) {
-	env := s.buildEnv(sp)
+	env := s.buildEnvLocked(sp)
 	client, err := mcp.NewClient(s.ctx, sp.Name, sp.Command, sp.Args, env)
 	if err != nil {
 		slog.Error("supervisor: failed to start mcp server", "name", sp.Name, "err", err)

@@ -439,6 +439,21 @@ func (a *App) handleMessage(ctx context.Context, evt *event.Event) {
 	if msgContent == nil {
 		return
 	}
+
+	// Skip stale messages that were sent before this agent started.
+	// During initial sync the homeserver replays recent timeline events;
+	// processing all of them would cause an LLM call storm that exhausts
+	// rate limits. Only messages arriving after startup are actionable.
+	evtTime := time.UnixMilli(evt.Timestamp)
+	if evtTime.Before(a.startedAt) {
+		slog.Debug("skipping stale message from before startup",
+			"event_id", evt.ID,
+			"event_ts", evtTime.Format(time.RFC3339),
+			"started_at", a.startedAt.Format(time.RFC3339),
+		)
+		return
+	}
+
 	text := msgContent.Body
 	roomID := evt.RoomID.String()
 	sender := evt.Sender.String()

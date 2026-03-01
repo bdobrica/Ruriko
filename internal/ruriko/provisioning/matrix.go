@@ -237,6 +237,12 @@ func (p *Provisioner) registerViaSynapse(ctx context.Context, username, password
 // approach: set a registration token, provision all accounts, then clear the
 // token to lock down the homeserver.
 //
+// Tuwunel (and other conduwuit-based servers) require a UIA session for all
+// users after the first one registered on a fresh server.  This method handles
+// the two-step UIA flow automatically: if the initial registration attempt
+// returns a UIA challenge (HTTP 401 with session), we retry with the session
+// attached to the auth payload.
+//
 // If no registration token is configured the m.login.dummy open-registration
 // flow is used as a fallback, which requires CONDUWUIT_ALLOW_REGISTRATION=true.
 func (p *Provisioner) registerViaTuwunel(ctx context.Context, username, password, displayName string) (*ProvisionedAccount, error) {
@@ -256,11 +262,39 @@ func (p *Provisioner) registerViaTuwunel(ctx context.Context, username, password
 			Type:  "m.login.registration_token",
 			Token: p.cfg.RegistrationToken,
 		}
+
 		resp, uiaResp, err := p.client.Register(ctx, req)
 		if err != nil {
 			return nil, fmt.Errorf("tuwunel token registration failed for %q: %w", username, err)
 		}
-		_ = uiaResp // may be non-nil for multi-stage flows; we treat it as a hint only
+
+		// If the server returned a UIA challenge instead of completing
+		// registration, retry with the session.  This is the normal flow for
+		// all users after the first on a fresh Tuwunel instance.
+		if resp == nil && uiaResp != nil && uiaResp.Session != "" {
+			slog.Debug("tuwunel registration requires UIA session, retrying",
+				"username", username, "session", uiaResp.Session)
+
+			req.Auth = struct {
+				Type    string `json:"type"`
+				Token   string `json:"token"`
+				Session string `json:"session,omitempty"`
+			}{
+				Type:    "m.login.registration_token",
+				Token:   p.cfg.RegistrationToken,
+				Session: uiaResp.Session,
+			}
+
+			resp, _, err = p.client.Register(ctx, req)
+			if err != nil {
+				return nil, fmt.Errorf("tuwunel token registration (UIA step 2) failed for %q: %w", username, err)
+			}
+		}
+
+		if resp == nil {
+			return nil, fmt.Errorf("tuwunel registration for %q returned no response (possible UIA mismatch)", username)
+		}
+
 		slog.Info("Matrix account provisioned via Tuwunel token registration",
 			"mxid", resp.UserID, "username", username)
 		return &ProvisionedAccount{
