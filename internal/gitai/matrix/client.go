@@ -57,11 +57,7 @@ func (c *Client) Start(ctx context.Context, rooms []string, handler MessageHandl
 		handler(ctx, evt)
 	})
 
-	for _, room := range rooms {
-		if err := c.join(id.RoomID(room)); err != nil {
-			slog.Warn("could not join room", "room", room, "err", err)
-		}
-	}
+	c.EnsureJoinedRooms(rooms)
 
 	go func() {
 		const backoffMax = 5 * time.Minute
@@ -94,6 +90,18 @@ func (c *Client) Start(ctx context.Context, rooms []string, handler MessageHandl
 		}
 	}()
 	return nil
+}
+
+// EnsureJoinedRooms attempts to join each room in rooms.
+//
+// It is safe to call at startup and after dynamic config updates. Failures are
+// logged and ignored so one problematic room does not block other joins.
+func (c *Client) EnsureJoinedRooms(rooms []string) {
+	for _, room := range rooms {
+		if err := c.join(id.RoomID(room)); err != nil {
+			slog.Warn("could not join room", "room", room, "err", err)
+		}
+	}
 }
 
 // Stop halts the sync loop.

@@ -96,6 +96,7 @@ func recoveryEvent() *event.Event {
 
 func TestHandleAgentsStart_RecoversWhenContainerMissing(t *testing.T) {
 	t.Setenv("LLM_API_KEY", "sk-live-test")
+	t.Setenv("GLOBAL_LLM_API_KEY", "")
 	t.Setenv("RURIKO_NLP_API_KEY", "")
 
 	rt := &recoveryRuntime{}
@@ -140,6 +141,39 @@ func TestHandleAgentsStart_RecoversWhenContainerMissing(t *testing.T) {
 	}
 	if !updated.ContainerID.Valid || !strings.Contains(updated.ContainerID.String, "recovered-") {
 		t.Fatalf("expected recovered container handle persisted, got %+v", updated.ContainerID)
+	}
+}
+
+func TestHandleAgentsStart_RecoversWithGlobalLLMAPIKeyFallback(t *testing.T) {
+	t.Setenv("LLM_API_KEY", "")
+	t.Setenv("GLOBAL_LLM_API_KEY", "sk-global-test")
+	t.Setenv("RURIKO_NLP_API_KEY", "")
+
+	rt := &recoveryRuntime{}
+	h, s, sec := newRecoveryFixture(t, rt)
+	ctx := context.Background()
+
+	agent := &appstore.Agent{ID: "saito", DisplayName: "saito", Template: "saito-agent", Status: "stopped"}
+	agent.Image.String = "gitai:latest"
+	agent.Image.Valid = true
+	agent.ACPToken.String = "tok-123"
+	agent.ACPToken.Valid = true
+	agent.MXID.String = "@saito:localhost"
+	agent.MXID.Valid = true
+	if err := s.CreateAgent(ctx, agent); err != nil {
+		t.Fatalf("CreateAgent: %v", err)
+	}
+	if err := sec.Set(ctx, "agent.saito.matrix_token", secrets.TypeMatrixToken, []byte("mx-token")); err != nil {
+		t.Fatalf("Set matrix token: %v", err)
+	}
+
+	cmd := parseRecoveryCmd(t, "/ruriko agents start saito")
+	if _, err := h.HandleAgentsStart(ctx, cmd, recoveryEvent()); err != nil {
+		t.Fatalf("HandleAgentsStart: %v", err)
+	}
+
+	if got := rt.lastSpec.Env["LLM_API_KEY"]; got != "sk-global-test" {
+		t.Fatalf("LLM_API_KEY mismatch: got %q", got)
 	}
 }
 

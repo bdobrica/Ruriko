@@ -182,6 +182,7 @@ func TestParseCron_Valid(t *testing.T) {
 		{"0 0 1 1 *"},        // once a year
 		{"0-5 * * * *"},      // first 6 minutes of every hour
 		{"0 8-18/2 * * 1-5"}, // every 2 hours 08-18 on weekdays
+		{"@every 10s"},       // fixed interval schedule
 	}
 	for _, tc := range cases {
 		t.Run(tc.expr, func(t *testing.T) {
@@ -212,6 +213,8 @@ func TestParseCron_Invalid(t *testing.T) {
 		{"* * * * 7", "day-of-week out of range (7)"},
 		{"abc * * * *", "non-numeric minute"},
 		{"*/0 * * * *", "step zero"},
+		{"@every nope", "invalid @every duration"},
+		{"@every 0s", "zero @every duration"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {
@@ -263,6 +266,19 @@ func TestCronScheduleNext_HourlyAtTop(t *testing.T) {
 	base := time.Date(2026, 1, 15, 10, 30, 0, 0, time.UTC)
 	next := sched.Next(base)
 	want := time.Date(2026, 1, 15, 11, 0, 0, 0, time.UTC)
+	if !next.Equal(want) {
+		t.Errorf("Next(%v) = %v, want %v", base, next, want)
+	}
+}
+
+func TestCronScheduleNext_IntervalEvery10Seconds(t *testing.T) {
+	sched, err := parseCron("@every 10s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 1, 15, 10, 30, 45, 0, time.UTC)
+	next := sched.Next(base)
+	want := base.Add(10 * time.Second)
 	if !next.Equal(want) {
 		t.Errorf("Next(%v) = %v, want %v", base, next, want)
 	}

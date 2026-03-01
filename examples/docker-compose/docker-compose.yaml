@@ -89,6 +89,9 @@ services:
       # --- Natural Language Interface (R9, optional) ---
       # Set RURIKO_NLP_API_KEY to enable LLM-backed intent classification.
       # When unset, Ruriko falls back to keyword matching.
+      # GLOBAL_LLM_API_KEY is a dev/test convenience fallback injected into
+      # all spawned agents as LLM_API_KEY when agent-specific keys are absent.
+      GLOBAL_LLM_API_KEY:    ${GLOBAL_LLM_API_KEY:-}
       RURIKO_NLP_API_KEY:     ${RURIKO_NLP_API_KEY:-}
       NLP_MODEL:              ${NLP_MODEL:-}
       NLP_ENDPOINT:           ${NLP_ENDPOINT:-}

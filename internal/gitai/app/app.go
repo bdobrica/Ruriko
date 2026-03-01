@@ -269,6 +269,9 @@ func New(cfg *Config) (*App, error) {
 				supv.Reconcile(c.MCPs)
 				cronMgr.Reconcile(c.Gateways)
 				extGWSupv.Reconcile(c.Gateways)
+				if app.matrixCli != nil {
+					app.matrixCli.EnsureJoinedRooms(roomsFromConfig(c))
+				}
 			}
 			// Rebuild the LLM provider in case the new Gosuto specifies a
 			// different APIKeySecretRef or model, and the matching secret is
@@ -341,10 +344,7 @@ func (a *App) Run() error {
 	// Start Matrix sync.
 	var rooms []string
 	if c := a.gosutoLdr.Config(); c != nil {
-		rooms = c.Trust.AllowedRooms
-		if c.Trust.AdminRoom != "" {
-			rooms = append(rooms, c.Trust.AdminRoom)
-		}
+		rooms = roomsFromConfig(c)
 	}
 	if err := a.matrixCli.Start(ctx, rooms, a.handleMessage); err != nil {
 		return fmt.Errorf("start matrix: %w", err)
@@ -1190,4 +1190,30 @@ func buildSecretEnvMapping(secrets []gosutospec.SecretRef) map[string]string {
 		}
 	}
 	return out
+}
+
+func roomsFromConfig(cfg *gosutospec.Config) []string {
+	if cfg == nil {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(cfg.Trust.AllowedRooms)+1)
+	rooms := make([]string, 0, len(cfg.Trust.AllowedRooms)+1)
+	for _, room := range cfg.Trust.AllowedRooms {
+		room = strings.TrimSpace(room)
+		if room == "" {
+			continue
+		}
+		if _, ok := seen[room]; ok {
+			continue
+		}
+		seen[room] = struct{}{}
+		rooms = append(rooms, room)
+	}
+	adminRoom := strings.TrimSpace(cfg.Trust.AdminRoom)
+	if adminRoom != "" {
+		if _, ok := seen[adminRoom]; !ok {
+			rooms = append(rooms, adminRoom)
+		}
+	}
+	return rooms
 }

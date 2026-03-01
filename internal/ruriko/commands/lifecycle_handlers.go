@@ -47,6 +47,9 @@ func truncateID(s string, n int) string {
 func injectAgentLLMEnv(agentEnv map[string]string) {
 	apiKey := strings.TrimSpace(os.Getenv("LLM_API_KEY"))
 	if apiKey == "" {
+		apiKey = strings.TrimSpace(os.Getenv("GLOBAL_LLM_API_KEY"))
+	}
+	if apiKey == "" {
 		apiKey = strings.TrimSpace(os.Getenv("RURIKO_NLP_API_KEY"))
 	}
 	if apiKey != "" {

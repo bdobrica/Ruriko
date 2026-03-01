@@ -49,6 +49,10 @@ type realClock struct{}
 func (realClock) Now() time.Time                         { return time.Now() }
 func (realClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
 
+type schedule interface {
+	Next(now time.Time) time.Time
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Cron expression parser
 // ────────────────────────────────────────────────────────────────────────────
@@ -74,7 +78,20 @@ type cronSchedule struct {
 //     N-M        range [N, M] inclusive
 //     N-M/S      range with step S
 //     A,B,C      list of values
-func parseCron(expr string) (*cronSchedule, error) {
+func parseCron(expr string) (schedule, error) {
+	expr = strings.TrimSpace(expr)
+	if every, ok := strings.CutPrefix(expr, "@every "); ok {
+		interval := strings.TrimSpace(every)
+		d, err := time.ParseDuration(interval)
+		if err != nil {
+			return nil, fmt.Errorf("invalid @every duration %q: %w", interval, err)
+		}
+		if d <= 0 {
+			return nil, fmt.Errorf("@every duration must be > 0")
+		}
+		return intervalSchedule{every: d}, nil
+	}
+
 	fields := strings.Fields(expr)
 	if len(fields) != 5 {
 		return nil, fmt.Errorf("cron expression must have exactly 5 fields, got %d in %q", len(fields), expr)
@@ -112,6 +129,17 @@ func parseCron(expr string) (*cronSchedule, error) {
 		month:      month,
 		dayOfWeek:  dayOfWeek,
 	}, nil
+}
+
+type intervalSchedule struct {
+	every time.Duration
+}
+
+func (s intervalSchedule) Next(now time.Time) time.Time {
+	if s.every <= 0 {
+		return time.Time{}
+	}
+	return now.Add(s.every)
 }
 
 // parseCronField parses a single cron field into the set of matching integer
@@ -386,7 +414,7 @@ func (m *Manager) startLocked(gw gosutospec.Gateway) {
 
 // runJob runs the event-fire loop for a single cron gateway. It blocks until
 // ctx is cancelled.
-func (m *Manager) runJob(ctx context.Context, job *cronJob, sched *cronSchedule) {
+func (m *Manager) runJob(ctx context.Context, job *cronJob, sched schedule) {
 	defer close(job.done)
 
 	for {

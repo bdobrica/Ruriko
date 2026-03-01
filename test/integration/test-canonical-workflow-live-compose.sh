@@ -9,6 +9,7 @@ POLL_SECONDS="${CANONICAL_LIVE_POLL_SECONDS:-5}"
 REQUIRED_CYCLES="${CANONICAL_REQUIRED_CYCLES:-2}"
 AUTO_BOOTSTRAP_CANONICAL="${CANONICAL_AUTO_BOOTSTRAP:-1}"
 BOOTSTRAP_STATUS_TIMEOUT="${CANONICAL_BOOTSTRAP_STATUS_TIMEOUT:-120}"
+CANONICAL_FAST_CRON_EVERY="${CANONICAL_FAST_CRON_EVERY:-10s}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -59,6 +60,44 @@ for svc in ruriko tuwunel; do
 	docker ps --format '{{.Names}}' | grep -q "^${svc}$" || fail "container '${svc}' not running"
 done
 
+wait_for_ruriko_db_ready() {
+	local timeout_seconds="${1:-60}"
+	local start now elapsed
+	start="$(date +%s)"
+	while true; do
+		local tmp_db
+		tmp_db="$(mktemp)"
+		if docker cp ruriko:/data/ruriko.db "$tmp_db" >/dev/null 2>&1; then
+			if python3 - "$tmp_db" <<'PY'
+import sqlite3
+import sys
+
+db = sys.argv[1]
+conn = sqlite3.connect(db)
+cur = conn.cursor()
+cur.execute("select name from sqlite_master where type='table' and name='agents'")
+ok = cur.fetchone() is not None
+conn.close()
+raise SystemExit(0 if ok else 1)
+PY
+			then
+				rm -f "$tmp_db"
+				pass "ruriko database ready (agents table present)"
+				return 0
+			fi
+		fi
+		rm -f "$tmp_db"
+		now="$(date +%s)"
+		elapsed=$((now - start))
+		if (( elapsed >= timeout_seconds )); then
+			fail "timed out waiting for ruriko database readiness (agents table)"
+		fi
+		sleep 1
+	done
+}
+
+wait_for_ruriko_db_ready 90
+
 agent_container_name() {
 	local name="$1"
 	echo "ruriko-agent-${name}"
@@ -77,7 +116,7 @@ KUMO_CONTAINER="$(agent_container_name kumo)"
 for agent in saito kairo kumo; do
 	cname="$(agent_container_name "$agent")"
 	if ! docker exec "$cname" sh -lc 'env | grep -q "^LLM_API_KEY="'; then
-		fail "${cname} is missing LLM_API_KEY; recreate/respawn agents after setting LLM_API_KEY (or RURIKO_NLP_API_KEY fallback) for Ruriko"
+		fail "${cname} is missing LLM_API_KEY; recreate/respawn agents after setting LLM_API_KEY (or GLOBAL_LLM_API_KEY / RURIKO_NLP_API_KEY fallback) for Ruriko"
 	fi
 done
 
@@ -195,6 +234,7 @@ PY
 		--db-file "$DB_FILE" \
 		--admin-room "$admin_room" \
 		--user-room "$user_room" \
+		--saito-cron-every "$CANONICAL_FAST_CRON_EVERY" \
 		--status-timeout "$BOOTSTRAP_STATUS_TIMEOUT"
 }
 

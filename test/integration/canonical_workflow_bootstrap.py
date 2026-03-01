@@ -22,6 +22,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--status-timeout", type=int, default=120)
     parser.add_argument("--apply-timeout", type=int, default=20)
     parser.add_argument("--poll-interval", type=int, default=3)
+    parser.add_argument("--saito-cron-every", default="10s")
     return parser.parse_args()
 
 
@@ -41,7 +42,7 @@ def load_agents(db_file: str) -> dict[str, tuple[str, str]]:
     return {name.lower(): (control_url or "", token or "") for name, control_url, token in rows}
 
 
-def render_template(root_dir: str, agent: str, admin_room: str, user_room: str) -> tuple[str, str]:
+def render_template(root_dir: str, agent: str, admin_room: str, user_room: str, saito_cron_every: str) -> tuple[str, str]:
     specs = {
         "saito": {
             "template": Path(root_dir) / "templates/saito-agent/gosuto.yaml",
@@ -79,7 +80,8 @@ def render_template(root_dir: str, agent: str, admin_room: str, user_room: str) 
         text = text.replace(key, val)
 
     if agent == "saito":
-        text = text.replace('expression: "*/15 * * * *"', 'expression: "*/2 * * * *"')
+        cron_every = (saito_cron_every or "10s").strip()
+        text = text.replace('expression: "*/15 * * * *"', f'expression: "@every {cron_every}"')
 
     cfg_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
     return text, cfg_hash
@@ -144,7 +146,7 @@ def main() -> int:
             print(f"[bootstrap] missing control token for {agent}", file=sys.stderr)
             return 1
 
-        yaml_text, want_hash = render_template(args.root_dir, agent, args.admin_room, args.user_room)
+        yaml_text, want_hash = render_template(args.root_dir, agent, args.admin_room, args.user_room, args.saito_cron_every)
 
         endpoints: list[str] = []
         if control_url:
