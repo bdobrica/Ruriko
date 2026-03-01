@@ -1,4 +1,4 @@
-.PHONY: all build build-ruriko build-gitai build-tools test test-integration test-integration-nlp test-saito-scheduling test-saito-scheduling-live-precheck test-saito-scheduling-live test-canonical-workflow-live-compose test-canonical-workflow-live-security test-canonical-workflow-live lint fmt clean run-ruriko run-gitai install help
+.PHONY: all build build-ruriko build-gitai build-tools test test-integration test-integration-nlp test-saito-scheduling test-saito-scheduling-live-precheck test-saito-scheduling-live test-canonical-workflow-live-provisioning test-canonical-workflow-live-admin-room test-canonical-workflow-live-compose test-canonical-workflow-live-security test-canonical-workflow-live lint fmt clean run-ruriko run-gitai install help
 
 # Build variables
 BINARY_DIR := bin
@@ -70,9 +70,17 @@ test-saito-scheduling-live: test-saito-scheduling-live-precheck ## Run live comp
 	@echo "Running live Saito scheduling validation..."
 	./test/integration/test-saito-scheduling-live-compose.sh
 
-test-canonical-workflow-live-compose: ## Run canonical live compose cycle verification (requires provisioned Saito/Kairo/Kumo)
-	@echo "Running canonical live compose cycle verification..."
-	bash ./test/integration/test-canonical-workflow-live-compose.sh
+test-canonical-workflow-live-provisioning: ## Check canonical provisioning prerequisites (DB rows, containers, LLM keys)
+	@echo "Running canonical provisioning precheck..."
+	bash ./test/integration/test-canonical-workflow-live-provisioning.sh
+
+test-canonical-workflow-live-admin-room: ## Check canonical Matrix admin-room token validity + join flow
+	@echo "Running canonical admin-room join check..."
+	bash ./test/integration/test-canonical-workflow-live-admin-room.sh
+
+test-canonical-workflow-live-compose: ## Run canonical live compose suite (provisioning + admin-room + cycle)
+	@echo "Running canonical live compose suite..."
+	bash ./test/integration/test-canonical-workflow-live-compose-suite.sh
 
 test-canonical-workflow-live-security: ## Run canonical live security checks (secrets/logs, workflow MCP-bypass guard, approval ledger)
 	@echo "Running canonical live security checks..."

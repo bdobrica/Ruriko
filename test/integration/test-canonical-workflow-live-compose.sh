@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 COMPOSE_FILE="${CANONICAL_COMPOSE_FILE:-$ROOT_DIR/examples/docker-compose/docker-compose.yaml}"
-COMPOSE_ENV_FILE="$ROOT_DIR/examples/docker-compose/.env"
+COMPOSE_ENV_FILE="${CANONICAL_COMPOSE_ENV:-$ROOT_DIR/examples/docker-compose/.env}"
 HELPER_PY="$ROOT_DIR/test/integration/canonical_live_helpers.py"
 KEEP_STACK="${KEEP_STACK:-0}"
 TIMEOUT_SECONDS="${CANONICAL_LIVE_TIMEOUT_SECONDS:-600}"
@@ -14,6 +14,8 @@ BOOTSTRAP_STATUS_TIMEOUT="${CANONICAL_BOOTSTRAP_STATUS_TIMEOUT:-120}"
 CANONICAL_FAST_CRON_EVERY="${CANONICAL_FAST_CRON_EVERY:-10s}"
 FAILFAST_AFTER_SECONDS="${CANONICAL_FAILFAST_AFTER_SECONDS:-45}"
 ENFORCE_ROOM_JOINS="${CANONICAL_ENFORCE_ROOM_JOINS:-1}"
+DB_AGENT_WAIT_SECONDS="${CANONICAL_DB_AGENT_WAIT_SECONDS:-20}"
+AUTO_PROVISION_CANONICAL="${CANONICAL_AUTO_PROVISION:-0}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -51,6 +53,7 @@ require_tool grep
 require_tool python3
 require_tool curl
 [[ -f "$HELPER_PY" ]] || fail "required helper script not found: $HELPER_PY"
+[[ -f "$COMPOSE_ENV_FILE" ]] || fail "compose env file not found: $COMPOSE_ENV_FILE"
 
 info "Starting compose stack"
 docker_compose up -d
@@ -96,6 +99,43 @@ wait_for_ruriko_db_ready() {
 
 wait_for_ruriko_db_ready 90
 
+wait_for_canonical_agents_in_db() {
+	local timeout_seconds="${1:-20}"
+	local start now elapsed
+	start="$(date +%s)"
+	while true; do
+		local tmp_db_dir tmp_db missing
+		tmp_db_dir="$(mktemp -d)"
+		tmp_db="${tmp_db_dir}/ruriko.db"
+		if docker cp ruriko:/data/ruriko.db "$tmp_db" >/dev/null 2>&1; then
+			docker cp ruriko:/data/ruriko.db-wal "${tmp_db_dir}/ruriko.db-wal" >/dev/null 2>&1 || true
+			docker cp ruriko:/data/ruriko.db-shm "${tmp_db_dir}/ruriko.db-shm" >/dev/null 2>&1 || true
+			if missing="$(python3 "$HELPER_PY" db-has-agents --db-file "$tmp_db" --ids "saito,kairo,kumo" 2>/dev/null)"; then
+				rm -rf "$tmp_db_dir"
+				pass "ruriko database contains canonical agents: saito,kairo,kumo"
+				return 0
+			fi
+		fi
+		rm -rf "$tmp_db_dir"
+		now="$(date +%s)"
+		elapsed=$((now - start))
+		if (( elapsed >= timeout_seconds )); then
+			CANONICAL_DB_MISSING="${missing:-saito,kairo,kumo}"
+			return 1
+		fi
+		sleep 1
+	done
+}
+
+CANONICAL_DB_MISSING=""
+if ! wait_for_canonical_agents_in_db "$DB_AGENT_WAIT_SECONDS"; then
+	if [[ "$AUTO_PROVISION_CANONICAL" == "1" ]]; then
+		info "canonical agents missing in database (missing: ${CANONICAL_DB_MISSING:-saito,kairo,kumo}); CANONICAL_AUTO_PROVISION=1 enabled, will synthesize snapshot rows from running containers"
+	else
+		fail "canonical agents missing in ruriko database after ${DB_AGENT_WAIT_SECONDS}s (missing: ${CANONICAL_DB_MISSING:-saito,kairo,kumo}); provision agents first (or set CANONICAL_AUTO_PROVISION=1 to synthesize snapshot rows from running containers)"
+	fi
+fi
+
 agent_container_name() {
 	local name="$1"
 	echo "ruriko-agent-${name}"
@@ -111,6 +151,15 @@ SAITO_CONTAINER="$(agent_container_name saito)"
 KAIRO_CONTAINER="$(agent_container_name kairo)"
 KUMO_CONTAINER="$(agent_container_name kumo)"
 
+canonical_template_for_agent() {
+	case "$1" in
+		saito) echo "saito-agent" ;;
+		kairo) echo "kairo-agent" ;;
+		kumo) echo "kumo-agent" ;;
+		*) return 1 ;;
+	esac
+}
+
 for agent in saito kairo kumo; do
 	cname="$(agent_container_name "$agent")"
 	if ! docker exec "$cname" sh -lc 'env | grep -q "^LLM_API_KEY="'; then
@@ -123,6 +172,34 @@ DB_FILE="${DB_SNAPSHOT_DIR}/ruriko.db"
 docker cp ruriko:/data/ruriko.db "$DB_FILE" >/dev/null
 docker cp ruriko:/data/ruriko.db-wal "${DB_SNAPSHOT_DIR}/ruriko.db-wal" >/dev/null 2>&1 || true
 docker cp ruriko:/data/ruriko.db-shm "${DB_SNAPSHOT_DIR}/ruriko.db-shm" >/dev/null 2>&1 || true
+
+maybe_autoprovision_canonical_db_snapshot() {
+	local missing
+	if missing="$(python3 "$HELPER_PY" db-has-agents --db-file "$DB_FILE" --ids "saito,kairo,kumo" 2>/dev/null)"; then
+		return 0
+	fi
+
+	[[ "$AUTO_PROVISION_CANONICAL" == "1" ]] || fail "canonical agents missing in bootstrap snapshot db (missing: ${missing:-saito,kairo,kumo})"
+
+	info "Auto-provisioning canonical bootstrap snapshot rows from running containers (missing: ${missing:-saito,kairo,kumo})"
+	local agent template cname
+	for agent in saito kairo kumo; do
+		template="$(canonical_template_for_agent "$agent")"
+		cname="$(agent_container_name "$agent")"
+		python3 "$HELPER_PY" db-upsert-agent-from-container \
+			--db-file "$DB_FILE" \
+			--agent-id "$agent" \
+			--template "$template" \
+			--container "$cname" >/dev/null || fail "failed to synthesize db row for ${agent} from ${cname}"
+	done
+
+	if ! python3 "$HELPER_PY" db-has-agents --db-file "$DB_FILE" --ids "saito,kairo,kumo" >/dev/null 2>&1; then
+		fail "auto-provision could not establish canonical rows in bootstrap snapshot db"
+	fi
+	pass "auto-provisioned canonical bootstrap snapshot rows from running containers"
+}
+
+maybe_autoprovision_canonical_db_snapshot
 
 count_cron_events() {
 	local since="$1"
@@ -193,20 +270,22 @@ join_room_with_fallback() {
 	local token="$1"
 	local matrix_base="$2"
 	local room_id_or_alias="$3"
-	local encoded
+	local encoded payload
 	encoded="$(urlencode "$room_id_or_alias")"
 
-	if curl -fsS -X POST "${matrix_base}/_matrix/client/v3/rooms/${encoded}/join" \
+	if payload="$(curl -fsS -X POST "${matrix_base}/_matrix/client/v3/rooms/${encoded}/join" \
 		-H "Authorization: Bearer ${token}" \
 		-H "Content-Type: application/json" \
-		-d '{}' >/dev/null; then
+		-d '{}')"; then
+		python3 "$HELPER_PY" extract-join-room-id --payload "$payload" --fallback "$room_id_or_alias"
 		return 0
 	fi
 
-	curl -fsS -X POST "${matrix_base}/_matrix/client/v3/join/${encoded}" \
+	payload="$(curl -fsS -X POST "${matrix_base}/_matrix/client/v3/join/${encoded}" \
 		-H "Authorization: Bearer ${token}" \
 		-H "Content-Type: application/json" \
-		-d '{}' >/dev/null
+		-d '{}')"
+	python3 "$HELPER_PY" extract-join-room-id --payload "$payload" --fallback "$room_id_or_alias"
 }
 
 ensure_canonical_room_joins() {
@@ -225,12 +304,15 @@ ensure_canonical_room_joins() {
 		for admin_room in "${admin_rooms[@]}"; do
 			admin_room="${admin_room## }"
 			admin_room="${admin_room%% }"
+			local joined_room_id
 			[[ -n "$admin_room" ]] || continue
-			if ! join_room_with_fallback "$token" "$matrix_base" "$admin_room"; then
+			if ! joined_room_id="$(join_room_with_fallback "$token" "$matrix_base" "$admin_room")"; then
 				fail "failed to force ${agent} join into admin room ${admin_room}"
 			fi
-			if ! verify_room_joined "$token" "$matrix_base" "$admin_room"; then
-				fail "${agent} did not appear in joined_rooms for ${admin_room} after join"
+			joined_room_id="$(printf '%s' "$joined_room_id" | tr -d '\r\n')"
+			[[ -n "$joined_room_id" ]] || joined_room_id="$admin_room"
+			if ! verify_room_joined "$token" "$matrix_base" "$joined_room_id"; then
+				fail "${agent} did not appear in joined_rooms for ${joined_room_id} after join request ${admin_room}"
 			fi
 		done
 	done
