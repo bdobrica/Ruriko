@@ -5,7 +5,31 @@
 
 ---
 
+## 🧹 Maintenance Updates (2026-03-02 · deterministic live scheduling flow)
+
+- Added deterministic live integration flow for operator → Ruriko → Saito scheduling:
+  - `test/integration/test-ruriko-saito-operator-live-compose.sh`
+- Added Matrix probe helper for live integration message exchange capture:
+  - `test/integration/ruriko_saito_live_matrix_probe.py`
+- Extended integration helper utilities with DB-backed schedule assertions:
+  - `test/integration/canonical_live_helpers.py` (`db-has-schedule`)
+- Added Make target:
+  - `make test-ruriko-saito-operator-live`
+- Updated operations/docs for the new deterministic flow:
+  - `README.md`
+  - `OPERATIONS.md`
+
+---
+
 ## 🧹 Maintenance Updates (2026-03-02)
+
+- Fixed deterministic command parsing for quoted flag values in Ruriko router:
+  - `/ruriko schedule upsert --cron "*/2 * * * *" --message "..."` now parses correctly.
+  - Added parser coverage for quoted values and unterminated quote errors in `internal/ruriko/commands/router_test.go`.
+- Hardened live deterministic Ruriko↔Saito integration flow:
+  - Added schedule-command availability preflight from `/ruriko help`.
+  - Added fail-fast handling for schedule command errors and stale image guidance.
+  - Replaced fragile Saito ACP status polling with log-based Gosuto convergence detection.
 
 - Added DB-backed cron schedule persistence in Gitai store:
   - `internal/gitai/store/migrations/0004_cron_schedules.sql`

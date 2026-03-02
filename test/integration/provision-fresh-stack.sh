@@ -19,7 +19,7 @@ NC='\033[0m'
 
 info()  { echo -e "${YELLOW}[INFO]${NC} $*"; }
 pass()  { echo -e "${GREEN}[PASS]${NC} $*"; }
-fail()  { echo -e "${RED}[FAIL]${NC} $*"; exit 1; }
+fail()  { echo -e "${RED}[FAIL]${NC} $*" >&2; exit 1; }
 
 [[ -n "$RT" ]] || fail "TUWUNEL_REGISTRATION_TOKEN is empty in .env"
 
@@ -100,7 +100,7 @@ join_room() {
 # ============================================================
 info "Resetting compose services and volumes for a truly fresh Tuwunel state"
 cd "$COMPOSE_DIR"
-docker compose down -v --remove-orphans >/dev/null 2>&1 || true
+docker compose down -v --remove-orphans >/dev/null 2>&1
 
 info "Removing stale managed agent containers"
 stale_agents="$(docker ps -a --format '{{.Names}}' | grep '^ruriko-agent-' || true)"

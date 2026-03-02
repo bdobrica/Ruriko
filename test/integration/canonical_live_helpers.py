@@ -287,6 +287,60 @@ def command_extract_join_room_id(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_db_has_schedule(args: argparse.Namespace) -> int:
+    def normalize_value(value: str) -> str:
+        text = str(value or "").strip()
+        if len(text) >= 2 and ((text[0] == '"' and text[-1] == '"') or (text[0] == "'" and text[-1] == "'")):
+            text = text[1:-1].strip()
+        return text
+
+    want_cron = normalize_value(args.cron)
+    want_target = normalize_value(args.target)
+    want_message = normalize_value(args.message)
+
+    conn = sqlite3.connect(args.db_file)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            select cron_expression, payload_json, enabled
+            from cron_schedules
+            where gateway_name = ?
+            """,
+            (args.gateway,),
+        )
+        rows = cur.fetchall()
+    except Exception as err:  # noqa: BLE001
+        print(f"query failed: {err}", file=sys.stderr)
+        return 1
+    finally:
+        conn.close()
+
+    for cron_expression, payload_json, enabled in rows:
+        if normalize_value(str(cron_expression or "")) != want_cron:
+            continue
+        if int(enabled or 0) != 1:
+            continue
+
+        try:
+            payload = json.loads(str(payload_json or "{}"))
+        except Exception:  # noqa: BLE001
+            continue
+
+        target_alias = normalize_value(str(payload.get("target_alias") or ""))
+        message = normalize_value(str(payload.get("message") or ""))
+        if target_alias != want_target:
+            continue
+        if message != want_message:
+            continue
+
+        print("ok")
+        return 0
+
+    print("missing")
+    return 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Helpers for canonical live compose integration tests")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -346,6 +400,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--payload", required=True)
     p.add_argument("--fallback", required=True)
     p.set_defaults(func=command_extract_join_room_id)
+
+    p = sub.add_parser("db-has-schedule")
+    p.add_argument("--db-file", required=True)
+    p.add_argument("--gateway", default="scheduler")
+    p.add_argument("--cron", required=True)
+    p.add_argument("--target", required=True)
+    p.add_argument("--message", required=True)
+    p.set_defaults(func=command_db_has_schedule)
 
     return parser
 

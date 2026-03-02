@@ -552,6 +552,34 @@ Useful overrides:
 - `CANONICAL_SECURITY_REQUIRE_APPROVAL_COUNTS=1`
 - `KEEP_STACK=1`
 
+### Flow 10: Deterministic Operator → Ruriko → Saito Scheduling (2 cycles)
+
+This flow provisions a fresh stack, sends deterministic Matrix commands from the
+operator to Ruriko, ensures Saito is created if missing, configures a DB-backed
+Saito cron schedule (`*/2 * * * *` by default), and verifies two operator-visible
+Saito cron messages within 5 minutes.
+
+Run:
+
+```bash
+make test-ruriko-saito-operator-live
+```
+
+Assertions:
+- Fresh stack with Ruriko + Tuwunel comes up
+- Operator and Ruriko share the admin room
+- Ruriko processes deterministic schedule command and provisions Saito (if needed)
+- Saito `gitai.db` contains the expected `cron_schedules` row
+- Saito emits at least two `cron.tick` events
+- Operator receives two Saito messages in the operator room
+- Matrix exchange lines are printed at send/receive time for operator, Ruriko, and Saito
+
+Useful overrides:
+- `RURIKO_SAITO_TIMEOUT_SECONDS=300`
+- `RURIKO_SAITO_CRON_EXPR="*/2 * * * *"`
+- `RURIKO_SAITO_CRON_MESSAGE="Saito scheduled heartbeat to operator"`
+- `KEEP_STACK=1`
+
 ---
 
 ## Environment Variable Reference
@@ -703,6 +731,7 @@ Useful targets for development and operations:
 |--------|-------------|
 | `make build` | Build all binaries locally |
 | `make test` | Run all tests with race detector |
+| `make test-ruriko-saito-operator-live` | Run deterministic live operator→Ruriko→Saito scheduling flow |
 | `make docker-build` | Build `ruriko:latest` and `gitai:latest` images |
 | `make compose-up` | Build images and start the full stack |
 | `make compose-down` | Stop the stack |

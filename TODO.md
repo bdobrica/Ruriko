@@ -79,6 +79,8 @@ The following is built and functional:
 - ✅ **R15**: Built-in Matrix messaging tool — `matrix.send_message`, policy engine integration, mesh topology provisioning, audit/breadcrumbs, template updates
 - ✅ **R19 (maintenance)**: DB-backed cron scheduling for Gitai — `schedule.*` built-ins, SQLite `cron_schedules` table, cron gateway `source: db` mode, Saito template wiring
 - ✅ **R19.1 (maintenance)**: Deterministic Ruriko schedule control-plane actions — ACP `POST /tools/call`, `/ruriko schedule {upsert|disable|list}`, NLP catalogue integration
+- ✅ **R19.2 (maintenance)**: Deterministic live operator→Ruriko→Saito scheduling integration flow (fresh stack provisioning, DB schedule assertion, two cron-cycle Matrix delivery verification)
+- ✅ **R19.3 (maintenance)**: Quote-aware deterministic command parsing for schedule flags + live test fail-fast/convergence hardening
 - ✅ **R10**: Conversation memory — STM tracker, LTM interface, seal pipeline, context assembly, SQLite/OpenAI/LLM persistent backends
 
 ---

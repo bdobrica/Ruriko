@@ -63,11 +63,27 @@ func TestParseCommand_Basic(t *testing.T) {
 			wantArgs: []string{},
 		},
 		{
+			input:    "/ruriko schedule upsert --agent saito --cron \"*/2 * * * *\" --target user --message \"Saito scheduled heartbeat to operator\"",
+			wantName: "schedule",
+			wantSub:  "upsert",
+			wantArgs: []string{},
+			wantFlags: map[string]string{
+				"agent":   "saito",
+				"cron":    "*/2 * * * *",
+				"target":  "user",
+				"message": "Saito scheduled heartbeat to operator",
+			},
+		},
+		{
 			input:   "not a command",
 			wantErr: true,
 		},
 		{
 			input:   "/ruriko",
+			wantErr: true,
+		},
+		{
+			input:   "/ruriko schedule upsert --cron \"*/2 * * * *",
 			wantErr: true,
 		},
 	}

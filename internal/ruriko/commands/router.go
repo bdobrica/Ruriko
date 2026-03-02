@@ -61,8 +61,11 @@ func (r *Router) Parse(text string) (*Command, error) {
 		return nil, fmt.Errorf("empty command")
 	}
 
-	// Split into parts
-	parts := strings.Fields(text)
+	// Split into parts (quote-aware, supports "..." and '...').
+	parts, err := tokenizeCommand(text)
+	if err != nil {
+		return nil, err
+	}
 	if len(parts) == 0 {
 		return nil, fmt.Errorf("empty command")
 	}
@@ -118,6 +121,68 @@ func (r *Router) Parse(text string) (*Command, error) {
 	}
 
 	return cmd, nil
+}
+
+func tokenizeCommand(text string) ([]string, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil, nil
+	}
+
+	tokens := make([]string, 0, 8)
+	var current strings.Builder
+
+	inQuote := rune(0)
+	escaped := false
+
+	flush := func() {
+		if current.Len() == 0 {
+			return
+		}
+		tokens = append(tokens, current.String())
+		current.Reset()
+	}
+
+	for _, ch := range text {
+		if escaped {
+			current.WriteRune(ch)
+			escaped = false
+			continue
+		}
+
+		if ch == '\\' {
+			escaped = true
+			continue
+		}
+
+		if inQuote != 0 {
+			if ch == inQuote {
+				inQuote = 0
+				continue
+			}
+			current.WriteRune(ch)
+			continue
+		}
+
+		switch ch {
+		case '"', '\'':
+			inQuote = ch
+		case ' ', '\t', '\n', '\r':
+			flush()
+		default:
+			current.WriteRune(ch)
+		}
+	}
+
+	if escaped {
+		current.WriteRune('\\')
+	}
+	if inQuote != 0 {
+		return nil, fmt.Errorf("unterminated quoted value")
+	}
+
+	flush()
+	return tokens, nil
 }
 
 // Dispatch calls the registered handler for the given action key directly,
