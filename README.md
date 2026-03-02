@@ -62,10 +62,12 @@ Each agent runs as a separate single binary:
 
 * Connects to Matrix via `mautrix-go`
 * **Sends messages to other agents and users via built-in Matrix messaging tool** (policy-gated)
+* **Persists DB-backed cron schedules via built-in `schedule.*` tools**
 * Communicates via structured message envelopes
 * Calls LLM providers
 * Manages and supervises MCP tool processes
 * **Manages and supervises event gateway processes** (built-in cron/webhook, external binaries)
+* **Executes DB-backed cron schedules for built-in `cron` gateways configured with `config.source: db`**
 * Accepts inbound event triggers via ACP `POST /events/{source}` and routes them through the same policy → LLM → tool pipeline as Matrix messages
 * Enforces policy locally
 * Handles approvals

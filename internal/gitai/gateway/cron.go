@@ -30,6 +30,7 @@ import (
 
 	"github.com/bdobrica/Ruriko/common/spec/envelope"
 	gosutospec "github.com/bdobrica/Ruriko/common/spec/gosuto"
+	"github.com/bdobrica/Ruriko/internal/gitai/store"
 )
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -51,6 +52,18 @@ func (realClock) After(d time.Duration) <-chan time.Time { return time.After(d) 
 
 type schedule interface {
 	Next(now time.Time) time.Time
+}
+
+// CronToolDispatcher executes a due DB-backed cron schedule.
+type CronToolDispatcher func(ctx context.Context, gatewayName, tool string, args map[string]interface{}) error
+
+// DBCronStore is the subset of the Gitai store used by DB-backed cron jobs.
+type DBCronStore interface {
+	EnsureBootstrapCronSchedule(gatewayName, cronExpression, tool string, payload store.CronSchedulePayload, nextTriggerAt time.Time) error
+	ListDueCronSchedules(gatewayName string, now time.Time) ([]store.CronSchedule, error)
+	MarkCronScheduleTriggered(id int64, firedAt, nextTriggerAt time.Time) error
+	MarkCronScheduleNextRun(id int64, nextTriggerAt time.Time) error
+	DisableCronSchedule(id int64) error
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -129,6 +142,19 @@ func parseCron(expr string) (schedule, error) {
 		month:      month,
 		dayOfWeek:  dayOfWeek,
 	}, nil
+}
+
+// NextCronTick validates expr and returns the next matching time after now.
+func NextCronTick(expr string, now time.Time) (time.Time, error) {
+	sched, err := parseCron(expr)
+	if err != nil {
+		return time.Time{}, err
+	}
+	next := sched.Next(now)
+	if next.IsZero() {
+		return time.Time{}, fmt.Errorf("could not compute next tick")
+	}
+	return next, nil
 }
 
 type intervalSchedule struct {
@@ -313,6 +339,8 @@ type Manager struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	clk    clock
+	dbStore    DBCronStore
+	dbDispatch CronToolDispatcher
 }
 
 // NewManager returns a new Manager that will POST cron events to acpURL
@@ -333,6 +361,15 @@ func NewManagerWithClock(acpURL string, clk clock) *Manager {
 		cancel: cancel,
 		clk:    clk,
 	}
+}
+
+// EnableDBSchedules enables DB-backed cron execution for gateways with
+// config.source="db".
+func (m *Manager) EnableDBSchedules(store DBCronStore, dispatch CronToolDispatcher) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.dbStore = store
+	m.dbDispatch = dispatch
 }
 
 // Reconcile ensures exactly the cron gateways described in gateways are
@@ -390,6 +427,11 @@ func (m *Manager) Stop() {
 
 // startLocked starts a single cron job. Caller must hold m.mu.
 func (m *Manager) startLocked(gw gosutospec.Gateway) {
+	if strings.EqualFold(strings.TrimSpace(gw.Config["source"]), "db") {
+		m.startDBLocked(gw)
+		return
+	}
+
 	expr := gw.Config["expression"]
 	sched, err := parseCron(expr)
 	if err != nil {
@@ -410,6 +452,57 @@ func (m *Manager) startLocked(gw gosutospec.Gateway) {
 	slog.Info("gateway/cron: starting cron job",
 		"name", gw.Name, "expression", expr)
 	go m.runJob(ctx, job, sched)
+}
+
+// startDBLocked starts a DB-backed cron job. Caller must hold m.mu.
+func (m *Manager) startDBLocked(gw gosutospec.Gateway) {
+	if m.dbStore == nil || m.dbDispatch == nil {
+		slog.Warn("gateway/cron: DB schedule source enabled but DB scheduler is not configured",
+			"name", gw.Name)
+		return
+	}
+
+	// Optional bootstrap row for default template behavior.
+	bootstrapExpr := strings.TrimSpace(gw.Config["expression"])
+	if bootstrapExpr != "" {
+		targetAlias := strings.TrimSpace(gw.Config["target"])
+		message := strings.TrimSpace(gw.Config["payload"])
+		if targetAlias == "" || message == "" {
+			slog.Warn("gateway/cron: bootstrap expression ignored because target or payload is missing",
+				"name", gw.Name)
+		} else {
+			now := m.clk.Now().UTC()
+			next, err := NextCronTick(bootstrapExpr, now)
+			if err != nil {
+				slog.Error("gateway/cron: invalid bootstrap cron expression",
+					"name", gw.Name, "expression", bootstrapExpr, "err", err)
+			} else {
+				err := m.dbStore.EnsureBootstrapCronSchedule(
+					gw.Name,
+					bootstrapExpr,
+					"matrix.send_message",
+					store.CronSchedulePayload{TargetAlias: targetAlias, Message: message},
+					next,
+				)
+				if err != nil {
+					slog.Error("gateway/cron: failed to ensure bootstrap DB schedule",
+						"name", gw.Name, "err", err)
+				}
+			}
+		}
+	}
+
+	ctx, cancel := context.WithCancel(m.ctx)
+	job := &cronJob{
+		name:   gw.Name,
+		spec:   gw,
+		cancel: cancel,
+		done:   make(chan struct{}),
+	}
+	m.jobs[gw.Name] = job
+
+	slog.Info("gateway/cron: starting DB-backed cron job", "name", gw.Name)
+	go m.runDBJob(ctx, job)
 }
 
 // runJob runs the event-fire loop for a single cron gateway. It blocks until
@@ -436,6 +529,72 @@ func (m *Manager) runJob(ctx context.Context, job *cronJob, sched schedule) {
 			return
 		case <-m.clk.After(delay):
 			m.fire(ctx, job)
+		}
+	}
+}
+
+func (m *Manager) runDBJob(ctx context.Context, job *cronJob) {
+	defer close(job.done)
+
+	pollInterval := 15 * time.Second
+	if raw := strings.TrimSpace(job.spec.Config["poll_interval"]); raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil {
+			slog.Warn("gateway/cron: invalid poll_interval; using default",
+				"name", job.name, "value", raw, "err", err)
+		} else if d > 0 {
+			pollInterval = d
+		}
+	}
+
+	for {
+		now := m.clk.Now().UTC()
+		due, err := m.dbStore.ListDueCronSchedules(job.name, now)
+		if err != nil {
+			slog.Error("gateway/cron: failed to list due DB schedules",
+				"name", job.name, "err", err)
+		} else {
+			for _, scheduleRow := range due {
+				next, err := NextCronTick(scheduleRow.CronExpression, now)
+				if err != nil {
+					slog.Error("gateway/cron: disabling schedule with invalid expression",
+						"name", job.name,
+						"schedule_id", scheduleRow.ID,
+						"expression", scheduleRow.CronExpression,
+						"err", err)
+					_ = m.dbStore.DisableCronSchedule(scheduleRow.ID)
+					continue
+				}
+
+				args := map[string]interface{}{
+					"target":  scheduleRow.Payload.TargetAlias,
+					"message": scheduleRow.Payload.Message,
+				}
+				err = m.dbDispatch(ctx, job.name, scheduleRow.Tool, args)
+				if err != nil {
+					slog.Warn("gateway/cron: DB schedule dispatch failed",
+						"name", job.name,
+						"schedule_id", scheduleRow.ID,
+						"tool", scheduleRow.Tool,
+						"err", err)
+					_ = m.dbStore.MarkCronScheduleNextRun(scheduleRow.ID, next)
+					continue
+				}
+
+				if err := m.dbStore.MarkCronScheduleTriggered(scheduleRow.ID, now, next); err != nil {
+					slog.Warn("gateway/cron: failed to update schedule trigger timestamps",
+						"name", job.name,
+						"schedule_id", scheduleRow.ID,
+						"err", err)
+				}
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			slog.Info("gateway/cron: DB-backed cron job stopped", "name", job.name)
+			return
+		case <-m.clk.After(pollInterval):
 		}
 	}
 }
@@ -495,6 +654,15 @@ func (m *Manager) fire(ctx context.Context, job *cronJob) {
 // have changed (expression or payload). When true, the old job must be stopped
 // and a new one started with the updated config.
 func cronSpecChanged(old, newSpec gosutospec.Gateway) bool {
+	if strings.TrimSpace(old.Config["source"]) != strings.TrimSpace(newSpec.Config["source"]) {
+		return true
+	}
+	if strings.TrimSpace(old.Config["target"]) != strings.TrimSpace(newSpec.Config["target"]) {
+		return true
+	}
+	if strings.TrimSpace(old.Config["poll_interval"]) != strings.TrimSpace(newSpec.Config["poll_interval"]) {
+		return true
+	}
 	return old.Config["expression"] != newSpec.Config["expression"] ||
 		old.Config["payload"] != newSpec.Config["payload"]
 }

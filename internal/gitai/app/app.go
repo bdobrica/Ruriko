@@ -229,6 +229,9 @@ func New(cfg *Config) (*App, error) {
 	// Built-in tool registry — populate before any turn can run.
 	builtinReg := builtin.New()
 	builtinReg.Register(builtin.NewMatrixSendTool(gosutoLdr, matrixCli))
+	builtinReg.Register(builtin.NewScheduleUpsertTool(db))
+	builtinReg.Register(builtin.NewScheduleDisableTool(db))
+	builtinReg.Register(builtin.NewScheduleListTool(db))
 
 	app := &App{
 		cfg:              cfg,
@@ -271,6 +274,16 @@ func New(cfg *Config) (*App, error) {
 	// Cron gateway manager: connects to the ACP event ingress on localhost.
 	cronMgr := gateway.NewManager(gateway.ACPBaseURL(acpAddr))
 	app.cronMgr = cronMgr
+	cronMgr.EnableDBSchedules(db, func(ctx context.Context, gatewayName, tool string, args map[string]interface{}) error {
+		traceCtx := trace.WithTraceID(ctx, trace.GenerateID())
+		_, err := app.DispatchToolCall(traceCtx, ToolDispatchRequest{
+			Caller: dispatchCallerGateway,
+			Sender: "gateway:" + gatewayName,
+			Name:   tool,
+			Args:   args,
+		})
+		return err
+	})
 	// External gateway supervisor: manages external gateway binaries (Command set in Gosuto).
 	extGWSupv := supervisor.NewExternalGatewaySupervisor(gateway.ACPBaseURL(acpAddr))
 	app.extGWSupv = extGWSupv

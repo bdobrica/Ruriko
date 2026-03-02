@@ -21,6 +21,28 @@ type Store struct {
 	db *sql.DB
 }
 
+// CronSchedulePayload is the JSON payload for DB-backed cron schedules.
+// It maps directly to the arguments expected by matrix.send_message.
+type CronSchedulePayload struct {
+	TargetAlias string `json:"target_alias"`
+	Message     string `json:"message"`
+}
+
+// CronSchedule is one persisted DB-backed cron schedule row.
+type CronSchedule struct {
+	ID             int64
+	GatewayName    string
+	CronExpression string
+	Tool           string
+	Payload        CronSchedulePayload
+	Enabled        bool
+	LastTriggerAt  sql.NullTime
+	NextTriggerAt  time.Time
+	IsBootstrap    bool
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
 // New opens (or creates) the SQLite database at dbPath and runs all pending
 // migrations.
 func New(dbPath string) (*Store, error) {
@@ -189,6 +211,212 @@ func (s *Store) SetApprovalStatus(approvalID string, status ApprovalStatus, deci
 		string(status), nullableString(decidedBy), nullableString(reason), approvalID,
 	)
 	return err
+}
+
+// CreateCronSchedule inserts a new DB-backed cron schedule and returns its ID.
+func (s *Store) CreateCronSchedule(gatewayName, cronExpression, tool string, payload CronSchedulePayload, enabled bool, nextTriggerAt time.Time) (int64, error) {
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return 0, fmt.Errorf("encode cron payload: %w", err)
+	}
+	res, err := s.db.Exec(`
+		INSERT INTO cron_schedules (gateway_name, cron_expression, tool, payload_json, enabled, next_trigger_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, gatewayName, cronExpression, tool, string(payloadJSON), boolToInt(enabled), nextTriggerAt.UTC())
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// UpdateCronSchedule updates an existing DB-backed cron schedule.
+func (s *Store) UpdateCronSchedule(id int64, cronExpression string, payload CronSchedulePayload, enabled bool, nextTriggerAt time.Time) error {
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("encode cron payload: %w", err)
+	}
+	res, err := s.db.Exec(`
+		UPDATE cron_schedules
+		SET cron_expression = ?, payload_json = ?, enabled = ?, next_trigger_at = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, cronExpression, string(payloadJSON), boolToInt(enabled), nextTriggerAt.UTC(), id)
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return fmt.Errorf("cron schedule %d not found", id)
+	}
+	return nil
+}
+
+// DisableCronSchedule disables a DB-backed cron schedule by ID.
+func (s *Store) DisableCronSchedule(id int64) error {
+	res, err := s.db.Exec(`
+		UPDATE cron_schedules
+		SET enabled = 0, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, id)
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return fmt.Errorf("cron schedule %d not found", id)
+	}
+	return nil
+}
+
+// ListCronSchedules returns persisted DB-backed cron schedules.
+func (s *Store) ListCronSchedules(gatewayName string, enabledOnly bool) ([]CronSchedule, error) {
+	query := `
+		SELECT id, gateway_name, cron_expression, tool, payload_json, enabled,
+		       last_trigger_at, next_trigger_at, is_bootstrap, created_at, updated_at
+		FROM cron_schedules
+		WHERE (? = '' OR gateway_name = ?)
+	`
+	if enabledOnly {
+		query += ` AND enabled = 1`
+	}
+	query += ` ORDER BY id ASC`
+
+	rows, err := s.db.Query(query, gatewayName, gatewayName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]CronSchedule, 0)
+	for rows.Next() {
+		var item CronSchedule
+		var payloadJSON string
+		var enabledInt int
+		var bootstrapInt int
+		if err := rows.Scan(
+			&item.ID,
+			&item.GatewayName,
+			&item.CronExpression,
+			&item.Tool,
+			&payloadJSON,
+			&enabledInt,
+			&item.LastTriggerAt,
+			&item.NextTriggerAt,
+			&bootstrapInt,
+			&item.CreatedAt,
+			&item.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(payloadJSON), &item.Payload); err != nil {
+			return nil, fmt.Errorf("decode cron payload for schedule %d: %w", item.ID, err)
+		}
+		item.Enabled = enabledInt == 1
+		item.IsBootstrap = bootstrapInt == 1
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ListDueCronSchedules returns enabled schedules due at or before now.
+func (s *Store) ListDueCronSchedules(gatewayName string, now time.Time) ([]CronSchedule, error) {
+	rows, err := s.db.Query(`
+		SELECT id, gateway_name, cron_expression, tool, payload_json, enabled,
+		       last_trigger_at, next_trigger_at, is_bootstrap, created_at, updated_at
+		FROM cron_schedules
+		WHERE gateway_name = ? AND enabled = 1 AND next_trigger_at <= ?
+		ORDER BY next_trigger_at ASC, id ASC
+	`, gatewayName, now.UTC())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]CronSchedule, 0)
+	for rows.Next() {
+		var item CronSchedule
+		var payloadJSON string
+		var enabledInt int
+		var bootstrapInt int
+		if err := rows.Scan(
+			&item.ID,
+			&item.GatewayName,
+			&item.CronExpression,
+			&item.Tool,
+			&payloadJSON,
+			&enabledInt,
+			&item.LastTriggerAt,
+			&item.NextTriggerAt,
+			&bootstrapInt,
+			&item.CreatedAt,
+			&item.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(payloadJSON), &item.Payload); err != nil {
+			return nil, fmt.Errorf("decode cron payload for schedule %d: %w", item.ID, err)
+		}
+		item.Enabled = enabledInt == 1
+		item.IsBootstrap = bootstrapInt == 1
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// MarkCronScheduleTriggered records a successful trigger and sets the next run.
+func (s *Store) MarkCronScheduleTriggered(id int64, firedAt, nextTriggerAt time.Time) error {
+	_, err := s.db.Exec(`
+		UPDATE cron_schedules
+		SET last_trigger_at = ?, next_trigger_at = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, firedAt.UTC(), nextTriggerAt.UTC(), id)
+	return err
+}
+
+// MarkCronScheduleNextRun updates only next_trigger_at (used after failures).
+func (s *Store) MarkCronScheduleNextRun(id int64, nextTriggerAt time.Time) error {
+	_, err := s.db.Exec(`
+		UPDATE cron_schedules
+		SET next_trigger_at = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, nextTriggerAt.UTC(), id)
+	return err
+}
+
+// EnsureBootstrapCronSchedule ensures a single bootstrap schedule exists per gateway.
+func (s *Store) EnsureBootstrapCronSchedule(gatewayName, cronExpression, tool string, payload CronSchedulePayload, nextTriggerAt time.Time) error {
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("encode cron payload: %w", err)
+	}
+	_, err = s.db.Exec(`
+		INSERT INTO cron_schedules (
+			gateway_name, cron_expression, tool, payload_json, enabled, next_trigger_at, is_bootstrap
+		)
+		SELECT ?, ?, ?, ?, 1, ?, 1
+		WHERE NOT EXISTS (
+			SELECT 1 FROM cron_schedules WHERE gateway_name = ? AND is_bootstrap = 1
+		)
+	`, gatewayName, cronExpression, tool, string(payloadJSON), nextTriggerAt.UTC(), gatewayName)
+	return err
+}
+
+func boolToInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
 }
 
 // PortfolioPosition represents one user-configured portfolio allocation.

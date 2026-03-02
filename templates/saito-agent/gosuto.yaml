@@ -34,6 +34,21 @@ capabilities:
     tool: matrix.send_message
     allow: true
 
+  - name: allow-schedule-upsert
+    mcp: builtin
+    tool: schedule.upsert
+    allow: true
+
+  - name: allow-schedule-disable
+    mcp: builtin
+    tool: schedule.disable
+    allow: true
+
+  - name: allow-schedule-list
+    mcp: builtin
+    tool: schedule.list
+    allow: true
+
   - name: deny-all-tools
     mcp: "*"
     tool: "*"
@@ -43,8 +58,10 @@ gateways:
   - name: scheduler
     type: cron
     config:
+      source: db
       expression: "*/15 * * * *"
       payload: "Time for a portfolio check."
+      target: "kairo"
 
 messaging:
   allowedTargets:

@@ -5,6 +5,25 @@
 
 ---
 
+## 🧹 Maintenance Updates (2026-03-02)
+
+- Added DB-backed cron schedule persistence in Gitai store:
+  - `internal/gitai/store/migrations/0004_cron_schedules.sql`
+  - `internal/gitai/store/store.go` (cron schedule CRUD + due-row APIs)
+- Added built-in schedule management tools:
+  - `schedule.upsert`
+  - `schedule.disable`
+  - `schedule.list`
+  - implemented in `internal/gitai/builtin/schedule.go`
+- Extended built-in cron gateway with `config.source: db` mode for deterministic execution of due SQLite schedule rows via policy-gated tool dispatch.
+- Updated Saito template to use DB-backed scheduler source and include schedule tool capabilities:
+  - `templates/saito-agent/gosuto.yaml`
+- Added unit coverage for schedule built-ins and DB-backed cron gateway path:
+  - `internal/gitai/builtin/schedule_test.go`
+  - `internal/gitai/gateway/cron_db_test.go`
+
+---
+
 ## 🧹 Maintenance Updates (2026-03-01)
 
 - Renamed phase-specific live verification scripts to canonical names:

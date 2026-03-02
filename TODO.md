@@ -77,6 +77,7 @@ The following is built and functional:
 - ✅ **R11–R13**: Event gateways — schema/types, Gitai runtime integration, Ruriko-side wiring
 - ✅ **R14**: Gosuto persona/instructions separation — three-layer model, system prompt assembly, template updates
 - ✅ **R15**: Built-in Matrix messaging tool — `matrix.send_message`, policy engine integration, mesh topology provisioning, audit/breadcrumbs, template updates
+- ✅ **R19 (maintenance)**: DB-backed cron scheduling for Gitai — `schedule.*` built-ins, SQLite `cron_schedules` table, cron gateway `source: db` mode, Saito template wiring
 - ✅ **R10**: Conversation memory — STM tracker, LTM interface, seal pipeline, context assembly, SQLite/OpenAI/LLM persistent backends
 
 ---

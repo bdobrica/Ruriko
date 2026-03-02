@@ -178,12 +178,20 @@ There are two categories:
 
 #### Built-in type: `cron`
 
-Emits a periodic event based on a cron expression. The event is delivered as a `POST /events/{name}` to the agent's own ACP listener. No external process is spawned — this is a goroutine inside the Gitai binary.
+Supports two cron sources:
+
+- `source: static` (default): emits `cron.tick` events based on `config.expression` and forwards them through ACP `POST /events/{name}`.
+- `source: db`: executes due schedules from the agent's internal SQLite `cron_schedules` table. These rows are typically managed by built-in tools (`schedule.upsert`, `schedule.disable`, `schedule.list`) and dispatched deterministically as tool calls.
+
+No external process is spawned — both modes run as goroutines inside the Gitai binary.
 
 | Config key    | Type   | Required | Description                                                   |
 |---------------|--------|----------|---------------------------------------------------------------|
-| `expression`  | string | ✅       | Standard 5-field cron expression (minute hour dom month dow). |
-| `payload`     | string | ❌       | Static text included in the event envelope's `payload.message` field. Passed to the LLM as the "user message" for this event trigger. |
+| `source`      | string | ❌       | `static` (default) or `db`.                                   |
+| `expression`  | string | ✅*      | Standard 5-field cron expression (minute hour dom month dow). Required for `source: static`. Optional bootstrap expression for `source: db`. |
+| `payload`     | string | ❌       | For `source: static`: event `payload.message`. For `source: db`: optional bootstrap message (requires `target`). |
+| `target`      | string | ❌       | Only used by `source: db` bootstrap; target alias for bootstrap `matrix.send_message` row. |
+| `poll_interval` | string | ❌     | Only used by `source: db`; Go duration (default `15s`) controlling due-row polling. |
 
 **Example:**
 
@@ -192,7 +200,9 @@ gateways:
   - name: market-check
     type: cron
     config:
+      source: db
       expression: "*/15 9-16 * * 1-5"
+      target: kairo
       payload: "Check portfolio performance and market state"
 ```
 

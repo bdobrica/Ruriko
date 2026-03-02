@@ -423,8 +423,26 @@ func validateGateway(g Gateway) error {
 	if hasType {
 		switch g.Type {
 		case "cron":
-			if strings.TrimSpace(g.Config["expression"]) == "" {
-				return fmt.Errorf("type %q requires config.expression to be set", g.Type)
+			source := strings.TrimSpace(g.Config["source"])
+			if source == "" {
+				source = "static"
+			}
+			switch source {
+			case "static":
+				if strings.TrimSpace(g.Config["expression"]) == "" {
+					return fmt.Errorf("type %q with source %q requires config.expression to be set", g.Type, source)
+				}
+			case "db":
+				if strings.TrimSpace(g.Config["expression"]) != "" {
+					if strings.TrimSpace(g.Config["target"]) == "" {
+						return fmt.Errorf("type %q with source %q and bootstrap expression requires config.target", g.Type, source)
+					}
+					if strings.TrimSpace(g.Config["payload"]) == "" {
+						return fmt.Errorf("type %q with source %q and bootstrap expression requires config.payload", g.Type, source)
+					}
+				}
+			default:
+				return fmt.Errorf("type %q has unknown config.source %q; valid values are \"static\" and \"db\"", g.Type, source)
 			}
 		case "webhook":
 			if g.Config["authType"] == "hmac-sha256" {
