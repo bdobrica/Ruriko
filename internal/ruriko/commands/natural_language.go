@@ -1222,7 +1222,10 @@ var positionalToFlagMapping = map[string][]string{
 // action key. Values in these flags are normalised to lowercase in the NL
 // dispatch path before command execution.
 var actionAgentIDFlagMapping = map[string]string{
-	"agents.create": "name",
+	"agents.create":    "name",
+	"schedule.upsert":  "agent",
+	"schedule.disable": "agent",
+	"schedule.list":    "agent",
 }
 
 // actionAgentIDArgIndexMapping defines actions whose positional argument at

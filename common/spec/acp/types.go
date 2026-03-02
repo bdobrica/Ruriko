@@ -62,6 +62,18 @@ type ApprovalDecisionRequest struct {
 	Reason     string `json:"reason,omitempty"`
 }
 
+// ToolCallRequest is the body for POST /tools/call.
+type ToolCallRequest struct {
+	ToolRef string                 `json:"tool_ref"`
+	Args    map[string]interface{} `json:"args,omitempty"`
+	Sender  string                 `json:"sender,omitempty"`
+}
+
+// ToolCallResponse is returned by POST /tools/call.
+type ToolCallResponse struct {
+	Result string `json:"result"`
+}
+
 // ErrorResponse is returned by ACP endpoints on errors.
 type ErrorResponse struct {
 	Error string `json:"error"`

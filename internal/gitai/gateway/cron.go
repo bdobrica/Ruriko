@@ -332,13 +332,13 @@ type cronJob struct {
 // Gosuto config. It mirrors the supervisor.Supervisor pattern: New() creates
 // an idle manager; Reconcile() starts/stops jobs; Stop() tears everything down.
 type Manager struct {
-	mu     sync.Mutex
-	jobs   map[string]*cronJob
-	acpURL string
-	client *http.Client
-	ctx    context.Context
-	cancel context.CancelFunc
-	clk    clock
+	mu         sync.Mutex
+	jobs       map[string]*cronJob
+	acpURL     string
+	client     *http.Client
+	ctx        context.Context
+	cancel     context.CancelFunc
+	clk        clock
 	dbStore    DBCronStore
 	dbDispatch CronToolDispatcher
 }

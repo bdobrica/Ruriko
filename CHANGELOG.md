@@ -21,6 +21,17 @@
 - Added unit coverage for schedule built-ins and DB-backed cron gateway path:
   - `internal/gitai/builtin/schedule_test.go`
   - `internal/gitai/gateway/cron_db_test.go`
+- Added deterministic ACP tool-call endpoint and shared schema:
+  - `POST /tools/call` in `internal/gitai/control/server.go`
+  - shared DTOs in `common/spec/acp/types.go`
+  - client support in `internal/ruriko/runtime/acp/client.go`
+- Added Ruriko schedule control commands wired to ACP tool calls:
+  - `schedule.upsert`
+  - `schedule.disable`
+  - `schedule.list`
+  - implemented in `internal/ruriko/commands/schedule_handlers.go`
+  - registered in `internal/ruriko/app/app.go`
+  - exposed to NLP catalogue in `internal/ruriko/nlp/prompt.go`
 
 ---
 

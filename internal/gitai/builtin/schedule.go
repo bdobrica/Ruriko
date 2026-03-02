@@ -27,15 +27,15 @@ type ScheduleStore interface {
 
 // ScheduleUpsertTool creates or updates a DB-backed cron schedule.
 type ScheduleUpsertTool struct {
-	store   ScheduleStore
-	now     func() time.Time
+	store    ScheduleStore
+	now      func() time.Time
 	nextTick func(expr string, now time.Time) (time.Time, error)
 }
 
 func NewScheduleUpsertTool(s ScheduleStore) *ScheduleUpsertTool {
 	return &ScheduleUpsertTool{
-		store:   s,
-		now:     time.Now,
+		store:    s,
+		now:      time.Now,
 		nextTick: gateway.NextCronTick,
 	}
 }

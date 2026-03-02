@@ -271,6 +271,56 @@ func TestCancelEndpoint_Unavailable(t *testing.T) {
 	}
 }
 
+func TestToolCallEndpoint_ExecutesTool(t *testing.T) {
+	var (
+		gotSender string
+		gotTool   string
+		gotArgs   map[string]interface{}
+	)
+
+	srv := control.New(":0", control.Handlers{
+		AgentID:   "test",
+		Version:   "v0.1",
+		StartedAt: time.Now(),
+		ExecuteTool: func(_ context.Context, sender, toolRef string, args map[string]interface{}) (string, error) {
+			gotSender = sender
+			gotTool = toolRef
+			gotArgs = args
+			return "done", nil
+		},
+	})
+	ts := httptest.NewServer(srv.TestHandler())
+	defer ts.Close()
+
+	body, _ := json.Marshal(control.ToolCallRequest{
+		ToolRef: "schedule.upsert",
+		Args: map[string]interface{}{
+			"cron_expression": "0 8 * * *",
+		},
+		Sender: "@admin:example.com",
+	})
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/tools/call", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Idempotency-Key", "k1")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /tools/call: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if gotSender != "@admin:example.com" {
+		t.Errorf("sender = %q, want %q", gotSender, "@admin:example.com")
+	}
+	if gotTool != "schedule.upsert" {
+		t.Errorf("tool = %q, want %q", gotTool, "schedule.upsert")
+	}
+	if gotArgs == nil || gotArgs["cron_expression"] != "0 8 * * *" {
+		t.Errorf("args = %#v", gotArgs)
+	}
+}
+
 func TestApprovalDecisionEndpoint_RecordsApprove(t *testing.T) {
 	var (
 		called     bool

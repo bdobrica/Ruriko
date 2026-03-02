@@ -160,6 +160,24 @@ func DefaultCatalogue() Catalogue {
 			Description: "Soft-disable an agent and optionally deactivate its Matrix account.",
 		},
 
+		// ----- schedule ------------------------------------------------------
+		{
+			Action:      "schedule.upsert",
+			Usage:       "/ruriko schedule upsert --agent <id> --cron <expr> --target <alias> --message <text> [--id <n>] [--enabled true|false]",
+			Description: "Create or update a DB-backed schedule on an agent.",
+		},
+		{
+			Action:      "schedule.disable",
+			Usage:       "/ruriko schedule disable --agent <id> --id <n>",
+			Description: "Disable a DB-backed schedule by ID on an agent.",
+		},
+		{
+			Action:      "schedule.list",
+			Usage:       "/ruriko schedule list --agent <id> [--enabled true|false] [--gateway <name>]",
+			Description: "List DB-backed schedules from an agent.",
+			ReadOnly:    true,
+		},
+
 		// ----- secrets -------------------------------------------------------
 		{
 			Action:      "secrets.list",

@@ -50,6 +50,9 @@ func TestDefaultCatalogue_ContainsAllRegisteredActionKeys(t *testing.T) {
 		"agents.delete",
 		"agents.matrix",
 		"agents.disable",
+		"schedule.upsert",
+		"schedule.disable",
+		"schedule.list",
 		"secrets.list",
 		"secrets.set",
 		"secrets.info",
@@ -101,6 +104,7 @@ func TestDefaultCatalogue_ReadOnlyAnnotations(t *testing.T) {
 		"agents.status":   true,
 		"secrets.list":    true,
 		"secrets.info":    true,
+		"schedule.list":   true,
 		"gosuto.show":     true,
 		"gosuto.versions": true,
 		"gosuto.diff":     true,
@@ -129,6 +133,7 @@ func TestDefaultCatalogue_ReadOnlyAnnotations(t *testing.T) {
 	// Mutation commands must NOT be read-only.
 	mutations := []string{
 		"agents.create", "agents.stop", "agents.delete",
+		"schedule.upsert", "schedule.disable",
 		"secrets.set", "secrets.delete",
 		"gosuto.set", "gosuto.rollback", "gosuto.push",
 		"approve", "deny",

@@ -135,6 +135,8 @@ type SecretsApplyRequest = acpspec.SecretsApplyRequest
 type SecretLease = acpspec.SecretLease
 type SecretsTokenRequest = acpspec.SecretsTokenRequest
 type ApprovalDecisionRequest = acpspec.ApprovalDecisionRequest
+type ToolCallRequest = acpspec.ToolCallRequest
+type ToolCallResponse = acpspec.ToolCallResponse
 
 // kuzeRedeemResponse mirrors the JSON returned by GET /kuze/redeem/<token>.
 type kuzeRedeemResponse struct {
@@ -191,6 +193,10 @@ type Handlers struct {
 	// Called by POST /approvals/decision.
 	RecordApprovalDecision func(approvalID, decision, decidedBy, reason string) error
 
+	// ExecuteTool deterministically executes a tool call through the runtime
+	// policy and dispatch pipeline.
+	ExecuteTool func(ctx context.Context, sender, toolRef string, args map[string]interface{}) (string, error)
+
 	// ActiveConfig returns the currently applied Gosuto config, or nil when no
 	// config has been loaded. Used by POST /events/{source} to validate gateway
 	// names and read MaxEventsPerMinute rate-limit settings.
@@ -246,6 +252,7 @@ func New(addr string, h Handlers) *Server {
 	innerMux.HandleFunc("/process/restart", s.handleRestart)
 	innerMux.HandleFunc("/tasks/cancel", s.handleCancel)
 	innerMux.HandleFunc("/approvals/decision", s.handleApprovalDecision)
+	innerMux.HandleFunc("/tools/call", s.handleToolCall)
 
 	// outerMux: event ingress lives here with its own per-handler auth
 	// (built-in gateways on localhost bypass bearer-token auth; external
@@ -651,6 +658,64 @@ func (s *Server) handleApprovalDecision(w http.ResponseWriter, r *http.Request) 
 	}
 
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "recorded"})
+}
+
+func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if key := r.Header.Get("X-Idempotency-Key"); key != "" {
+		if cached, ok := s.idemCache.get(key); ok {
+			slog.Debug("ACP: idempotent replay", "path", "/tools/call", "key", key)
+			w.WriteHeader(cached.status)
+			w.Write(cached.body)
+			return
+		}
+	}
+
+	if s.handlers.ExecuteTool == nil {
+		writeError(w, http.StatusServiceUnavailable, "tool execution not available")
+		return
+	}
+
+	var req ToolCallRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request: "+err.Error())
+		return
+	}
+	if strings.TrimSpace(req.ToolRef) == "" {
+		writeError(w, http.StatusBadRequest, "tool_ref must not be empty")
+		return
+	}
+	if req.Args == nil {
+		req.Args = map[string]interface{}{}
+	}
+	sender := strings.TrimSpace(req.Sender)
+	if sender == "" {
+		sender = "ruriko"
+	}
+
+	result, err := s.handlers.ExecuteTool(r.Context(), sender, req.ToolRef, req.Args)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+
+	body, err := json.Marshal(ToolCallResponse{Result: result})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to encode response")
+		return
+	}
+
+	if key := r.Header.Get("X-Idempotency-Key"); key != "" {
+		s.idemCache.set(key, http.StatusOK, body)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
 }
 
 // handleEventIngress handles POST /events/{source} (R12.1 + R12.4).

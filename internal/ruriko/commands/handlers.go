@@ -261,6 +261,11 @@ func (h *Handlers) HandleHelp(ctx context.Context, cmd *Command, evt *event.Even
 • /ruriko agents matrix register <name> [--mxid <existing>] - Provision Matrix account
 • /ruriko agents disable <name> [--erase] - Soft-disable agent (deactivates Matrix account)
 
+**Schedule Commands:**
+• /ruriko schedule upsert --agent <id> --cron <expr> --target <alias> --message <text> [--id <n>] [--enabled true|false] - Create/update a DB-backed schedule on an agent
+• /ruriko schedule disable --agent <id> --id <n> - Disable a schedule by ID on an agent
+• /ruriko schedule list --agent <id> [--enabled true|false] [--gateway <name>] - List schedules from an agent
+
 **Secrets Commands (admin only):**
 • /ruriko secrets list - List secret names and metadata
 • /ruriko secrets set <name> --type <type> - Issue one-time Kuze link to store/update a secret

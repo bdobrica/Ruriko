@@ -47,6 +47,7 @@ const (
 	dispatchCallerLLM      = "llm"
 	dispatchCallerWorkflow = "workflow"
 	dispatchCallerGateway  = "gateway"
+	dispatchCallerControl  = "control"
 )
 
 // approvalGate is the subset of approvals.Gate used by the app dispatcher.
@@ -358,6 +359,14 @@ func New(cfg *Config) (*App, error) {
 				status = store.ApprovalApproved
 			}
 			return app.approvalGt.RecordDecision(approvalID, status, decidedBy, reason)
+		},
+		ExecuteTool: func(ctx context.Context, sender, toolRef string, args map[string]interface{}) (string, error) {
+			return app.DispatchToolCall(ctx, ToolDispatchRequest{
+				Caller: dispatchCallerControl,
+				Sender: sender,
+				Name:   toolRef,
+				Args:   args,
+			})
 		},
 		// HandleEvent dispatches inbound gateway events to the turn engine.
 		// The method must be non-blocking; the actual work runs in a goroutine.

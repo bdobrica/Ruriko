@@ -74,6 +74,8 @@ type ConfigApplyRequest = acpspec.ConfigApplyRequest
 type SecretsApplyRequest = acpspec.SecretsApplyRequest
 type SecretLease = acpspec.SecretLease
 type SecretsTokenRequest = acpspec.SecretsTokenRequest
+type ToolCallRequest = acpspec.ToolCallRequest
+type ToolCallResponse = acpspec.ToolCallResponse
 type ErrorResponse = acpspec.ErrorResponse
 
 // Health calls GET /health and returns the response.
@@ -133,6 +135,17 @@ func (c *Client) Cancel(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, timeoutMutate)
 	defer cancel()
 	return c.post(ctx, "/tasks/cancel", nil, nil, true)
+}
+
+// CallTool requests deterministic execution of a built-in tool on the agent.
+func (c *Client) CallTool(ctx context.Context, req ToolCallRequest) (*ToolCallResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeoutMutate)
+	defer cancel()
+	var resp ToolCallResponse
+	if err := c.post(ctx, "/tools/call", req, &resp, true); err != nil {
+		return nil, fmt.Errorf("call tool: %w", err)
+	}
+	return &resp, nil
 }
 
 // --- internal helpers ---

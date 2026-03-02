@@ -11,12 +11,12 @@ import (
 )
 
 type scheduleStoreStub struct {
-	nextID   int64
-	items    map[int64]store.CronSchedule
-	createErr error
-	updateErr error
+	nextID     int64
+	items      map[int64]store.CronSchedule
+	createErr  error
+	updateErr  error
 	disableErr error
-	listErr  error
+	listErr    error
 }
 
 func newScheduleStoreStub() *scheduleStoreStub {

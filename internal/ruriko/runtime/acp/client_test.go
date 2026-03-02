@@ -228,3 +228,42 @@ func TestClient_ApplySecretsToken(t *testing.T) {
 		t.Errorf("lease[0].SecretRef = %q; want openai_api_key", gotBody.Leases[0].SecretRef)
 	}
 }
+
+func TestClient_CallTool(t *testing.T) {
+	var gotMethod, gotPath string
+	var gotReq acp.ToolCallRequest
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&gotReq); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if r.Header.Get("X-Idempotency-Key") == "" {
+			t.Error("expected X-Idempotency-Key on /tools/call")
+		}
+		_ = json.NewEncoder(w).Encode(acp.ToolCallResponse{Result: "ok"})
+	}))
+	defer ts.Close()
+
+	client := acp.New(ts.URL)
+	resp, err := client.CallTool(context.Background(), acp.ToolCallRequest{
+		ToolRef: "schedule.list",
+		Args: map[string]interface{}{
+			"gateway": "scheduler",
+		},
+		Sender: "@admin:example.com",
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/tools/call" {
+		t.Fatalf("expected POST /tools/call, got %s %s", gotMethod, gotPath)
+	}
+	if gotReq.ToolRef != "schedule.list" {
+		t.Errorf("tool_ref = %q, want %q", gotReq.ToolRef, "schedule.list")
+	}
+	if resp == nil || resp.Result != "ok" {
+		t.Errorf("response = %+v, want result=ok", resp)
+	}
+}
