@@ -1,5 +1,31 @@
 package workflow
 
+import "time"
+
+// TraceMetadata captures deterministic per-run metadata for workflow audit and diagnostics.
+type TraceMetadata struct {
+	TraceID        string
+	ProtocolID     string
+	RoomID         string
+	SenderMXID     string
+	StartedAt      time.Time
+	CompletedAt    time.Time
+	DurationMS     int64
+	Status         string
+	Error          string
+	ToolCalls      int
+	StepsTotal     int
+	StepsCompleted int
+}
+
+// FinalOutput captures the terminal workflow result contract.
+type FinalOutput struct {
+	StepKey   string
+	StepIndex int
+	StepType  string
+	Value     interface{}
+}
+
 // State is the mutable deterministic execution state for one protocol run.
 type State struct {
 	TraceID     string
@@ -8,15 +34,17 @@ type State struct {
 	ProtocolID  string
 	Input       map[string]interface{}
 	Values      map[string]interface{}
-	StepOutputs map[string]interface{}
+	StepOutputs map[string]map[string]interface{}
 	FinalOutput string
+	Final       FinalOutput
+	Trace       TraceMetadata
 }
 
 // NewStateFromExecutionContext builds State from an ExecutionContext.
 func NewStateFromExecutionContext(ctx *ExecutionContext) *State {
 	state := &State{
 		Values:      make(map[string]interface{}),
-		StepOutputs: make(map[string]interface{}),
+		StepOutputs: make(map[string]map[string]interface{}),
 	}
 	if ctx == nil {
 		return state
@@ -27,6 +55,14 @@ func NewStateFromExecutionContext(ctx *ExecutionContext) *State {
 	state.ProtocolID = ctx.ProtocolID
 	state.Input = cloneMap(ctx.Input)
 	state.Values = cloneMap(ctx.State)
+	state.Trace = TraceMetadata{
+		TraceID:    ctx.TraceID,
+		ProtocolID: ctx.ProtocolID,
+		RoomID:     ctx.RoomID,
+		SenderMXID: ctx.SenderMXID,
+		StartedAt:  time.Now().UTC(),
+		Status:     "running",
+	}
 	return state
 }
 
