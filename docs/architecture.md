@@ -3,7 +3,7 @@
 > **High-level architecture and component interactions**
 
 **Version**: 0.1.0  
-**Last Updated**: 2026-02-22  
+**Last Updated**: 2026-03-08  
 **Status**: Living Document
 
 > For the canonical product story, user UX contract, and full glossary see
@@ -589,6 +589,41 @@ Audit logged on both sides (sender, target room, trace ID)
 This is the **peer-to-peer model**: Ruriko configured both agents and their
 policies (which rooms they can message, what tools they have), but the actual
 collaboration happens directly between agents over Matrix.
+
+### 6. Operator Recipe: Peer Override Topology (Provision Time)
+
+Use this command path when you want a non-canonical peer mesh (for example,
+wire `kumo-agent` to `marketbot` instead of `kairo`) without editing YAML by
+hand.
+
+1. Create the agent with explicit peer overrides.
+2. Verify provisioning converged and Gosuto was applied.
+3. Inspect rendered trust/workflow wiring from the applied config.
+
+```bash
+/ruriko agents create \
+    --name kumo-marketbot \
+    --template kumo-agent \
+    --image gitai:latest \
+    --peer-alias marketbot \
+    --peer-mxid @marketbot:localhost \
+    --peer-room '!marketbot-admin:localhost' \
+    --peer-protocol-id marketbot.news.request.v1 \
+    --peer-protocol-prefix MARKETBOT_NEWS_REQUEST
+
+/ruriko agents status kumo-marketbot
+/ruriko gosuto show kumo-marketbot
+```
+
+Peer override flags:
+- `--peer-alias`
+- `--peer-mxid`
+- `--peer-room`
+- `--peer-protocol-id`
+- `--peer-protocol-prefix`
+
+For full topology field semantics and additional examples, see
+`docs/ops/agent-mesh-topology.md`.
 
 ---
 

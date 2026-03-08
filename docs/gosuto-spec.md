@@ -89,6 +89,10 @@ Additional trusted-peer validation:
 - `protocols` must be non-empty.
 - Duplicate `(mxid, roomId, protocol)` tuples are rejected.
 
+Operator recipe for provision-time peer overrides (without manual YAML edits):
+- `docs/architecture.md#6-operator-recipe-peer-override-topology-provision-time`
+- `docs/ops/agent-mesh-topology.md#provision-time-peer-overrides-operator-commands`
+
 ---
 
 ### `limits` *(optional)*

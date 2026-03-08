@@ -11,6 +11,10 @@
   topologies in:
   - `OPERATIONS.md`
   - `docs/ops/agent-mesh-topology.md`
+- Added high-level architecture operator recipe and spec cross-links for the
+  same peer override pathway:
+  - `docs/architecture.md`
+  - `docs/gosuto-spec.md`
 - Documented explicit provisioning flags for peer topology wiring:
   - `--peer-alias`
   - `--peer-mxid`
