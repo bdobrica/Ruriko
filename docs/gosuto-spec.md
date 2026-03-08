@@ -376,6 +376,7 @@ Common step fields:
 |------------------|--------|----------|-------------|
 | `type`           | string | ✅       | Step type |
 | `retries`        | int    | ❌       | Step retry override (`>= 0`) |
+| `maxOutputItems` | int    | ❌       | Generic array output guard (`>= 0`; `0` disables the guard) |
 | `inputSchemaRef` | string | ❌       | Optional schema key |
 | `outputSchemaRef`| string | ❌       | Optional schema key |
 

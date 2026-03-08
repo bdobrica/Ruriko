@@ -87,6 +87,7 @@ Every step is an object with:
 - `input` (optional): input binding expression/config
 - `output` (optional): output binding target
 - `retries` (optional): per-step override
+- `maxOutputItems` (optional): generic array output cardinality guard
 - Type-specific fields (required per type)
 
 ---

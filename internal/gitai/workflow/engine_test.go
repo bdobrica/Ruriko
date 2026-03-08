@@ -558,6 +558,69 @@ func TestEngineExecuteProtocol_Collect_ModeItemAndFlatten(t *testing.T) {
 	}
 }
 
+func TestEngineExecuteProtocol_MaxOutputItems_ArrayOutputRejectedWhenExceeded(t *testing.T) {
+	dispatcher := &fakeDispatcher{}
+	runner := NewRunner(dispatcher)
+
+	protocol := gosutospec.WorkflowProtocol{
+		ID: "kumo.news.request.v1",
+		Steps: []gosutospec.WorkflowProtocolStep{
+			{
+				Type:           "collect",
+				CollectFrom:    "{{input.items}}",
+				CollectMode:    "entry",
+				MaxOutputItems: 1,
+			},
+		},
+	}
+
+	_, _, err := runner.Run(context.Background(), protocol, NewStateFromExecutionContext(NewExecutionContext("trace-1", "!room:example.com", "@peer:example.com", &InboundProtocolMatch{
+		Protocol: protocol,
+		Payload: map[string]interface{}{
+			"items": []interface{}{"a", "b"},
+		},
+	})))
+	if err == nil {
+		t.Fatal("Run() expected maxOutputItems error")
+	}
+	if !HasCode(err, CodeSchemaValidation) {
+		t.Fatalf("expected schema validation error code, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "exceeds maxOutputItems") {
+		t.Fatalf("expected maxOutputItems error, got: %v", err)
+	}
+}
+
+func TestEngineExecuteProtocol_MaxOutputItems_NonArrayOutputIgnored(t *testing.T) {
+	dispatcher := &fakeDispatcher{}
+	runner := NewRunner(dispatcher)
+
+	protocol := gosutospec.WorkflowProtocol{
+		ID: "kumo.news.request.v1",
+		Steps: []gosutospec.WorkflowProtocolStep{
+			{
+				Type:           "persist",
+				PersistKey:     "last_topic",
+				PersistValue:   "{{input.topic}}",
+				MaxOutputItems: 1,
+			},
+		},
+	}
+
+	result, _, err := runner.Run(context.Background(), protocol, NewStateFromExecutionContext(NewExecutionContext("trace-1", "!room:example.com", "@peer:example.com", &InboundProtocolMatch{
+		Protocol: protocol,
+		Payload: map[string]interface{}{
+			"topic": "earnings",
+		},
+	})))
+	if err != nil {
+		t.Fatalf("Run() unexpected error: %v", err)
+	}
+	if result != "earnings" {
+		t.Fatalf("Run() result = %q, want earnings", result)
+	}
+}
+
 func TestEngineExecuteProtocol_Collect_ModeOutputs(t *testing.T) {
 	dispatcher := &fakeDispatcher{}
 	runner := NewRunner(dispatcher)

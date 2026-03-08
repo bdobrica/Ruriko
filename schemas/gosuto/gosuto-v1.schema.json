@@ -626,6 +626,10 @@
           "type": "integer",
           "minimum": 0
         },
+        "maxOutputItems": {
+          "type": "integer",
+          "minimum": 0
+        },
         "targetAlias": {
           "type": "string"
         },

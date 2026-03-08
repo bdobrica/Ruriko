@@ -70,6 +70,9 @@ func (r *Runner) Run(ctx context.Context, protocol gosutospec.WorkflowProtocol, 
 			if err := validateStepOutputSchema(protocol.ID, step, result, state); err != nil {
 				return err
 			}
+			if err := validateStepMaxOutputItems(protocol.ID, step, result); err != nil {
+				return err
+			}
 			stepResult = result
 			stepToolCalls += callCount
 			toolCalls += callCount
@@ -293,6 +296,9 @@ func (r *Runner) runStep(ctx context.Context, protocolID string, step gosutospec
 				if err := validateStepOutputSchema(protocolID, nestedStep, nestedResult, state); err != nil {
 					return nil, totalNestedToolCalls, fmt.Errorf("for_each iteration %d nested step %d (%s) output validation failed: %w", i, nestedIndex, nestedStep.Type, err)
 				}
+				if err := validateStepMaxOutputItems(protocolID, nestedStep, nestedResult); err != nil {
+					return nil, totalNestedToolCalls, fmt.Errorf("for_each iteration %d nested step %d (%s) output cardinality failed: %w", i, nestedIndex, nestedStep.Type, err)
+				}
 				nestedKey := stepPrefix + strconv.Itoa(nestedIndex)
 				outputs[nestedKey] = nestedResult
 				if outputPresent(nestedResult) {
@@ -459,6 +465,28 @@ func parseStructuredJSON(raw string) (interface{}, error) {
 
 func validateStepOutputSchema(protocolID string, step gosutospec.WorkflowProtocolStep, output interface{}, state *State) error {
 	return validateOutputAgainstSchemaRef(protocolID, step.OutputSchemaRef, output, state)
+}
+
+func validateStepMaxOutputItems(protocolID string, step gosutospec.WorkflowProtocolStep, output interface{}) error {
+	if step.MaxOutputItems <= 0 {
+		return nil
+	}
+	items, ok := asOptionalInterfaceSlice(output)
+	if !ok {
+		return nil
+	}
+	if len(items) <= step.MaxOutputItems {
+		return nil
+	}
+	return &Error{
+		Code:       CodeSchemaValidation,
+		ProtocolID: protocolID,
+		Message: fmt.Sprintf(
+			"step output item count %d exceeds maxOutputItems %d",
+			len(items),
+			step.MaxOutputItems,
+		),
+	}
 }
 
 func validateOutputAgainstSchemaRef(protocolID, schemaRef string, output interface{}, state *State) error {

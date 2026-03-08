@@ -219,6 +219,10 @@ type WorkflowProtocolStep struct {
 	// Retries is the step-level retry budget.
 	Retries int `yaml:"retries,omitempty" json:"retries,omitempty"`
 
+	// MaxOutputItems limits array-shaped step outputs. 0 disables this guard.
+	// When >0 and a step output is an array, runtime enforces len(output) <= MaxOutputItems.
+	MaxOutputItems int `yaml:"maxOutputItems,omitempty" json:"maxOutputItems,omitempty"`
+
 	// TargetAlias is used by type=send_message.
 	TargetAlias string `yaml:"targetAlias,omitempty" json:"targetAlias,omitempty"`
 

@@ -294,6 +294,9 @@ func validateWorkflow(w Workflow) error {
 		if step.Retries < 0 {
 			return fmt.Errorf("workflow protocol %s, %s: retries must be >= 0", protocolID, stepPath)
 		}
+		if step.MaxOutputItems < 0 {
+			return fmt.Errorf("workflow protocol %s, %s: maxOutputItems must be >= 0", protocolID, stepPath)
+		}
 		if ref := step.InputSchemaRef; ref != "" {
 			if err := validateSchemaRef(protocolID, "inputSchemaRef", ref, topLevelStepIndex); err != nil {
 				return err

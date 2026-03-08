@@ -2128,3 +2128,42 @@ workflow:
 		t.Errorf("error should mention prefix whitespace restriction, got: %v", err)
 	}
 }
+
+func TestValidate_WorkflowStep_MaxOutputItemsNegativeRejected(t *testing.T) {
+	_, err := parseR61YAML(r61Base + r61Trust + `
+workflow:
+	protocols:
+		- id: "kairo.news.request.v1"
+			trigger:
+				type: "matrix.protocol_message"
+				prefix: "KAIRO_NEWS_REQUEST"
+			steps:
+				- type: "collect"
+					collectFrom: "{{input.items}}"
+					maxOutputItems: -1
+`)
+	if err == nil {
+		t.Fatal("expected error for negative maxOutputItems, got nil")
+	}
+	if !strings.Contains(err.Error(), "maxOutputItems must be >= 0") {
+		t.Errorf("error should mention maxOutputItems lower bound, got: %v", err)
+	}
+}
+
+func TestValidate_WorkflowStep_MaxOutputItemsZeroAllowed(t *testing.T) {
+	_, err := parseR61YAML(r61Base + r61Trust + `
+workflow:
+	protocols:
+		- id: "kairo.news.request.v1"
+			trigger:
+				type: "matrix.protocol_message"
+				prefix: "KAIRO_NEWS_REQUEST"
+			steps:
+				- type: "collect"
+					collectFrom: "{{input.items}}"
+					maxOutputItems: 0
+`)
+	if err != nil {
+		t.Fatalf("maxOutputItems=0 should be valid: %v", err)
+	}
+}
