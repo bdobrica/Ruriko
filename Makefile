@@ -1,4 +1,4 @@
-.PHONY: all build build-ruriko build-gitai build-tools test test-integration test-integration-nlp test-saito-scheduling test-saito-scheduling-live-precheck test-saito-scheduling-live test-ruriko-saito-operator-live test-canonical-workflow-live-provisioning test-canonical-workflow-live-admin-room test-canonical-workflow-live-compose test-canonical-workflow-live-security test-canonical-workflow-live lint fmt clean run-ruriko run-gitai install help
+.PHONY: all build build-ruriko build-gitai build-tools test test-integration test-integration-nlp test-saito-scheduling test-saito-scheduling-live-precheck test-saito-scheduling-live test-ruriko-saito-operator-live test-canonical-workflow-live-provisioning test-canonical-workflow-live-admin-room test-canonical-workflow-live-compose test-canonical-workflow-live-compose-3cycles test-canonical-workflow-live-security test-canonical-workflow-live lint fmt clean run-ruriko run-gitai install help
 
 # Build variables
 BINARY_DIR := bin
@@ -85,6 +85,10 @@ test-canonical-workflow-live-admin-room: ## Check canonical Matrix admin-room to
 test-canonical-workflow-live-compose: ## Run canonical live compose suite (provisioning + admin-room + cycle)
 	@echo "Running canonical live compose suite..."
 	bash ./test/integration/test-canonical-workflow-live-compose-suite.sh
+
+test-canonical-workflow-live-compose-3cycles: ## Run full canonical compose chain verification with 3 required cycles
+	@echo "Running canonical live compose chain check (3 cycles)..."
+	CANONICAL_REQUIRED_CYCLES=3 CANONICAL_VERIFY_STAGE=full bash ./test/integration/test-canonical-workflow-live-compose.sh
 
 test-canonical-workflow-live-security: ## Run canonical live security checks (secrets/logs, workflow MCP-bypass guard, approval ledger)
 	@echo "Running canonical live security checks..."

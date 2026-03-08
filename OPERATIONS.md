@@ -626,7 +626,13 @@ Run live canonical cycle verification:
 make test-canonical-workflow-live-compose
 ```
 
-Default assertions (`CANONICAL_REQUIRED_CYCLES=3`):
+Run strict full-chain verification with three consecutive cycles (Phase 7 hardening path):
+
+```bash
+make test-canonical-workflow-live-compose-3cycles
+```
+
+Default assertions for `test-canonical-workflow-live-compose-3cycles` (`CANONICAL_REQUIRED_CYCLES=3`):
 - Saito logs show `cron.tick`
 - Saito → Kairo successful `matrix.send_message`
 - Kairo → Kumo successful `matrix.send_message`

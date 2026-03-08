@@ -5,6 +5,18 @@
 
 ---
 
+## 🧹 Maintenance Updates (2026-03-08 · phase 7 hardening kickoff)
+
+- Added a strict canonical live verification entry point for full-chain, three-cycle compose checks:
+  - `make test-canonical-workflow-live-compose-3cycles`
+  - wires `CANONICAL_VERIFY_STAGE=full` and `CANONICAL_REQUIRED_CYCLES=3` into `test/integration/test-canonical-workflow-live-compose.sh`
+- Updated operator docs to surface the strict 3-cycle path:
+  - `OPERATIONS.md`
+  - `README.md`
+- Updated workflow-engine temporary plan and roadmap status to mark Phase 7 as in progress.
+
+---
+
 ## 🧹 Maintenance Updates (2026-03-08 · phase 5 closure proof)
 
 - Added direct peer-generic closure proof for Kumo on the real template:

@@ -234,6 +234,7 @@ Run canonical live checks (compose + security):
 
 * `make test-ruriko-saito-operator-live`
 * `make test-canonical-workflow-live-compose`
+* `make test-canonical-workflow-live-compose-3cycles`
 * `make test-canonical-workflow-live-security`
 * `make test-canonical-workflow-live`
 
@@ -242,7 +243,7 @@ Useful overrides:
 * `RURIKO_SAITO_TIMEOUT_SECONDS` (default `300`)
 * `RURIKO_SAITO_CRON_EXPR` (default `*/2 * * * *`)
 * `RURIKO_SAITO_CRON_MESSAGE` (default `Saito scheduled heartbeat to operator`)
-* `CANONICAL_REQUIRED_CYCLES` (default `2`)
+* `CANONICAL_REQUIRED_CYCLES` (default `3` when using `test-canonical-workflow-live-compose-3cycles`)
 * `CANONICAL_LIVE_TIMEOUT_SECONDS` (default `600`)
 * `CANONICAL_LIVE_POLL_SECONDS` (default `5`)
 * `CANONICAL_AUTO_BOOTSTRAP` (default `1`)

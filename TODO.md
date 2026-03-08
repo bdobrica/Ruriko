@@ -264,7 +264,7 @@ The MVP is ready when **all** of the following are true:
 
 **Goal**: Replace hard-coded canonical Saito/Kairo/Kumo runtime branches with a generic Gosuto workflow engine while preserving policy-first security.
 
-**Status (2026-03-08)**: In progress. Gosuto workflow schema/validator formalization (Phase 4 equivalent), Kumo peer-generalization (Phase 5 equivalent), and deterministic topology controls (Phase 6 equivalent) are complete; Phase 7-style hardening can proceed.
+**Status (2026-03-08)**: In progress. Gosuto workflow schema/validator formalization (Phase 4 equivalent), Kumo peer-generalization (Phase 5 equivalent), and deterministic topology controls (Phase 6 equivalent) are complete; Phase 7-style hardening has started.
 
 > Maps to REALIGNMENT_PLAN Phase 7.
 >
@@ -345,7 +345,7 @@ The MVP is ready when **all** of the following are true:
 - [x] Integration: protocol message from untrusted peer is rejected even with `allowedSenders: "*"`
 - [x] Integration: approval-required workflow tool step blocks until Ruriko decision
 - [x] Rename live verification scripts/targets/env vars to canonical names and extract bootstrap logic into a standalone Python helper
-- [ ] Live compose: run at least 3 consecutive canonical cycles successfully
+- [ ] Live compose: run at least 3 consecutive canonical cycles successfully (`make test-canonical-workflow-live-compose-3cycles`)
 - [ ] Live security checks:
   - no secrets in Matrix logs/history
   - no direct MCP call bypass from workflow path
