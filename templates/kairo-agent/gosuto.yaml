@@ -95,7 +95,7 @@ capabilities:
     allow: false
 
 approvals:
-  requireApproval: false
+  enabled: false
 
 messaging:
   allowedTargets:
