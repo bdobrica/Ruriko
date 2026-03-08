@@ -25,6 +25,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	"gopkg.in/yaml.v3"
 	"maunium.net/go/mautrix/id"
 
 	gosutospec "github.com/bdobrica/Ruriko/common/spec/gosuto"
@@ -198,6 +199,14 @@ workflow:
         prefix: "{{.PeerProtocolPrefix}}"
       steps: []
 `
+
+const kumoEnsureBootstrapYAML = "apiVersion: gosuto/v1\n" +
+	"metadata:\n" +
+	"  name: \"{{.AgentName}}\"\n" +
+	"trust:\n" +
+	"  allowedRooms: [\"!admin:example.com\"]\n" +
+	"  allowedSenders: [\"{{.OperatorMXID}}\"]\n" +
+	"  adminRoom: \"!admin:example.com\"\n"
 
 func newTestTemplateRegistry(t *testing.T) *templates.Registry {
 	t.Helper()
@@ -654,5 +663,130 @@ func TestHandleAgentsCreate_InvalidPeerMXIDRejected(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "--peer-mxid must start with '@'") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestProvisioningPipeline_CanonicalKumoRunsEnsureIfMissing(t *testing.T) {
+	acp := newMockACPServer()
+	defer acp.srv.Close()
+
+	f, err := os.CreateTemp(t.TempDir(), "ruriko-kumo-ensure-test-*.db")
+	if err != nil {
+		t.Fatalf("temp db: %v", err)
+	}
+	f.Close()
+
+	s, err := appstore.New(f.Name())
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	masterKey := make([]byte, 32)
+	for i := range masterKey {
+		masterKey[i] = byte(i + 1)
+	}
+	sec, err := secrets.New(s, masterKey)
+	if err != nil {
+		t.Fatalf("secrets.New: %v", err)
+	}
+
+	// Seed canonical peer so post-provision ensure can resolve kairo admin room.
+	if err := s.CreateAgent(context.Background(), &appstore.Agent{ID: "kairo", DisplayName: "kairo", Template: "kairo-agent", Status: "running"}); err != nil {
+		t.Fatalf("CreateAgent(kairo): %v", err)
+	}
+	kairoCfg := gosutospec.Config{
+		APIVersion: gosutospec.SpecVersion,
+		Metadata:   gosutospec.Metadata{Name: "kairo"},
+		Trust: gosutospec.Trust{
+			AllowedRooms:   []string{"!kairo-admin:localhost"},
+			AllowedSenders: []string{"*"},
+			AdminRoom:      "!kairo-admin:localhost",
+		},
+	}
+	kairoRaw, err := yaml.Marshal(&kairoCfg)
+	if err != nil {
+		t.Fatalf("marshal kairo cfg: %v", err)
+	}
+	if err := s.CreateGosutoVersion(context.Background(), &appstore.GosutoVersion{
+		AgentID:       "kairo",
+		Version:       1,
+		Hash:          "seed-hash-kairo",
+		YAMLBlob:      string(kairoRaw),
+		CreatedByMXID: "@admin:example.com",
+	}); err != nil {
+		t.Fatalf("CreateGosutoVersion(kairo): %v", err)
+	}
+
+	kumoFS := fstest.MapFS{
+		"kumo-agent/gosuto.yaml": &fstest.MapFile{Data: []byte(kumoEnsureBootstrapYAML)},
+	}
+
+	sender := &capturingSender{}
+	h := commands.NewHandlers(commands.HandlersConfig{
+		Store:      s,
+		Secrets:    sec,
+		Runtime:    &stubRuntime{controlURL: acp.srv.URL},
+		Templates:  templates.NewRegistry(kumoFS),
+		RoomSender: sender,
+		AdminRooms: []string{"!admin:example.com"},
+	})
+
+	router := commands.NewRouter("/ruriko")
+	cmd, err := router.Parse("/ruriko agents create --name kumo --template kumo-agent --image gitai:test")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	if _, err := h.HandleAgentsCreate(context.Background(), cmd, fakeEvent("@admin:example.com")); err != nil {
+		t.Fatalf("HandleAgentsCreate: %v", err)
+	}
+
+	waitFor(t, 10*time.Second, func() bool {
+		agent, err := s.GetAgent(context.Background(), "kumo")
+		if err != nil {
+			return false
+		}
+		return agent.ProvisioningState == "healthy"
+	})
+
+	gv, err := s.GetLatestGosutoVersion(context.Background(), "kumo")
+	if err != nil {
+		t.Fatalf("GetLatestGosutoVersion(kumo): %v", err)
+	}
+	if gv.Version < 2 {
+		t.Fatalf("expected post-provision ensure to create follow-up version, got v%d", gv.Version)
+	}
+
+	cfg, err := gosutospec.Parse([]byte(gv.YAMLBlob))
+	if err != nil {
+		t.Fatalf("gosuto.Parse(kumo): %v", err)
+	}
+
+	if len(cfg.Trust.TrustedPeers) != 1 {
+		t.Fatalf("trustedPeers count = %d, want 1", len(cfg.Trust.TrustedPeers))
+	}
+	peer := cfg.Trust.TrustedPeers[0]
+	if peer.Alias != "kairo" || peer.MXID != "@kairo:localhost" || peer.RoomID != "!kairo-admin:localhost" {
+		t.Fatalf("unexpected trusted peer from ensure flow: %+v", peer)
+	}
+	if len(peer.Protocols) != 1 || peer.Protocols[0] != "kairo.news.request.v1" {
+		t.Fatalf("unexpected ensured peer protocols: %+v", peer.Protocols)
+	}
+
+	foundKairoTarget := false
+	for _, target := range cfg.Messaging.AllowedTargets {
+		if target.Alias == "kairo" && target.RoomID == "!kairo-admin:localhost" {
+			foundKairoTarget = true
+			break
+		}
+	}
+	if !foundKairoTarget {
+		t.Fatalf("expected ensured kairo messaging target in %+v", cfg.Messaging.AllowedTargets)
+	}
+
+	joined := strings.Join(sender.messages(), "\n")
+	if !strings.Contains(joined, "Post-provision ensure") {
+		t.Fatalf("expected post-provision ensure breadcrumb, got:\n%s", joined)
 	}
 }

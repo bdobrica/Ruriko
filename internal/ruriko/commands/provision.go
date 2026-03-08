@@ -28,6 +28,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+	"maunium.net/go/mautrix/event"
+	"maunium.net/go/mautrix/id"
 
 	"github.com/bdobrica/Ruriko/common/trace"
 	"github.com/bdobrica/Ruriko/internal/ruriko/audit"
@@ -130,7 +132,7 @@ func (h *Handlers) runProvisioningPipeline(ctx context.Context, args provisionAr
 		send(fmt.Sprintf("✅ [1/5] Container **%s** is running", agentID))
 	} else {
 		// No runtime (dev/test) — skip container wait.
-		send(fmt.Sprintf("ℹ️  [1/5] Skipping container health check (no runtime configured)"))
+		send("ℹ️  [1/5] Skipping container health check (no runtime configured)")
 	}
 
 	// --- step 2: wait for ACP /health to respond -------------------------
@@ -362,7 +364,61 @@ func (h *Handlers) runProvisioningPipeline(ctx context.Context, args provisionAr
 		Message: fmt.Sprintf("provisioned and healthy (gosuto v%d, hash %s…)", gv.Version, hash[:8]),
 		TraceID: traceID,
 	})
+
+	// Begin deterministic ensure-if-missing flow for canonical provisioning.
+	// For kumo-agent we re-enter the explicit topology command path so any
+	// missing trust/messaging tuple can be created idempotently and audited.
+	h.runCanonicalProvisioningEnsure(ctx, args, send)
+
 	send(fmt.Sprintf("🎉 Agent **%s** is provisioned and healthy!\n\n(trace: %s)", agentID, traceID))
+}
+
+func (h *Handlers) runCanonicalProvisioningEnsure(ctx context.Context, args provisionArgs, send func(string)) {
+	if strings.TrimSpace(args.template) != "kumo-agent" {
+		return
+	}
+	if strings.TrimSpace(args.peerAlias) == "" || strings.TrimSpace(args.peerMXID) == "" || strings.TrimSpace(args.peerProtocolID) == "" {
+		return
+	}
+
+	peerRoom := strings.TrimSpace(args.peerRoom)
+	if peerRoom == "" {
+		if resolved, err := resolvePeerAdminRoom(ctx, h.store, args.peerAlias); err == nil {
+			peerRoom = strings.TrimSpace(resolved)
+		}
+	}
+	if peerRoom == "" || !strings.HasPrefix(peerRoom, "!") {
+		send(fmt.Sprintf("ℹ️  Canonical ensure skipped for **%s**: peer room for alias `%s` is unknown.\nUse `/ruriko topology peer-ensure %s --alias %s --mxid %s --room <room-id> --protocol %s` after peer provisioning.",
+			args.agentID, args.peerAlias, args.agentID, args.peerAlias, args.peerMXID, args.peerProtocolID))
+		return
+	}
+
+	cmd := &Command{
+		Name:       "topology",
+		Subcommand: "peer-ensure",
+		Args:       []string{args.agentID},
+		Flags: map[string]string{
+			"alias":    args.peerAlias,
+			"mxid":     args.peerMXID,
+			"room":     peerRoom,
+			"protocol": args.peerProtocolID,
+			"push":     "true",
+		},
+	}
+
+	evt := &event.Event{
+		Sender: id.UserID(args.operatorMXID),
+		RoomID: id.RoomID(args.roomID),
+	}
+
+	resp, err := h.HandleTopologyPeerEnsure(ctx, cmd, evt)
+	if err != nil {
+		send(fmt.Sprintf("⚠️  Canonical ensure for **%s** failed (non-fatal): %v", args.agentID, err))
+		return
+	}
+	if strings.TrimSpace(resp) != "" {
+		send(fmt.Sprintf("🔧 Post-provision ensure for **%s**:\n%s", args.agentID, resp))
+	}
 }
 
 // pollContainerRunning polls the runtime at provisionPollInterval intervals

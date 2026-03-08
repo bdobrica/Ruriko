@@ -357,6 +357,7 @@ The MVP is ready when **all** of the following are true:
 - [x] Extend topology commands with optional `--push true|false` apply orchestration (non-fatal push warning on apply failure after successful versioning)
 - [x] Add integration test for full approval -> apply flow on `topology peer-set --push true` (approval decision replay + dispatch + ACP apply verification)
 - [x] Start deterministic ensure-if-missing command path with `topology peer-ensure` (idempotent add-only semantics, approval-gated widening, conflict refusal, and approval->apply integration coverage)
+- [x] Begin deterministic ensure-if-missing flow for canonical provisioning path by re-entering `topology peer-ensure` post-provision for `kumo-agent` and validating with provisioning integration coverage
 - [ ] Keep [REFACTOR.md](REFACTOR.md) and [TODO.md](TODO.md) in sync as implementation lands
 
 ### Definition of done

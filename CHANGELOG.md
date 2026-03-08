@@ -41,6 +41,9 @@
   - `internal/ruriko/commands/topology_handlers_test.go`
   - includes approval decision replay integration for `topology peer-set --push true` (`approve <id>` -> dispatch -> versioned update -> ACP apply)
   - includes deterministic ensure-if-missing coverage for `topology peer-ensure` (idempotent no-op, conflict refusal, and approval decision replay with ACP apply)
+- Began canonical provisioning ensure-if-missing flow:
+  - `internal/ruriko/commands/provision.go` now runs a post-provision `kumo-agent` ensure hook via `topology peer-ensure` semantics
+  - `internal/ruriko/commands/provision_test.go` adds integration coverage for missing peer topology backfill in provisioning
 
 ---
 
