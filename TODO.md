@@ -264,6 +264,8 @@ The MVP is ready when **all** of the following are true:
 
 **Goal**: Replace hard-coded canonical Saito/Kairo/Kumo runtime branches with a generic Gosuto workflow engine while preserving policy-first security.
 
+**Status (2026-03-08)**: In progress. Gosuto workflow schema/validator formalization (Phase 4 equivalent) is complete; rollout-hardening work remains gated on closing the remaining topology/template deltas before Phase 7-style final hardening.
+
 > Maps to REALIGNMENT_PLAN Phase 7.
 >
 > **Depends on**: R5 (agent provisioning), R14 (instructions), R15 (messaging tool), R16 (canonical role knowledge).

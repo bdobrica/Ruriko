@@ -5,6 +5,18 @@
 
 ---
 
+## 🧹 Maintenance Updates (2026-03-08 · workflow engine phase status alignment)
+
+- Closed workflow-engine temporary plan Phase 4 (Gosuto schema/validator formalization) as complete after parity checks across:
+  - `common/spec/gosuto/types.go`
+  - `common/spec/gosuto/validate.go`
+  - `schemas/gosuto/gosuto-v1.schema.json`
+  - `docs/gosuto-spec.md`
+  - `internal/ruriko/templates/schema_validation_test.go` (schema vs `gosuto.Parse` drift guard)
+- Updated workflow-engine plan gating guidance to keep Phase 7 start blocked until Phase 5 and Phase 6 exit criteria are complete.
+
+---
+
 ## 🧹 Maintenance Updates (2026-03-08 · alternate peer topology operator docs)
 
 - Added operator-facing `agents create` peer-override examples for non-canonical
