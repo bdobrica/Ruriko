@@ -33,6 +33,7 @@
   - push failures are surfaced as non-fatal warnings when version storage succeeds
 - Added focused command tests:
   - `internal/ruriko/commands/topology_handlers_test.go`
+  - includes approval decision replay integration for `topology peer-set --push true` (`approve <id>` -> dispatch -> versioned update -> ACP apply)
 
 ---
 

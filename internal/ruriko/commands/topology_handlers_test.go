@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+	"maunium.net/go/mautrix/event"
 
 	gosutospec "github.com/bdobrica/Ruriko/common/spec/gosuto"
 	"github.com/bdobrica/Ruriko/internal/ruriko/approvals"
@@ -357,5 +358,97 @@ func TestHandleTopologyPeerRemove_PushTrue_NoControlURL_NonFatal(t *testing.T) {
 	}
 	if latest.Version != 2 {
 		t.Fatalf("expected version to still be stored as v2, got v%d", latest.Version)
+	}
+}
+
+func TestHandleTopologyPeerSet_PushTrue_ApprovalDecisionDispatchesAndApplies(t *testing.T) {
+	acp := newMockACPServer()
+	defer acp.srv.Close()
+
+	h, s := newTopologyFixture(t, true)
+
+	seedTopologyAgent(t, s, "kumo", gosutospec.Config{
+		APIVersion: gosutospec.SpecVersion,
+		Metadata:   gosutospec.Metadata{Name: "kumo"},
+		Trust: gosutospec.Trust{
+			AllowedRooms:   []string{"!kumo-admin:localhost"},
+			AllowedSenders: []string{"*"},
+			AdminRoom:      "!kumo-admin:localhost",
+		},
+	})
+
+	if err := s.UpdateAgentHandle(context.Background(), "kumo", "cid-kumo", acp.srv.URL, "gitai:test"); err != nil {
+		t.Fatalf("UpdateAgentHandle: %v", err)
+	}
+
+	h.SetDispatch(func(ctx context.Context, action string, cmd *commands.Command, evt *event.Event) (string, error) {
+		if action != "topology.peer-set" {
+			return "", nil
+		}
+		return h.HandleTopologyPeerSet(ctx, cmd, evt)
+	})
+
+	requestCmd := parseCmd(t, "/ruriko topology peer-set kumo --alias marketbot --mxid @marketbot:localhost --room !marketbot-room:localhost --protocol marketbot.news.request.v1 --push true")
+
+	requestResp, err := h.HandleTopologyPeerSet(context.Background(), requestCmd, fakeEvent("@admin:example.com"))
+	if err != nil {
+		t.Fatalf("HandleTopologyPeerSet (request): %v", err)
+	}
+	if !strings.Contains(requestResp, "Approval required") {
+		t.Fatalf("expected approval-required response, got: %s", requestResp)
+	}
+
+	approvalStore := approvals.NewStore(s.DB())
+	pending, err := approvalStore.List(context.Background(), string(approvals.StatusPending))
+	if err != nil {
+		t.Fatalf("approval list pending: %v", err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("expected 1 pending approval, got %d", len(pending))
+	}
+	if pending[0].Action != "topology.peer-set" {
+		t.Fatalf("unexpected pending action: %s", pending[0].Action)
+	}
+
+	decisionResp, err := h.HandleApprovalDecision(context.Background(), "approve "+pending[0].ID, fakeEvent("@reviewer:example.com"))
+	if err != nil {
+		t.Fatalf("HandleApprovalDecision: %v", err)
+	}
+	if !strings.Contains(decisionResp, "Approved by") {
+		t.Fatalf("expected approval decision response, got: %s", decisionResp)
+	}
+	if !strings.Contains(decisionResp, "Gosuto v2 pushed to running agent") {
+		t.Fatalf("expected push confirmation in approval decision response, got: %s", decisionResp)
+	}
+
+	approved, err := approvalStore.Get(context.Background(), pending[0].ID)
+	if err != nil {
+		t.Fatalf("approval get: %v", err)
+	}
+	if approved.Status != approvals.StatusApproved {
+		t.Fatalf("expected approval status approved, got %s", approved.Status)
+	}
+
+	latest, err := s.GetLatestGosutoVersion(context.Background(), "kumo")
+	if err != nil {
+		t.Fatalf("GetLatestGosutoVersion: %v", err)
+	}
+	if latest.Version != 2 {
+		t.Fatalf("expected new version v2 after approval, got v%d", latest.Version)
+	}
+
+	var cfg gosutospec.Config
+	if err := yaml.Unmarshal([]byte(latest.YAMLBlob), &cfg); err != nil {
+		t.Fatalf("unmarshal latest gosuto: %v", err)
+	}
+	if len(cfg.Trust.TrustedPeers) != 1 {
+		t.Fatalf("expected 1 trusted peer, got %d", len(cfg.Trust.TrustedPeers))
+	}
+
+	acp.mu.Lock()
+	appliedHash := acp.appliedHash
+	acp.mu.Unlock()
+	if appliedHash != latest.Hash {
+		t.Fatalf("expected ACP applied hash %q, got %q", latest.Hash, appliedHash)
 	}
 }
