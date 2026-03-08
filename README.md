@@ -46,6 +46,10 @@ Ruriko consists of two main components:
 * Stores and rotates secrets
 * Applies and versions agent configuration (*Gosuto*)
 * Defines the agent mesh topology (which agents can message which)
+  Operator guide: see `docs/ops/agent-mesh-topology.md` for
+  `/ruriko agents create` peer override flags (`--peer-alias`, `--peer-mxid`,
+  `--peer-room`, `--peer-protocol-id`, `--peer-protocol-prefix`) and
+  alternate topology examples.
 * Enforces administrative approvals
 * Maintains audit logs
 * Integrates with Codex to generate new agent templates

@@ -5,6 +5,21 @@
 
 ---
 
+## 🧹 Maintenance Updates (2026-03-08 · alternate peer topology operator docs)
+
+- Added operator-facing `agents create` peer-override examples for non-canonical
+  topologies in:
+  - `OPERATIONS.md`
+  - `docs/ops/agent-mesh-topology.md`
+- Documented explicit provisioning flags for peer topology wiring:
+  - `--peer-alias`
+  - `--peer-mxid`
+  - `--peer-room`
+  - `--peer-protocol-id`
+  - `--peer-protocol-prefix`
+
+---
+
 ## 🧹 Maintenance Updates (2026-03-02 · deterministic live scheduling flow)
 
 - Added deterministic live integration flow for operator → Ruriko → Saito scheduling:

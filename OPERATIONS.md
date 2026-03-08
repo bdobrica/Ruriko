@@ -483,6 +483,62 @@ This is the most complex flow and requires `DOCKER_ENABLE=true` in `.env`.
    /ruriko agents list
    ```
 
+### Alternate Peer Topology Examples (Operator Flags)
+
+When creating agents from templates that use peer placeholders (for example
+`kumo-agent`), you can override the canonical Kairo wiring using explicit
+`/ruriko agents create` flags.
+
+Available flags:
+
+- `--peer-alias` (friendly peer name exposed to workflow + trusted peers)
+- `--peer-mxid` (full Matrix user ID, must start with `@`)
+- `--peer-room` (Matrix room ID for that peer, must start with `!`)
+- `--peer-protocol-id` (envelope protocol ID expected from the peer)
+- `--peer-protocol-prefix` (protocol payload prefix expected from the peer)
+
+Example 1: Wire Kumo to a non-Kairo analyst agent (`marketbot`):
+
+```bash
+/ruriko agents create \
+  --name kumo-marketbot \
+  --template kumo-agent \
+  --image gitai:latest \
+  --peer-alias marketbot \
+  --peer-mxid @marketbot:localhost \
+  --peer-room '!marketbot-admin:localhost' \
+  --peer-protocol-id marketbot.news.request.v1 \
+  --peer-protocol-prefix MARKETBOT_NEWS_REQUEST
+```
+
+Example 2: Keep canonical Kairo identity but route to a dedicated room:
+
+```bash
+/ruriko agents create \
+  --name kumo-kairo-altroom \
+  --template kumo-agent \
+  --image gitai:latest \
+  --peer-alias kairo \
+  --peer-mxid @kairo:localhost \
+  --peer-room '!kairo-alt-admin:localhost' \
+  --peer-protocol-id kairo.news.request.v1 \
+  --peer-protocol-prefix KAIRO_NEWS_REQUEST
+```
+
+Example 3: Minimal override for quick tests (only alias + MXID):
+
+```bash
+/ruriko agents create \
+  --name kumo-research \
+  --template kumo-agent \
+  --image gitai:latest \
+  --peer-alias research \
+  --peer-mxid @research:localhost
+```
+
+In example 3, room/protocol fields fall back to deterministic defaults. Use the
+full override form in production so trust and workflow contracts are explicit.
+
 **Lifecycle operations**:
 ```
 /ruriko agents stop saito         → Stop the container

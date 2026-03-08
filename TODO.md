@@ -351,6 +351,7 @@ The MVP is ready when **all** of the following are true:
 - [ ] Update `docs/gosuto-spec.md` with `trust.trustedPeers`, `workflow`, and inline schema ref rules
 - [ ] Update `docs/architecture.md` to describe workflow engine execution path and trust gate
 - [ ] Update `docs/invariants.md` if needed to explicitly reference protocol-trust gating semantics
+- [x] Add operator-facing alternate peer topology examples for `/ruriko agents create` peer override flags in `OPERATIONS.md` and `docs/ops/agent-mesh-topology.md`
 - [ ] Keep [REFACTOR.md](REFACTOR.md) and [TODO.md](TODO.md) in sync as implementation lands
 
 ### Definition of done

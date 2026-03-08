@@ -134,6 +134,61 @@ pushing it to the agent via ACP.
 
 ---
 
+## Provision-Time Peer Overrides (Operator Commands)
+
+For templates that expose peer placeholders (for example `kumo-agent`), you
+can set the peer topology directly at creation time using deterministic flags on
+`/ruriko agents create`.
+
+Supported flags:
+
+- `--peer-alias`: friendly peer alias used in trusted peer lists and prompts
+- `--peer-mxid`: peer Matrix user ID (must start with `@`)
+- `--peer-room`: peer Matrix room ID (must start with `!`)
+- `--peer-protocol-id`: expected envelope protocol ID
+- `--peer-protocol-prefix`: expected envelope payload prefix
+
+### Example: Kumo wired to Marketbot (non-canonical topology)
+
+```bash
+/ruriko agents create \
+  --name kumo-marketbot \
+  --template kumo-agent \
+  --image gitai:latest \
+  --peer-alias marketbot \
+  --peer-mxid @marketbot:localhost \
+  --peer-room '!marketbot-admin:localhost' \
+  --peer-protocol-id marketbot.news.request.v1 \
+  --peer-protocol-prefix MARKETBOT_NEWS_REQUEST
+```
+
+### Example: Same peer identity, different room routing
+
+```bash
+/ruriko agents create \
+  --name kumo-kairo-altroom \
+  --template kumo-agent \
+  --image gitai:latest \
+  --peer-alias kairo \
+  --peer-mxid @kairo:localhost \
+  --peer-room '!kairo-alt-admin:localhost' \
+  --peer-protocol-id kairo.news.request.v1 \
+  --peer-protocol-prefix KAIRO_NEWS_REQUEST
+```
+
+### Validation behavior
+
+- `--peer-alias` must be non-empty.
+- `--peer-mxid` must start with `@`.
+- `--peer-room` is optional but, when set, must start with `!`.
+- `--peer-protocol-id` and `--peer-protocol-prefix` must be non-empty.
+
+If optional peer flags are omitted, Ruriko applies deterministic defaults.
+Use explicit values when operating multi-peer or non-canonical meshes so the
+topology contract is visible in command history and audit logs.
+
+---
+
 ## Security Notes
 
 1. **Topology is versioned**: every change to `messaging.allowedTargets` is
