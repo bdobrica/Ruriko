@@ -2,7 +2,7 @@
 
 > Step-by-step guide for spinning up and testing the Ruriko stack locally.
 
-**Last updated**: 2026-02-20
+**Last updated**: 2026-03-08
 
 ---
 
@@ -538,6 +538,57 @@ Example 3: Minimal override for quick tests (only alias + MXID):
 
 In example 3, room/protocol fields fall back to deterministic defaults. Use the
 full override form in production so trust and workflow contracts are explicit.
+
+### Deterministic Post-Provision Topology Ensure
+
+After provisioning, use `topology peer-ensure` when you want an idempotent
+"add-if-missing" operation for peer trust + messaging mappings.
+
+Command shape:
+
+```bash
+/ruriko topology peer-ensure <agent> \
+  --alias <alias> \
+  --mxid <mxid> \
+  --room <room-id> \
+  --protocol <id> \
+  [--target-room <room-id>] \
+  [--push true|false]
+```
+
+Example 1: Ensure Kumo can receive Marketbot protocol messages and route
+replies to the same room:
+
+```bash
+/ruriko topology peer-ensure kumo-marketbot \
+  --alias marketbot \
+  --mxid @marketbot:localhost \
+  --room '!marketbot-admin:localhost' \
+  --protocol marketbot.news.request.v1 \
+  --push true
+```
+
+Example 2: Ensure trust and messaging target with explicit alternate target
+room (for split ingress/egress routing):
+
+```bash
+/ruriko topology peer-ensure kumo-kairo-altroom \
+  --alias kairo \
+  --mxid @kairo:localhost \
+  --room '!kairo-admin:localhost' \
+  --protocol kairo.news.request.v1 \
+  --target-room '!kairo-dispatch:localhost'
+```
+
+Operator behavior:
+
+- If required mapping already exists, command is a no-op (no new Gosuto version).
+- If mapping is missing, command creates only missing pieces and versions Gosuto.
+- If alias exists with a different MXID/room target, command refuses with a
+  deterministic conflict error (no implicit rewrite).
+- Widening changes are approval-gated.
+- `--push true` attempts immediate ACP apply; apply failures are surfaced as
+  warnings while stored Gosuto versions remain valid.
 
 **Lifecycle operations**:
 ```

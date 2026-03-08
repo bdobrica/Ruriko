@@ -189,6 +189,63 @@ topology contract is visible in command history and audit logs.
 
 ---
 
+## Post-Provision Ensure-If-Missing (Operator Commands)
+
+For existing agents, use `topology peer-ensure` to add required peer trust +
+messaging entries only when they are missing.
+
+This is intentionally different from `topology peer-set`:
+
+- `peer-ensure` is add-only and idempotent (no-op when already satisfied)
+- `peer-set` is update-capable (can rewrite existing mappings)
+
+Command form:
+
+```bash
+/ruriko topology peer-ensure <agent> \
+  --alias <alias> \
+  --mxid <mxid> \
+  --room <room-id> \
+  --protocol <id> \
+  [--target-room <room-id>] \
+  [--push true|false]
+```
+
+### Example: ensure Marketbot mapping on an existing Kumo agent
+
+```bash
+/ruriko topology peer-ensure kumo-marketbot \
+  --alias marketbot \
+  --mxid @marketbot:localhost \
+  --room '!marketbot-admin:localhost' \
+  --protocol marketbot.news.request.v1 \
+  --push true
+```
+
+### Example: ensure Kairo trust with dedicated outbound target room
+
+```bash
+/ruriko topology peer-ensure kumo-kairo-altroom \
+  --alias kairo \
+  --mxid @kairo:localhost \
+  --room '!kairo-admin:localhost' \
+  --protocol kairo.news.request.v1 \
+  --target-room '!kairo-dispatch:localhost'
+```
+
+### Validation and safety behavior
+
+- `--alias` must be non-empty and whitespace-free.
+- `--mxid` must start with `@`.
+- `--room` and `--target-room` must start with `!`.
+- If alias already maps to different MXID/room data, command refuses with a
+  deterministic conflict error instead of rewriting.
+- Widening changes are approval-gated and fully audited.
+- `--push true` triggers ACP apply attempt after versioning; apply failure does
+  not roll back stored config versions.
+
+---
+
 ## Security Notes
 
 1. **Topology is versioned**: every change to `messaging.allowedTargets` is

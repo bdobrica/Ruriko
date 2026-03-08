@@ -15,6 +15,10 @@
   same peer override pathway:
   - `docs/architecture.md`
   - `docs/gosuto-spec.md`
+- Added operator runbook coverage for deterministic ensure-if-missing topology
+  updates with `topology peer-ensure` examples and behavior notes:
+  - `OPERATIONS.md`
+  - `docs/ops/agent-mesh-topology.md`
 - Documented explicit provisioning flags for peer topology wiring:
   - `--peer-alias`
   - `--peer-mxid`

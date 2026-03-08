@@ -352,6 +352,7 @@ The MVP is ready when **all** of the following are true:
 - [ ] Update `docs/architecture.md` to describe workflow engine execution path and trust gate
 - [ ] Update `docs/invariants.md` if needed to explicitly reference protocol-trust gating semantics
 - [x] Add operator-facing alternate peer topology examples for `/ruriko agents create` peer override flags in `OPERATIONS.md` and `docs/ops/agent-mesh-topology.md`
+- [x] Add operator docs/examples for `/ruriko topology peer-ensure` in `OPERATIONS.md` and `docs/ops/agent-mesh-topology.md`
 - [x] Start deterministic topology update command surface in `internal/ruriko/commands` (`topology refresh`, `topology peer-set`, `topology peer-remove`) with approval-gated widening for peer-set
 - [x] Extend topology commands with optional `--push true|false` apply orchestration (non-fatal push warning on apply failure after successful versioning)
 - [x] Add integration test for full approval -> apply flow on `topology peer-set --push true` (approval decision replay + dispatch + ACP apply verification)
