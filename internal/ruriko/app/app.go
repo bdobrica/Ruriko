@@ -857,6 +857,14 @@ func isAgentBreadcrumbMessage(text string) bool {
 		return false
 	}
 
+	// Gitai event-turn wrappers posted to admin rooms.
+	if strings.HasPrefix(trimmed, "⚡ Event: ") {
+		return true
+	}
+	if strings.HasPrefix(trimmed, "Event: ") {
+		return true
+	}
+
 	if strings.HasPrefix(trimmed, "📨 Sent message to ") && strings.Contains(trimmed, "(trace=") {
 		return true
 	}

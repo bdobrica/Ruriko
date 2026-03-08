@@ -28,6 +28,16 @@ func TestIsAgentBreadcrumbMessage(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "emoji event wrapper",
+			text: "⚡ Event: scheduler/cron.tick\nAll done",
+			want: true,
+		},
+		{
+			name: "plain event wrapper",
+			text: "Event: scheduler/cron.tick\nAll done",
+			want: true,
+		},
+		{
 			name: "missing trace marker",
 			text: "📨 Sent message to kairo",
 			want: false,
@@ -78,6 +88,10 @@ func TestShouldIgnoreAgentBreadcrumb_KnownAgentSender(t *testing.T) {
 	a := &App{store: s}
 	if !a.shouldIgnoreAgentBreadcrumb(context.Background(), "@saito:example.com", "📨 Sent message to kairo (trace=abc)") {
 		t.Fatal("expected known-agent breadcrumb to be ignored")
+	}
+
+	if !a.shouldIgnoreAgentBreadcrumb(context.Background(), "@saito:example.com", "⚡ Event: scheduler/cron.tick\nresult") {
+		t.Fatal("expected known-agent event wrapper to be ignored")
 	}
 
 	if a.shouldIgnoreAgentBreadcrumb(context.Background(), "@alice:example.com", "📨 Sent message to kairo (trace=abc)") {
