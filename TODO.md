@@ -85,6 +85,7 @@ The following is built and functional:
 - ✅ **R19.5 (maintenance)**: Gitai runtime image now includes `nodejs`/`npm` (`npx`) to run MCP servers shipped in canonical templates (Brave Search, Fetch)
 - ✅ **R19.6 (maintenance)**: Standalone Saito live compose integration harness (`tuwunel + saito`) with ACP `schedule.upsert` runtime cron setup and Python Matrix delivery verification
 - ✅ **R19.7 (maintenance)**: Strict standalone Saito verification target requiring multiple cron deliveries (`make test-saito-live-compose-2cycles`)
+- ✅ **R19.8 (maintenance)**: Removed legacy `test-saito-scheduling-live*` targets/scripts and hardened `test-ruriko-saito-operator-live` with OpenAI capture-proxy auditing (`RURIKO_SAITO_OPENAI_EXPECT_CALLS`, default `0`)
 - ✅ **R10**: Conversation memory — STM tracker, LTM interface, seal pipeline, context assembly, SQLite/OpenAI/LLM persistent backends
 
 ---

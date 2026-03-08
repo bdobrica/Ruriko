@@ -286,34 +286,22 @@ Optional compose configuration smoke check:
 SAITO_SCHEDULING_COMPOSE_SMOKE=1 make test-saito-scheduling
 ```
 
-### Live compose-backed scheduling check
+### Live operator-driven scheduling check
 
-Preconditions:
-
-- Compose `.env` is configured
-- Saito and Kairo agents are provisioned and running
-- Saito has a cron gateway and `kairo` messaging target configured
-
-Run precheck only:
+Run the deterministic operator -> Ruriko -> Saito end-to-end flow:
 
 ```bash
-make test-saito-scheduling-live-precheck
+make test-ruriko-saito-operator-live
 ```
 
-Run live check (includes precheck):
-
-```bash
-make test-saito-scheduling-live
-```
-
-This live test brings up compose services, waits for Ruriko health, then scans
-Saito logs for both `event_type=cron.tick` and successful
-`matrix.send_message` calls targeting `kairo`.
+This test provisions a fresh stack, applies a schedule via `/ruriko schedule upsert`,
+verifies DB persistence + Matrix delivery for two cron cycles, and captures any
+OpenAI-compatible NLP traffic through a local proxy for auditing.
 
 Keep the stack up for manual inspection:
 
 ```bash
-KEEP_STACK=1 make test-saito-scheduling-live
+KEEP_STACK=1 make test-ruriko-saito-operator-live
 ```
 
 ---

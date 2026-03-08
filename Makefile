@@ -1,4 +1,4 @@
-.PHONY: all build build-ruriko build-gitai build-tools test test-integration test-integration-nlp test-saito-scheduling test-saito-scheduling-live-precheck test-saito-scheduling-live test-ruriko-saito-operator-live test-saito-live-compose test-saito-live-compose-2cycles test-canonical-workflow-live-provisioning test-canonical-workflow-live-admin-room test-canonical-workflow-live-compose test-canonical-workflow-live-compose-3cycles test-canonical-workflow-live-security test-canonical-workflow-live test-kumo-live-compose test-kumo-live-compose-summary lint fmt clean run-ruriko run-gitai install help
+.PHONY: all build build-ruriko build-gitai build-tools test test-integration test-integration-nlp test-saito-scheduling test-ruriko-saito-operator-live test-saito-live-compose test-saito-live-compose-2cycles test-canonical-workflow-live-provisioning test-canonical-workflow-live-admin-room test-canonical-workflow-live-compose test-canonical-workflow-live-compose-3cycles test-canonical-workflow-live-security test-canonical-workflow-live test-kumo-live-compose test-kumo-live-compose-summary lint fmt clean run-ruriko run-gitai install help
 
 # Build variables
 BINARY_DIR := bin
@@ -61,14 +61,6 @@ test-integration-nlp: ## Run live LLM integration tests (requires RURIKO_NLP_API
 test-saito-scheduling: ## Run deterministic Saito scheduling integration checks
 	@echo "Running deterministic Saito scheduling integration test..."
 	./test/integration/test-saito-scheduling.sh
-
-test-saito-scheduling-live-precheck: ## Check live Saito scheduling prerequisites (compose/env + provisioned Saito/Kairo)
-	@echo "Running live Saito scheduling precheck..."
-	./test/integration/test-saito-scheduling-live-precheck.sh
-
-test-saito-scheduling-live: test-saito-scheduling-live-precheck ## Run live compose-backed Saito scheduling validation (requires provisioned Saito/Kairo)
-	@echo "Running live Saito scheduling validation..."
-	./test/integration/test-saito-scheduling-live-compose.sh
 
 test-ruriko-saito-operator-live: ## Run deterministic live operator->Ruriko->Saito schedule flow (2 cron cycles, 5m timeout)
 	@echo "Running live Ruriko/Saito/operator deterministic flow..."

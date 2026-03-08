@@ -6,13 +6,24 @@ COMPOSE_DIR="${ROOT_DIR}/examples/docker-compose"
 COMPOSE_FILE="${RURIKO_SAITO_COMPOSE_FILE:-${COMPOSE_DIR}/docker-compose.yaml}"
 COMPOSE_ENV_FILE="${RURIKO_SAITO_COMPOSE_ENV:-${COMPOSE_DIR}/.env}"
 TOKENS_FILE="${COMPOSE_DIR}/.agent-tokens"
+WORK_DIR="${RURIKO_SAITO_WORK_DIR:-${ROOT_DIR}/test/integration/.ruriko-saito-live}"
 HELPER_PY="${ROOT_DIR}/test/integration/canonical_live_helpers.py"
 PROBE_PY="${ROOT_DIR}/test/integration/ruriko_saito_live_matrix_probe.py"
 PROVISION_SCRIPT="${ROOT_DIR}/test/integration/provision-fresh-stack.sh"
+OPENAI_PROXY_SCRIPT="${ROOT_DIR}/test/integration/openai_capture_proxy.py"
 TIMEOUT_SECONDS="${RURIKO_SAITO_TIMEOUT_SECONDS:-300}"
 CRON_EXPR="${RURIKO_SAITO_CRON_EXPR:-*/2 * * * *}"
 CRON_MESSAGE="${RURIKO_SAITO_CRON_MESSAGE:-Saito scheduled heartbeat to operator}"
 SYNC_TIMEOUT_MS="${RURIKO_SAITO_SYNC_TIMEOUT_MS:-30000}"
+OPENAI_CAPTURE="${RURIKO_SAITO_OPENAI_CAPTURE_FILE:-${WORK_DIR}/openai-calls.jsonl}"
+OPENAI_PROXY_LOG="${RURIKO_SAITO_OPENAI_PROXY_LOG:-${WORK_DIR}/openai-proxy.log}"
+OPENAI_MODE="${RURIKO_SAITO_OPENAI_MODE:-stub}"
+OPENAI_PROXY_HOST="${RURIKO_SAITO_OPENAI_PROXY_HOST:-127.0.0.1}"
+OPENAI_PROXY_PORT="${RURIKO_SAITO_OPENAI_PROXY_PORT:-18082}"
+OPENAI_UPSTREAM_BASE="${RURIKO_SAITO_OPENAI_UPSTREAM_BASE:-https://api.openai.com}"
+OPENAI_UPSTREAM_TIMEOUT="${RURIKO_SAITO_OPENAI_UPSTREAM_TIMEOUT_SECONDS:-20}"
+OPENAI_EXPECT_CALLS="${RURIKO_SAITO_OPENAI_EXPECT_CALLS:-0}"
+PROXY_NLP_API_KEY="${RURIKO_SAITO_NLP_API_KEY:-proxy-dummy-key}"
 KEEP_STACK="${KEEP_STACK:-0}"
 
 RED='\033[0;31m'
@@ -33,6 +44,9 @@ docker_compose() {
 }
 
 cleanup() {
+	if [[ -n "${OPENAI_PROXY_PID:-}" ]]; then
+		kill "$OPENAI_PROXY_PID" >/dev/null 2>&1 || true
+	fi
 	if [[ "$KEEP_STACK" == "1" ]]; then
 		info "KEEP_STACK=1 set; leaving compose stack running"
 		return
@@ -57,6 +71,32 @@ require_tool curl
 [[ -f "$HELPER_PY" ]] || fail "helper script not found: $HELPER_PY"
 [[ -f "$PROBE_PY" ]] || fail "probe script not found: $PROBE_PY"
 [[ -f "$PROVISION_SCRIPT" ]] || fail "provisioning script not found: $PROVISION_SCRIPT"
+[[ -f "$OPENAI_PROXY_SCRIPT" ]] || fail "openai proxy helper not found: $OPENAI_PROXY_SCRIPT"
+
+mkdir -p "$WORK_DIR"
+: > "$OPENAI_CAPTURE"
+: > "$OPENAI_PROXY_LOG"
+
+info "Step 0/11: starting OpenAI capture proxy for NLP-call auditing"
+python3 "$OPENAI_PROXY_SCRIPT" \
+	--host "$OPENAI_PROXY_HOST" \
+	--port "$OPENAI_PROXY_PORT" \
+	--mode "$OPENAI_MODE" \
+	--upstream-base "$OPENAI_UPSTREAM_BASE" \
+	--upstream-timeout "$OPENAI_UPSTREAM_TIMEOUT" \
+	--capture-file "$OPENAI_CAPTURE" >"$OPENAI_PROXY_LOG" 2>&1 &
+OPENAI_PROXY_PID=$!
+
+for attempt in {1..20}; do
+	if curl -fsS "http://${OPENAI_PROXY_HOST}:${OPENAI_PROXY_PORT}/health" >/dev/null 2>&1; then
+		pass "OpenAI capture proxy is ready"
+		break
+	fi
+	if [[ "$attempt" == "20" ]]; then
+		fail "OpenAI proxy did not become healthy; inspect $OPENAI_PROXY_LOG"
+	fi
+	sleep 1
+done
 
 info "Step 1/10: provisioning a fresh deterministic stack (operator + ruriko accounts, admin/user rooms)"
 bash "$PROVISION_SCRIPT"
@@ -71,6 +111,12 @@ source "$COMPOSE_ENV_FILE"
 AGENT_IMAGE="${DEFAULT_AGENT_IMAGE:-gitai:latest}"
 MATRIX_BASE_URL="$(python3 "$HELPER_PY" matrix-base-url --env-file "$COMPOSE_ENV_FILE")"
 [[ -n "$MATRIX_BASE_URL" ]] || fail "failed to discover Matrix base URL"
+
+# Force any accidental NLP usage through the local capture proxy so the test
+# can assert the deterministic command path does not rely on LLM traffic.
+DOCKER_BRIDGE_HOST="${RURIKO_SAITO_DOCKER_BRIDGE_HOST:-172.17.0.1}"
+export NLP_ENDPOINT="http://${DOCKER_BRIDGE_HOST}:${OPENAI_PROXY_PORT}/v1"
+export RURIKO_NLP_API_KEY="$PROXY_NLP_API_KEY"
 
 info "Step 2/10: starting compose stack (Ruriko + Tuwunel)"
 (
@@ -414,4 +460,21 @@ docker logs --since "$START_TS" ruriko 2>&1 | grep -E 'matrix|schedule|agents cr
 echo "--- Saito log excerpts ---"
 docker logs --since "$START_TS" ruriko-agent-saito 2>&1 | grep -E 'event processed|cron.tick|matrix.send_message|join room|trace' | tail -n 160 || true
 
+OPENAI_CALLS="$(python3 - "$OPENAI_CAPTURE" <<'PY'
+import pathlib,sys
+path = pathlib.Path(sys.argv[1])
+if not path.exists():
+	print(0)
+else:
+	lines = [ln for ln in path.read_text(encoding='utf-8').splitlines() if ln.strip()]
+	print(len(lines))
+PY
+)"
+
+info "OpenAI proxy capture file: ${OPENAI_CAPTURE}"
+info "OpenAI proxy log: ${OPENAI_PROXY_LOG}"
+if [[ "$OPENAI_CALLS" != "$OPENAI_EXPECT_CALLS" ]]; then
+	fail "unexpected NLP call count via OpenAI proxy: observed=${OPENAI_CALLS} expected=${OPENAI_EXPECT_CALLS}"
+fi
+pass "OpenAI proxy call count matched expectation (${OPENAI_EXPECT_CALLS})"
 pass "Deterministic Ruriko↔Saito live integration flow passed"

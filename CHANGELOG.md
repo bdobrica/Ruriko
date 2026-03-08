@@ -16,6 +16,14 @@
 - Added strict standalone Saito verification target:
   - `make test-saito-live-compose-2cycles` (requires 2 cron deliveries)
 - The new flow boots `tuwunel + saito`, applies a runtime schedule via ACP `POST /tools/call` (`schedule.upsert`), and verifies cron-delivered Matrix output with a Python sync probe.
+- Removed legacy compose-backed Saito live targets/scripts in favor of:
+  - deterministic fast gate: `make test-saito-scheduling`
+  - full control-plane path: `make test-ruriko-saito-operator-live`
+  - standalone Gitai path: `make test-saito-live-compose` / `make test-saito-live-compose-2cycles`
+- Hardened `test-ruriko-saito-operator-live-compose.sh` with OpenAI capture proxy auditing:
+  - routes Ruriko NLP endpoint through local proxy during the test
+  - records all OpenAI-compatible calls to a JSONL capture file
+  - enforces expected call count (default `RURIKO_SAITO_OPENAI_EXPECT_CALLS=0`) to guard deterministic command path against accidental LLM dependency
 
 - Updated `deploy/docker/Dockerfile.gitai` runtime image to include `nodejs` + `npm` (`npx`) so MCP servers declared with `command: npx` (e.g. Brave Search, Fetch) can start in live integration runs.
 
