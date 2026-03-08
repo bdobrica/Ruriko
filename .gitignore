@@ -74,3 +74,6 @@ temp/
 __pycache__/
 *.py[codz]
 *$py.class
+
+# Integration test runtime artifacts
+/test/integration/.*/

@@ -201,3 +201,33 @@ func TestRunStepWithRetryThenRefuse_NonSchemaStep_NoRetry(t *testing.T) {
 		t.Fatalf("tool step error should not be reclassified as schema validation: %v", err)
 	}
 }
+
+func TestValidatePayloadAgainstSchema_IntegerAcceptsNativeInt(t *testing.T) {
+	schema := map[string]interface{}{
+		"type":     "object",
+		"required": []interface{}{"index"},
+		"properties": map[string]interface{}{
+			"index": map[string]interface{}{"type": "integer"},
+		},
+	}
+	payload := map[string]interface{}{"index": 0}
+
+	if err := validatePayloadAgainstSchema(schema, payload); err != nil {
+		t.Fatalf("validatePayloadAgainstSchema() error = %v", err)
+	}
+}
+
+func TestValidatePayloadAgainstSchema_NumberAcceptsNativeInt(t *testing.T) {
+	schema := map[string]interface{}{
+		"type":     "object",
+		"required": []interface{}{"count"},
+		"properties": map[string]interface{}{
+			"count": map[string]interface{}{"type": "number"},
+		},
+	}
+	payload := map[string]interface{}{"count": 7}
+
+	if err := validatePayloadAgainstSchema(schema, payload); err != nil {
+		t.Fatalf("validatePayloadAgainstSchema() error = %v", err)
+	}
+}

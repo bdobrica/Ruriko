@@ -62,7 +62,9 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 # ---------------------------------------------------------------------------
 FROM alpine:3.21
 
-RUN apk add --no-cache ca-certificates tzdata && \
+# MCP servers in canonical templates are launched via npx. Include Node.js + npm
+# in the runtime image so brave-search/fetch MCP processes can start.
+RUN apk add --no-cache ca-certificates tzdata nodejs npm && \
     addgroup -S gitai && \
     adduser  -S -G gitai -h /data gitai
 

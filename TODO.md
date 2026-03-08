@@ -81,6 +81,8 @@ The following is built and functional:
 - ✅ **R19.1 (maintenance)**: Deterministic Ruriko schedule control-plane actions — ACP `POST /tools/call`, `/ruriko schedule {upsert|disable|list}`, NLP catalogue integration
 - ✅ **R19.2 (maintenance)**: Deterministic live operator→Ruriko→Saito scheduling integration flow (fresh stack provisioning, DB schedule assertion, two cron-cycle Matrix delivery verification)
 - ✅ **R19.3 (maintenance)**: Quote-aware deterministic command parsing for schedule flags + live test fail-fast/convergence hardening
+- ✅ **R19.4 (maintenance)**: Standalone Kumo live compose integration harness (`tuwunel + kumo`, OpenAI payload capture proxy, Brave invocation evidence, optional summary-delivery gate)
+- ✅ **R19.5 (maintenance)**: Gitai runtime image now includes `nodejs`/`npm` (`npx`) to run MCP servers shipped in canonical templates (Brave Search, Fetch)
 - ✅ **R10**: Conversation memory — STM tracker, LTM interface, seal pipeline, context assembly, SQLite/OpenAI/LLM persistent backends
 
 ---

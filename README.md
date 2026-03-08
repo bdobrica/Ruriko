@@ -238,6 +238,11 @@ Run canonical live checks (compose + security):
 * `make test-canonical-workflow-live-security`
 * `make test-canonical-workflow-live`
 
+Run standalone Kumo workflow checks (no Ruriko; Kumo + Tuwunel only):
+
+* `make test-kumo-live-compose`
+* `make test-kumo-live-compose-summary`
+
 Useful overrides:
 
 * `RURIKO_SAITO_TIMEOUT_SECONDS` (default `300`)
@@ -249,6 +254,10 @@ Useful overrides:
 * `CANONICAL_AUTO_BOOTSTRAP` (default `1`)
 * `CANONICAL_BOOTSTRAP_STATUS_TIMEOUT` (default `120`)
 * `CANONICAL_SECURITY_LOOKBACK` (default `30m`)
+* `KUMO_LIVE_OPENAI_MODE` (`stub` or `passthrough`, default `stub`)
+* `KUMO_LIVE_OPENAI_API_KEY` (default `dummy-live-key`)
+* `KUMO_LIVE_BRAVE_API_KEY` (set for live Brave API execution)
+* `KUMO_LIVE_REQUIRE_SUMMARY` (`0`/`1`, default `0`)
 
 ---
 

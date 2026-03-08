@@ -28,6 +28,7 @@
    - [Natural Language Agent Creation](#flow-6-natural-language-agent-creation)
    - [Full Agent Provisioning](#flow-7-full-agent-provisioning-docker-enabled)
    - [Audit & Tracing](#flow-8-audit--tracing)
+  - [Standalone Kumo Live Probe](#flow-9-standalone-kumo-live-probe-no-ruriko)
 6. [Environment Variable Reference](#environment-variable-reference)
 7. [Hardened Mode Quick-Start](#hardened-mode-quick-start)
 8. [Troubleshooting](#troubleshooting)
@@ -264,6 +265,38 @@ Ruriko should reply with a pong and trace ID.
 ## Matrix Client Recommendations
 
 For connecting to your local Tuwunel homeserver, use one of these clients:
+
+## Flow 9: Standalone Kumo Live Probe (No Ruriko)
+
+Use this when you want to validate Gitai/Kumo workflow behavior directly, without starting the Ruriko control plane.
+
+What it does:
+- boots `tuwunel` + a single `kumo` container
+- registers an operator account and the Kumo account
+- creates a private Matrix room and wires Kumo trust/workflow fields from the template
+- sends a protocol message from operator to Kumo
+- captures OpenAI chat-completions payloads through a local proxy
+- verifies Brave-search tool invocation evidence in Kumo logs
+- optionally requires final `KUMO_NEWS_RESPONSE` message delivery
+
+Run:
+
+```bash
+make test-kumo-live-compose
+```
+
+Require summary delivery end-to-end:
+
+```bash
+make test-kumo-live-compose-summary
+```
+
+Useful overrides:
+- `KUMO_LIVE_OPENAI_MODE=stub|passthrough`
+- `KUMO_LIVE_OPENAI_API_KEY=<key>`
+- `KUMO_LIVE_BRAVE_API_KEY=<key>`
+- `KUMO_LIVE_REQUIRE_SUMMARY=1`
+- `KUMO_LIVE_KEEP_STACK=1`
 
 ### Element Web (recommended for testing)
 

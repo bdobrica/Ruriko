@@ -169,6 +169,15 @@ func (r *Runner) runStep(ctx context.Context, protocolID string, step gosutospec
 		if err != nil {
 			return nil, 0, err
 		}
+
+		if summarizeShouldParseStructured(step.OutputSchemaRef, state) {
+			structured, err := parseStructuredJSON(result)
+			if err != nil {
+				return nil, 0, fmt.Errorf("summarize step expected JSON output: %w", err)
+			}
+			return structured, 0, nil
+		}
+
 		return result, 0, nil
 
 	case "plan":
@@ -461,6 +470,29 @@ func parseStructuredJSON(raw string) (interface{}, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+func summarizeShouldParseStructured(schemaRef string, state *State) bool {
+	ref := strings.TrimSpace(schemaRef)
+	if ref == "" || state == nil {
+		return false
+	}
+	schemaAny, ok := state.Schemas[ref]
+	if !ok {
+		return false
+	}
+	schema, ok := schemaAny.(map[string]interface{})
+	if !ok {
+		return false
+	}
+	typeName, _ := schema["type"].(string)
+	typeName = strings.TrimSpace(typeName)
+	if typeName == "" {
+		_, hasRequired := schema["required"]
+		_, hasProperties := schema["properties"]
+		return hasRequired || hasProperties
+	}
+	return typeName != "string"
 }
 
 func validateStepOutputSchema(protocolID string, step gosutospec.WorkflowProtocolStep, output interface{}, state *State) error {

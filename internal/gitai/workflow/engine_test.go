@@ -245,6 +245,84 @@ func TestEngineExecuteProtocol_OutputSchemaRefValidation_Fails(t *testing.T) {
 	}
 }
 
+func TestEngineExecuteProtocol_SummarizeStep_StructuredSchemaParsesJSON(t *testing.T) {
+	dispatcher := &fakeDispatcher{
+		planResult: `{"run_id":1,"summary":"ok","headlines":["h1"],"material":true}`,
+	}
+	engine := NewEngine(dispatcher)
+
+	protocol := gosutospec.WorkflowProtocol{
+		ID: "kumo.news.request.v1",
+		Steps: []gosutospec.WorkflowProtocolStep{
+			{
+				Type:            "summarize",
+				Prompt:          "Summarize {{input.topic}}",
+				OutputSchemaRef: "kumoNewsResponse",
+			},
+		},
+	}
+
+	match := &InboundProtocolMatch{
+		Protocol: protocol,
+		Payload:  map[string]interface{}{"topic": "OpenAI"},
+		SchemaDefinitions: map[string]interface{}{
+			"kumoNewsResponse": map[string]interface{}{
+				"type":     "object",
+				"required": []interface{}{"run_id", "summary", "headlines", "material"},
+				"properties": map[string]interface{}{
+					"run_id":    map[string]interface{}{"type": "integer"},
+					"summary":   map[string]interface{}{"type": "string"},
+					"headlines": map[string]interface{}{"type": "array"},
+					"material":  map[string]interface{}{"type": "boolean"},
+				},
+			},
+		},
+	}
+
+	result, _, err := engine.ExecuteProtocol(context.Background(), protocol, NewExecutionContext("trace-1", "!room:example.com", "@peer:example.com", match))
+	if err != nil {
+		t.Fatalf("ExecuteProtocol() unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "map[") {
+		t.Fatalf("expected structured summarize output stringification, got: %q", result)
+	}
+}
+
+func TestEngineExecuteProtocol_SummarizeStep_StructuredSchemaRejectsNonJSON(t *testing.T) {
+	dispatcher := &fakeDispatcher{planResult: "not json"}
+	engine := NewEngine(dispatcher)
+
+	protocol := gosutospec.WorkflowProtocol{
+		ID: "kumo.news.request.v1",
+		Steps: []gosutospec.WorkflowProtocolStep{
+			{
+				Type:            "summarize",
+				Prompt:          "Summarize {{input.topic}}",
+				OutputSchemaRef: "kumoNewsResponse",
+				Retries:         1,
+			},
+		},
+	}
+
+	match := &InboundProtocolMatch{
+		Protocol: protocol,
+		Payload:  map[string]interface{}{"topic": "OpenAI"},
+		SchemaDefinitions: map[string]interface{}{
+			"kumoNewsResponse": map[string]interface{}{
+				"type": "object",
+			},
+		},
+	}
+
+	_, _, err := engine.ExecuteProtocol(context.Background(), protocol, NewExecutionContext("trace-1", "!room:example.com", "@peer:example.com", match))
+	if err == nil {
+		t.Fatal("ExecuteProtocol() expected summarize parse error")
+	}
+	if !strings.Contains(err.Error(), "step summarize failed after") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestEngineExecuteProtocol_ForEachCollect_BoundedIteration(t *testing.T) {
 	dispatcher := &fakeDispatcher{}
 	runner := NewRunner(dispatcher)

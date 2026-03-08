@@ -1,0 +1,60 @@
+services:
+  tuwunel:
+    build:
+      context: ../../examples/docker-compose
+      dockerfile: Dockerfile.tuwunel
+    container_name: kumo-live-tuwunel
+    restart: unless-stopped
+    ports:
+      - "${KUMO_LIVE_TUWUNEL_HOST:-127.0.0.1}:${KUMO_LIVE_TUWUNEL_PORT:-18008}:8008"
+    environment:
+      CONDUWUIT_SERVER_NAME: ${KUMO_LIVE_TUWUNEL_SERVER_NAME:-localhost}
+      CONDUWUIT_DATABASE_PATH: /var/lib/tuwunel
+      CONDUWUIT_ALLOW_REGISTRATION: "true"
+      CONDUWUIT_REGISTRATION_TOKEN: ${KUMO_LIVE_TUWUNEL_REGISTRATION_TOKEN:-kumo-live-registration-token}
+      CONDUWUIT_ALLOW_FEDERATION: "false"
+      CONDUWUIT_ALLOW_PUBLIC_ROOM_DIRECTORY: "false"
+      CONDUWUIT_PORT: "8008"
+      CONDUWUIT_LOG: warn
+    volumes:
+      - kumo-live-tuwunel-data:/var/lib/tuwunel
+    healthcheck:
+      test: ["CMD", "curl", "-fsSL", "http://localhost:8008/_matrix/client/versions"]
+      interval: 15s
+      timeout: 8s
+      retries: 8
+      start_period: 15s
+
+  kumo:
+    image: ${KUMO_LIVE_GITAI_IMAGE:-gitai:latest}
+    container_name: kumo-live-kumo
+    restart: "no"
+    depends_on:
+      tuwunel:
+        condition: service_healthy
+    environment:
+      GITAI_AGENT_ID: ${KUMO_LIVE_AGENT_ID:-kumo}
+      GITAI_DB_PATH: /data/gitai.db
+      GITAI_GOSUTO_FILE: /config/gosuto.yaml
+      GITAI_ACP_ADDR: ":8765"
+      GITAI_ACP_TOKEN: ${KUMO_LIVE_ACP_TOKEN:-kumo-live-acp-token}
+      MATRIX_HOMESERVER: ${KUMO_LIVE_MATRIX_HOMESERVER:-http://tuwunel:8008}
+      MATRIX_USER_ID: ${KUMO_LIVE_KUMO_MXID:-@kumo-live-placeholder:localhost}
+      MATRIX_ACCESS_TOKEN: ${KUMO_LIVE_KUMO_TOKEN:-kumo-live-placeholder-token}
+      LLM_PROVIDER: openai
+      LLM_API_KEY: ${KUMO_LIVE_OPENAI_API_KEY:-}
+      LLM_BASE_URL: ${KUMO_LIVE_OPENAI_BASE_URL:-}
+      LLM_MODEL: ${KUMO_LIVE_OPENAI_MODEL:-gpt-4o}
+      BRAVE_API_KEY: ${KUMO_LIVE_BRAVE_API_KEY:-}
+      LOG_LEVEL: ${KUMO_LIVE_LOG_LEVEL:-debug}
+      LOG_FORMAT: ${KUMO_LIVE_LOG_FORMAT:-text}
+      GITAI_LLM_CALL_HARD_LIMIT: ${KUMO_LIVE_LLM_CALL_HARD_LIMIT:-0}
+    volumes:
+      - ${KUMO_LIVE_GOSUTO_FILE:-./templates/kumo-agent/gosuto.yaml}:/config/gosuto.yaml:ro
+      - kumo-live-data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  kumo-live-data:
+  kumo-live-tuwunel-data:

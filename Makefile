@@ -1,4 +1,4 @@
-.PHONY: all build build-ruriko build-gitai build-tools test test-integration test-integration-nlp test-saito-scheduling test-saito-scheduling-live-precheck test-saito-scheduling-live test-ruriko-saito-operator-live test-canonical-workflow-live-provisioning test-canonical-workflow-live-admin-room test-canonical-workflow-live-compose test-canonical-workflow-live-compose-3cycles test-canonical-workflow-live-security test-canonical-workflow-live lint fmt clean run-ruriko run-gitai install help
+.PHONY: all build build-ruriko build-gitai build-tools test test-integration test-integration-nlp test-saito-scheduling test-saito-scheduling-live-precheck test-saito-scheduling-live test-ruriko-saito-operator-live test-canonical-workflow-live-provisioning test-canonical-workflow-live-admin-room test-canonical-workflow-live-compose test-canonical-workflow-live-compose-3cycles test-canonical-workflow-live-security test-canonical-workflow-live test-kumo-live-compose test-kumo-live-compose-summary lint fmt clean run-ruriko run-gitai install help
 
 # Build variables
 BINARY_DIR := bin
@@ -95,6 +95,14 @@ test-canonical-workflow-live-security: ## Run canonical live security checks (se
 	bash ./test/integration/test-canonical-workflow-live-security.sh
 
 test-canonical-workflow-live: test-canonical-workflow-live-compose test-canonical-workflow-live-security ## Run full canonical live verification bundle
+
+test-kumo-live-compose: ## Run standalone Kumo + Tuwunel live workflow probe (captures OpenAI payloads, verifies Brave invocation path)
+	@echo "Running standalone Kumo live compose check..."
+	bash ./test/integration/test-kumo-live-compose.sh
+
+test-kumo-live-compose-summary: ## Run standalone Kumo live probe and require final KUMO_NEWS_RESPONSE delivery
+	@echo "Running standalone Kumo live compose check with summary requirement..."
+	KUMO_LIVE_REQUIRE_SUMMARY=1 bash ./test/integration/test-kumo-live-compose.sh
 
 lint: ## Run linter
 	@echo "Running linter..."

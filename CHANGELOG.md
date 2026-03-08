@@ -7,6 +7,18 @@
 
 ## 🧹 Maintenance Updates (2026-03-08 · phase 7 hardening kickoff)
 
+- Updated `deploy/docker/Dockerfile.gitai` runtime image to include `nodejs` + `npm` (`npx`) so MCP servers declared with `command: npx` (e.g. Brave Search, Fetch) can start in live integration runs.
+
+- Added standalone Kumo live integration harness (no Ruriko dependency) to validate Gosuto-driven workflow execution directly in Gitai:
+  - `test/integration/test-kumo-live-compose.sh`
+  - `test/integration/docker-compose.kumo-live.yaml`
+  - `test/integration/kumo_live_matrix_helpers.py`
+  - `test/integration/openai_capture_proxy.py`
+- Added dedicated orchestration targets:
+  - `make test-kumo-live-compose`
+  - `make test-kumo-live-compose-summary`
+- The new flow boots `tuwunel + kumo`, sends a protocol message from an operator account, captures OpenAI request payloads, verifies Brave tool invocation evidence, and can require final `KUMO_NEWS_RESPONSE` delivery.
+
 - Added a strict canonical live verification entry point for full-chain, three-cycle compose checks:
   - `make test-canonical-workflow-live-compose-3cycles`
   - wires `CANONICAL_VERIFY_STAGE=full` and `CANONICAL_REQUIRED_CYCLES=3` into `test/integration/test-canonical-workflow-live-compose.sh`

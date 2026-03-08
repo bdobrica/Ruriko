@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 
 	gosutospec "github.com/bdobrica/Ruriko/common/spec/gosuto"
@@ -289,6 +290,36 @@ func validatePayloadAgainstSchema(schema, payload map[string]interface{}) error 
 }
 
 func matchesJSONSchemaType(expected string, value interface{}) bool {
+	kindOf := func(v interface{}) (reflect.Kind, bool) {
+		if v == nil {
+			return reflect.Invalid, false
+		}
+		rv := reflect.ValueOf(v)
+		return rv.Kind(), true
+	}
+
+	isIntegerKind := func(kind reflect.Kind) bool {
+		switch kind {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+			return true
+		default:
+			return false
+		}
+	}
+
+	isNumberKind := func(kind reflect.Kind) bool {
+		if isIntegerKind(kind) {
+			return true
+		}
+		switch kind {
+		case reflect.Float32, reflect.Float64:
+			return true
+		default:
+			return false
+		}
+	}
+
 	switch expected {
 	case "string":
 		_, ok := value.(string)
@@ -297,13 +328,20 @@ func matchesJSONSchemaType(expected string, value interface{}) bool {
 		_, ok := value.(bool)
 		return ok
 	case "number":
-		_, ok := value.(float64)
-		return ok
+		kind, ok := kindOf(value)
+		return ok && isNumberKind(kind)
 	case "integer":
-		number, ok := value.(float64)
+		kind, ok := kindOf(value)
 		if !ok {
 			return false
 		}
+		if isIntegerKind(kind) {
+			return true
+		}
+		if kind != reflect.Float32 && kind != reflect.Float64 {
+			return false
+		}
+		number := reflect.ValueOf(value).Convert(reflect.TypeOf(float64(0))).Float()
 		return number == float64(int64(number))
 	case "array":
 		_, ok := value.([]interface{})
