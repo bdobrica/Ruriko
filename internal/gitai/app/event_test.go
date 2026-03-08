@@ -98,6 +98,37 @@ persona:
   systemPrompt: "You are a helpful test agent."
 `
 
+const eventWorkflowSchemaStrictYAML = `apiVersion: gosuto/v1
+metadata:
+  name: test-agent
+trust:
+  allowedRooms:
+    - "!chat-room:example.com"
+  allowedSenders:
+    - "@user:example.com"
+  adminRoom: "!admin-room:example.com"
+workflow:
+  schemas:
+    gatewayInput:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+  protocols:
+    - id: "gateway.tick.v1"
+      trigger:
+        type: "gateway.event"
+        prefix: "cron.tick"
+      inputSchemaRef: "gatewayInput"
+      steps:
+        - type: "parse_input"
+persona:
+  llmProvider: openai
+  model: gpt-4o-mini
+  systemPrompt: "You are a helpful test agent."
+`
+
 // newEventApp builds a minimal App wired for event-turn tests:
 //   - SQLite store backed by a temp file
 //   - Gosuto loader with the provided YAML applied
@@ -352,6 +383,33 @@ func TestHandleEvent_DropsEventWhenNoAdminRoom(t *testing.T) {
 		t.Error("LLM was called even though no admin room is configured")
 	case <-time.After(200 * time.Millisecond):
 		// Correct: no call made.
+	}
+}
+
+func TestHandleEvent_GatewayWorkflowSchemaError_DoesNotFallBackToLLM(t *testing.T) {
+	prov := newCapturingLLM("should not be called")
+	a := newEventApp(t, eventWorkflowSchemaStrictYAML, prov)
+
+	sender := &recordingMatrixSender{}
+	a.eventSender = sender
+
+	evt := makeTestEvent("scheduler", "cron.tick", "")
+	a.handleEvent(context.Background(), evt)
+
+	if _, ok := prov.waitForCall(300 * time.Millisecond); ok {
+		t.Fatal("LLM should not be called when gateway workflow payload fails schema validation")
+	}
+
+	sends, ok := sender.waitForSend(3 * time.Second)
+	if !ok || len(sends) == 0 {
+		t.Fatal("expected gateway error notification send")
+	}
+	last := sends[len(sends)-1]
+	if !strings.Contains(last.text, "⚡ Event: scheduler/cron.tick") {
+		t.Fatalf("unexpected gateway error message header: %q", last.text)
+	}
+	if !strings.Contains(last.text, "payload missing required field") {
+		t.Fatalf("expected schema error details in gateway error message, got: %q", last.text)
 	}
 }
 

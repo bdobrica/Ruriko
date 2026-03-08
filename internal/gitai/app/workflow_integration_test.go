@@ -141,6 +141,45 @@ persona:
   systemPrompt: "You are Kumo."
 `
 
+const workflowIntegrationSchemaStrictYAML = `apiVersion: gosuto/v1
+metadata:
+  name: kumo
+  canonicalName: kumo
+trust:
+  allowedRooms:
+    - "!kumo-room:example.com"
+  allowedSenders:
+    - "*"
+  adminRoom: "!admin-room:example.com"
+  trustedPeers:
+    - mxid: "@kairo:example.com"
+      roomId: "!kumo-room:example.com"
+      protocols:
+        - "kairo.news.request.v1"
+workflow:
+  schemas:
+    kairoNewsRequest:
+      type: object
+      required: [run_id, tickers]
+      properties:
+        run_id:
+          type: integer
+        tickers:
+          type: array
+  protocols:
+    - id: "kairo.news.request.v1"
+      trigger:
+        type: "matrix.protocol_message"
+        prefix: "KAIRO_NEWS_REQUEST"
+      inputSchemaRef: "kairoNewsRequest"
+      steps:
+        - type: "parse_input"
+persona:
+  llmProvider: openai
+  model: gpt-4o-mini
+  systemPrompt: "You are Kumo."
+`
+
 func makeMessageEvent(roomID, sender, eventID, body string) *event.Event {
 	return &event.Event{
 		ID:     id.EventID(eventID),
@@ -321,6 +360,31 @@ func TestHandleMessage_ProtocolWithDeterministicSteps_DoesNotInvokeLLM(t *testin
 	}
 	if count != 1 {
 		t.Fatalf("turn_log count = %d, want 1 for deterministic workflow execution", count)
+	}
+}
+
+func TestHandleMessage_InvalidProtocolPayload_DoesNotFallBackToLLM(t *testing.T) {
+	prov := newCapturingLLM("")
+	a := newEventApp(t, workflowIntegrationSchemaStrictYAML, prov)
+
+	evt := makeMessageEvent(
+		"!kumo-room:example.com",
+		"@kairo:example.com",
+		"$evt-invalid-protocol-payload",
+		`KAIRO_NEWS_REQUEST {"run_id": 42}`,
+	)
+	a.handleMessage(context.Background(), evt)
+
+	if _, ok := prov.waitForCall(300 * time.Millisecond); ok {
+		t.Fatal("LLM should not be called when protocol payload fails schema validation")
+	}
+
+	var count int
+	if err := a.db.DB().QueryRowContext(context.Background(), "SELECT COUNT(*) FROM turn_log").Scan(&count); err != nil {
+		t.Fatalf("count turn_log: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("turn_log count = %d, want 0 when invalid protocol payload is rejected", count)
 	}
 }
 

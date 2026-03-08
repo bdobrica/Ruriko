@@ -546,17 +546,26 @@ func (a *App) handleMessage(ctx context.Context, evt *event.Event) {
 		}
 
 		match, werr := workflow.MatchInboundProtocol(cfg, roomID, sender, text)
-		if werr != nil && workflow.HasCode(werr, workflow.CodeTrustMismatch) {
+		if werr != nil {
 			protocolID := ""
 			if match != nil {
 				protocolID = match.Protocol.ID
 			}
-			slog.Warn("workflow protocol message rejected by trust gate",
-				"room", roomID,
-				"sender", sender,
-				"protocol", protocolID,
-				"err", werr,
-			)
+			if workflow.HasCode(werr, workflow.CodeTrustMismatch) {
+				slog.Warn("workflow protocol message rejected by trust gate",
+					"room", roomID,
+					"sender", sender,
+					"protocol", protocolID,
+					"err", werr,
+				)
+			} else {
+				slog.Warn("workflow protocol message rejected",
+					"room", roomID,
+					"sender", sender,
+					"protocol", protocolID,
+					"err", werr,
+				)
+			}
 			return
 		}
 		protocolMatch = match
@@ -1326,7 +1335,10 @@ func (a *App) runEventTurn(ctx context.Context, evt *envelope.Event) {
 	startedAt := time.Now()
 	result := ""
 	toolCalls := 0
-	if match, ok := workflow.MatchGatewayProtocol(cfg, evt); ok && len(match.Protocol.Steps) > 0 {
+	match, werr := workflow.MatchGatewayProtocol(cfg, evt)
+	if werr != nil {
+		err = werr
+	} else if match != nil && len(match.Protocol.Steps) > 0 {
 		result, toolCalls, err = a.runWorkflowTurn(ctx, adminRoom, senderLabel, match)
 	} else {
 		result, toolCalls, err = a.runTurn(ctx, adminRoom, senderLabel, userText, "")
