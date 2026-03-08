@@ -6,7 +6,7 @@
 > the anchor for implementation and future extensions.
 
 **Status**: Draft (implementation target)  
-**Last Updated**: 2026-02-27
+**Last Updated**: 2026-03-08
 
 ---
 
@@ -145,6 +145,7 @@ workflow:
 ## 5.2 Resolution
 
 - `inputSchemaRef` and `outputSchemaRef` resolve only against `workflow.schemas`.
+- `forEachResultSchemaRef` and `forEachIterationSchemaRef` also resolve only against `workflow.schemas`.
 - External refs (URI/path/remote) are not supported in v1.
 
 ## 5.3 Validation behavior
@@ -240,6 +241,52 @@ Semantics:
 
 - Uses predefined store operation surface (no arbitrary SQL in step config).
 - Must be deterministic and auditable.
+
+## 6.7 `for_each`
+
+Purpose: run nested steps over a bounded input array.
+
+Required fields:
+
+- `itemsExpr`
+- `steps`
+
+Optional fields:
+
+- `itemVar` (default: `item`)
+- `maxIterations` (bounded guard; runtime default applies when omitted)
+- `forEachResultSchemaRef`
+- `forEachIterationSchemaRef`
+
+Semantics:
+
+- `itemsExpr` must resolve to an array.
+- Iteration count must not exceed `maxIterations`.
+- Each iteration produces a contract object:
+  - `index`
+  - `item`
+  - `outputs` (nested step outputs)
+  - `result` (last present nested result)
+- If `forEachResultSchemaRef` is set, each iteration `result` is validated.
+- If `forEachIterationSchemaRef` is set, each full iteration contract is validated.
+
+## 6.8 `collect`
+
+Purpose: aggregate values from iteration outputs.
+
+Required fields:
+
+- `collectFrom`
+
+Optional fields:
+
+- `collectMode` (`result` default, or `entry`, `outputs`, `item`)
+- `collectFlatten` (flatten array-shaped selected values)
+
+Semantics:
+
+- `collectFrom` must resolve to an array.
+- Aggregation is deterministic and side-effect free.
 
 ---
 
@@ -390,6 +437,69 @@ workflow:
           targetAlias: "kairo"
           payloadTemplate: "KUMO_NEWS_RESPONSE {{state.step.current.json}}"
 ```
+
+## 12.1 Concrete example: strict nested iteration contracts
+
+```yaml
+workflow:
+  schemas:
+    searchPlan:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [query]
+            properties:
+              query: { type: string }
+    perItemResult:
+      type: string
+    perIterationContract:
+      type: object
+      required: [index, item, outputs, result]
+      properties:
+        index: { type: integer }
+        item:
+          type: object
+          required: [query]
+          properties:
+            query: { type: string }
+        outputs: { type: object }
+        result: { type: string }
+  protocols:
+    - id: "kumo.news.request.v1"
+      trigger:
+        type: "matrix.protocol_message"
+        prefix: "KUMO_NEWS_REQUEST"
+      inputSchemaRef: "kairoNewsRequest"
+      steps:
+        - type: plan
+          prompt: "Create a compact search plan for {{input.topic}}"
+          outputSchemaRef: "searchPlan"
+        - type: for_each
+          itemsExpr: "{{steps.step_0.items}}"
+          itemVar: "plan_item"
+          maxIterations: 5
+          forEachResultSchemaRef: "perItemResult"
+          forEachIterationSchemaRef: "perIterationContract"
+          steps:
+            - type: tool
+              tool: "brave__search"
+              argsTemplate:
+                query: "{{state.plan_item.query}}"
+        - type: collect
+          collectFrom: "{{steps.step_1}}"
+          collectMode: "result"
+```
+
+Notes:
+
+- `forEachResultSchemaRef` catches mismatches in each iteration terminal value.
+- `forEachIterationSchemaRef` enforces the entire per-iteration envelope shape.
+- Both refs are valid only on `type: for_each` and must exist in `workflow.schemas`.
 
 ---
 
