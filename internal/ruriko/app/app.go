@@ -750,6 +750,17 @@ func (a *App) handleMessage(ctx context.Context, evt *event.Event) {
 	response, err := a.router.Route(ctx, text, evt)
 	if err != nil {
 		if errors.Is(err, commands.ErrNotACommand) {
+			// Ignore known Gitai breadcrumb messages from known agent senders.
+			// These are operational breadcrumbs (e.g. "sent message" audit lines)
+			// and should not trigger NL classification calls.
+			if a.shouldIgnoreAgentBreadcrumb(ctx, evt.Sender.String(), text) {
+				slog.Debug("ignoring agent breadcrumb message",
+					"sender", evt.Sender.String(),
+					"room", evt.RoomID.String(),
+				)
+				return
+			}
+
 			// Not a /ruriko command — first check if it's an approval decision
 			// (approve <id> / deny <id> reason=...).
 			decisionResp, decisionErr := a.handlers.HandleApprovalDecision(ctx, text, evt)
@@ -797,6 +808,63 @@ func (a *App) handleMessage(ctx context.Context, evt *event.Event) {
 			slog.Error("failed to send response", "room", evt.RoomID.String(), "err", err)
 		}
 	}
+}
+
+// shouldIgnoreAgentBreadcrumb reports whether a message should be ignored by
+// the NL pipeline because it looks like an operational breadcrumb emitted by a
+// known agent account.
+func (a *App) shouldIgnoreAgentBreadcrumb(ctx context.Context, senderMXID, text string) bool {
+	if !isAgentBreadcrumbMessage(text) {
+		return false
+	}
+	return a.isKnownAgentSender(ctx, senderMXID)
+}
+
+// isKnownAgentSender reports whether senderMXID matches the MXID of any agent
+// known to the Ruriko store.
+func (a *App) isKnownAgentSender(ctx context.Context, senderMXID string) bool {
+	if a == nil || a.store == nil {
+		return false
+	}
+	senderMXID = strings.TrimSpace(senderMXID)
+	if senderMXID == "" {
+		return false
+	}
+
+	agents, err := a.store.ListAgents(ctx)
+	if err != nil {
+		slog.Warn("failed to list agents for breadcrumb sender check", "err", err)
+		return false
+	}
+
+	for _, agent := range agents {
+		if agent == nil || !agent.MXID.Valid {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(agent.MXID.String), senderMXID) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// isAgentBreadcrumbMessage reports whether text matches operational breadcrumb
+// messages sent by Gitai that should not be interpreted as user NL input.
+func isAgentBreadcrumbMessage(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return false
+	}
+
+	if strings.HasPrefix(trimmed, "📨 Sent message to ") && strings.Contains(trimmed, "(trace=") {
+		return true
+	}
+	if strings.HasPrefix(trimmed, "Sent message to ") && strings.Contains(trimmed, "(trace=") {
+		return true
+	}
+
+	return false
 }
 
 // markdownToHTML converts the small subset of Markdown produced by Ruriko
