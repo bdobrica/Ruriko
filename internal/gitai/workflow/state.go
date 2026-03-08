@@ -34,6 +34,7 @@ type State struct {
 	ProtocolID  string
 	Input       map[string]interface{}
 	Values      map[string]interface{}
+	Schemas     map[string]interface{}
 	StepOutputs map[string]map[string]interface{}
 	FinalOutput string
 	Final       FinalOutput
@@ -55,6 +56,7 @@ func NewStateFromExecutionContext(ctx *ExecutionContext) *State {
 	state.ProtocolID = ctx.ProtocolID
 	state.Input = cloneMap(ctx.Input)
 	state.Values = cloneMap(ctx.State)
+	state.Schemas = cloneSchemaDefinitions(ctx.SchemaDefinitions)
 	state.Trace = TraceMetadata{
 		TraceID:    ctx.TraceID,
 		ProtocolID: ctx.ProtocolID,

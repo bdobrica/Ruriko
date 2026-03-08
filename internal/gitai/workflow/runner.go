@@ -57,11 +57,14 @@ func (r *Runner) Run(ctx context.Context, protocol gosutospec.WorkflowProtocol, 
 			retries = step.Retries
 		}
 
-		stepResult := ""
+		var stepResult interface{}
 		stepToolCalls := 0
 		err := RunStepWithRetryThenRefuse(protocol.ID, step.Type, retries, func() error {
 			result, callCount, err := r.runStep(ctx, step, state)
 			if err != nil {
+				return err
+			}
+			if err := validateStepOutputSchema(protocol.ID, step, result, state); err != nil {
 				return err
 			}
 			stepResult = result
@@ -83,7 +86,7 @@ func (r *Runner) Run(ctx context.Context, protocol gosutospec.WorkflowProtocol, 
 			"retryBudget":   retries,
 			"status":        "success",
 			"output":        stepResult,
-			"outputPresent": strings.TrimSpace(stepResult) != "",
+			"outputPresent": outputPresent(stepResult),
 		}
 
 		if err != nil {
@@ -100,9 +103,9 @@ func (r *Runner) Run(ctx context.Context, protocol gosutospec.WorkflowProtocol, 
 		}
 		state.StepOutputs[stepKey] = stepContract
 
-		if stepResult != "" {
+		if outputPresent(stepResult) {
 			state.Values[stepKey] = stepResult
-			state.FinalOutput = stepResult
+			state.FinalOutput = fmt.Sprintf("%v", stepResult)
 			state.Final = FinalOutput{
 				StepKey:   stepKey,
 				StepIndex: i,
@@ -122,11 +125,11 @@ func (r *Runner) Run(ctx context.Context, protocol gosutospec.WorkflowProtocol, 
 	return state.FinalOutput, toolCalls, nil
 }
 
-func (r *Runner) runStep(ctx context.Context, step gosutospec.WorkflowProtocolStep, state *State) (string, int, error) {
+func (r *Runner) runStep(ctx context.Context, step gosutospec.WorkflowProtocolStep, state *State) (interface{}, int, error) {
 	switch strings.TrimSpace(step.Type) {
 	case "parse_input":
 		state.Values["parsed_input"] = cloneMap(state.Input)
-		return "", 0, nil
+		return cloneMap(state.Input), 0, nil
 
 	case "tool":
 		toolName := strings.TrimSpace(step.Tool)
@@ -143,7 +146,7 @@ func (r *Runner) runStep(ctx context.Context, step gosutospec.WorkflowProtocolSt
 		}
 		result, err := r.dispatcher.DispatchTool(ctx, workflowCaller, state.SenderMXID, toolName, args)
 		if err != nil {
-			return "", 1, err
+			return nil, 1, err
 		}
 		return result, 1, nil
 
@@ -154,11 +157,11 @@ func (r *Runner) runStep(ctx context.Context, step gosutospec.WorkflowProtocolSt
 		}
 		prompt, ok := promptAny.(string)
 		if !ok || strings.TrimSpace(prompt) == "" {
-			return "", 0, fmt.Errorf("summarize step requires non-empty prompt")
+			return nil, 0, fmt.Errorf("summarize step requires non-empty prompt")
 		}
 		result, err := r.dispatcher.Summarize(ctx, prompt, state)
 		if err != nil {
-			return "", 0, err
+			return nil, 0, err
 		}
 		return result, 0, nil
 
@@ -169,7 +172,7 @@ func (r *Runner) runStep(ctx context.Context, step gosutospec.WorkflowProtocolSt
 		}
 		target, ok := targetAny.(string)
 		if !ok || strings.TrimSpace(target) == "" {
-			return "", 0, fmt.Errorf("send_message step requires targetAlias")
+			return nil, 0, fmt.Errorf("send_message step requires targetAlias")
 		}
 		msgAny, err := interpolateValue(step.PayloadTemplate, state)
 		if err != nil {
@@ -177,14 +180,14 @@ func (r *Runner) runStep(ctx context.Context, step gosutospec.WorkflowProtocolSt
 		}
 		message, ok := msgAny.(string)
 		if !ok || strings.TrimSpace(message) == "" {
-			return "", 0, fmt.Errorf("send_message step requires payloadTemplate")
+			return nil, 0, fmt.Errorf("send_message step requires payloadTemplate")
 		}
 		result, err := r.dispatcher.DispatchTool(ctx, workflowCaller, state.SenderMXID, "matrix.send_message", map[string]interface{}{
 			"target":  target,
 			"message": message,
 		})
 		if err != nil {
-			return "", 1, err
+			return nil, 1, err
 		}
 		return result, 1, nil
 
@@ -197,14 +200,86 @@ func (r *Runner) runStep(ctx context.Context, step gosutospec.WorkflowProtocolSt
 			return "", 0, fmt.Errorf("interpolate persist value: %w", err)
 		}
 		state.Values[step.PersistKey] = valueAny
-		return fmt.Sprintf("%v", valueAny), 0, nil
+		return valueAny, 0, nil
 
 	case "branch":
-		return "", 0, fmt.Errorf("branch steps are not implemented yet")
+		return nil, 0, fmt.Errorf("branch steps are not implemented yet")
 
 	default:
-		return "", 0, fmt.Errorf("unsupported workflow step type %q", step.Type)
+		return nil, 0, fmt.Errorf("unsupported workflow step type %q", step.Type)
 	}
+}
+
+func validateStepOutputSchema(protocolID string, step gosutospec.WorkflowProtocolStep, output interface{}, state *State) error {
+	ref := strings.TrimSpace(step.OutputSchemaRef)
+	if ref == "" {
+		return nil
+	}
+	if state == nil || len(state.Schemas) == 0 {
+		return &Error{
+			Code:       CodeSchemaValidation,
+			ProtocolID: protocolID,
+			Message:    fmt.Sprintf("output schema ref %s not available in execution context", ref),
+		}
+	}
+
+	schemaAny, ok := state.Schemas[ref]
+	if !ok {
+		return &Error{
+			Code:       CodeSchemaValidation,
+			ProtocolID: protocolID,
+			Message:    fmt.Sprintf("output schema ref %s not found", ref),
+		}
+	}
+	schema, ok := schemaAny.(map[string]interface{})
+	if !ok {
+		return &Error{
+			Code:       CodeSchemaValidation,
+			ProtocolID: protocolID,
+			Message:    fmt.Sprintf("output schema %s is not an object", ref),
+		}
+	}
+
+	typeName, _ := schema["type"].(string)
+	if typeName != "" && !matchesJSONSchemaType(typeName, output) {
+		return &Error{
+			Code:       CodeSchemaValidation,
+			ProtocolID: protocolID,
+			Message:    fmt.Sprintf("step output has wrong type; expected %s", typeName),
+		}
+	}
+
+	_, hasRequired := schema["required"]
+	_, hasProperties := schema["properties"]
+	if typeName == "object" || (typeName == "" && (hasRequired || hasProperties)) {
+		payload, ok := output.(map[string]interface{})
+		if !ok {
+			return &Error{
+				Code:       CodeSchemaValidation,
+				ProtocolID: protocolID,
+				Message:    "step output must be an object",
+			}
+		}
+		if err := validatePayloadAgainstSchema(schema, payload); err != nil {
+			return &Error{
+				Code:       CodeSchemaValidation,
+				ProtocolID: protocolID,
+				Message:    err.Error(),
+			}
+		}
+	}
+
+	return nil
+}
+
+func outputPresent(value interface{}) bool {
+	if value == nil {
+		return false
+	}
+	if s, ok := value.(string); ok {
+		return strings.TrimSpace(s) != ""
+	}
+	return true
 }
 
 func interpolateValue(value interface{}, state *State) (interface{}, error) {

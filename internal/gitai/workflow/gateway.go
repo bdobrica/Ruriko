@@ -47,10 +47,11 @@ func MatchGatewayProtocol(cfg *gosutospec.Config, evt *envelope.Event) (*Inbound
 			return nil, false
 		}
 		return &InboundProtocolMatch{
-			Protocol: protocol,
-			Payload:  payload,
-			Prefix:   prefix,
-			RawText:  fmt.Sprintf("gateway:%s/%s", evt.Source, evt.Type),
+			Protocol:          protocol,
+			Payload:           payload,
+			SchemaDefinitions: cloneSchemaDefinitions(cfg.Workflow.Schemas.Definitions),
+			Prefix:            prefix,
+			RawText:           fmt.Sprintf("gateway:%s/%s", evt.Source, evt.Type),
 		}, true
 	}
 

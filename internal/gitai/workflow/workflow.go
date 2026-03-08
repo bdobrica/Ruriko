@@ -51,20 +51,22 @@ func HasCode(err error, code ErrorCode) bool {
 
 // InboundProtocolMatch is a successful protocol-trigger match and parse result.
 type InboundProtocolMatch struct {
-	Protocol gosutospec.WorkflowProtocol
-	Payload  map[string]interface{}
-	Prefix   string
-	RawText  string
+	Protocol          gosutospec.WorkflowProtocol
+	Payload           map[string]interface{}
+	SchemaDefinitions map[string]interface{}
+	Prefix            string
+	RawText           string
 }
 
 // ExecutionContext is the deterministic state container for workflow execution.
 type ExecutionContext struct {
-	TraceID    string
-	RoomID     string
-	SenderMXID string
-	ProtocolID string
-	Input      map[string]interface{}
-	State      map[string]interface{}
+	TraceID           string
+	RoomID            string
+	SenderMXID        string
+	ProtocolID        string
+	Input             map[string]interface{}
+	State             map[string]interface{}
+	SchemaDefinitions map[string]interface{}
 }
 
 // NewExecutionContext builds an execution context from a matched inbound protocol.
@@ -82,12 +84,13 @@ func NewExecutionContext(traceID, roomID, senderMXID string, match *InboundProto
 		state[k] = v
 	}
 	return &ExecutionContext{
-		TraceID:    traceID,
-		RoomID:     roomID,
-		SenderMXID: senderMXID,
-		ProtocolID: match.Protocol.ID,
-		Input:      match.Payload,
-		State:      state,
+		TraceID:           traceID,
+		RoomID:            roomID,
+		SenderMXID:        senderMXID,
+		ProtocolID:        match.Protocol.ID,
+		Input:             match.Payload,
+		State:             state,
+		SchemaDefinitions: cloneSchemaDefinitions(match.SchemaDefinitions),
 	}
 }
 
@@ -145,14 +148,26 @@ func MatchInboundProtocol(cfg *gosutospec.Config, roomID, senderMXID, text strin
 		}
 
 		return &InboundProtocolMatch{
-			Protocol: protocol,
-			Payload:  payload,
-			Prefix:   prefix,
-			RawText:  trimmedText,
+			Protocol:          protocol,
+			Payload:           payload,
+			SchemaDefinitions: cloneSchemaDefinitions(cfg.Workflow.Schemas.Definitions),
+			Prefix:            prefix,
+			RawText:           trimmedText,
 		}, nil
 	}
 
 	return nil, nil
+}
+
+func cloneSchemaDefinitions(in map[string]interface{}) map[string]interface{} {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]interface{}, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 func parseProtocolMessage(prefix, text string) (map[string]interface{}, bool, error) {

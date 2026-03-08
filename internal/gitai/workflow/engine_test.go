@@ -124,8 +124,8 @@ func TestEngineExecuteProtocol_TracksStructuredContracts(t *testing.T) {
 	if got := state.Final.StepType; got != "persist" {
 		t.Fatalf("final step type = %q, want persist", got)
 	}
-	if got := state.Final.Value; got != "42" {
-		t.Fatalf("final value = %#v, want \"42\"", got)
+	if got := state.Final.Value; got != float64(42) {
+		t.Fatalf("final value = %#v, want 42", got)
 	}
 }
 
@@ -172,5 +172,71 @@ func TestEngineExecuteProtocol_UnresolvedInterpolationFailsClosed(t *testing.T) 
 	}
 	if !strings.Contains(err.Error(), "unresolved template token") {
 		t.Fatalf("expected unresolved token error, got: %v", err)
+	}
+}
+
+func TestEngineExecuteProtocol_OutputSchemaRefValidation_Succeeds(t *testing.T) {
+	dispatcher := &fakeDispatcher{}
+	engine := NewEngine(dispatcher)
+
+	protocol := gosutospec.WorkflowProtocol{
+		ID: "kumo.news.request.v1",
+		Steps: []gosutospec.WorkflowProtocolStep{
+			{
+				Type:            "persist",
+				PersistKey:      "last_run_id",
+				PersistValue:    "{{input.run_id}}",
+				OutputSchemaRef: "runIdNumber",
+			},
+		},
+	}
+
+	match := &InboundProtocolMatch{
+		Protocol: protocol,
+		Payload:  map[string]interface{}{"run_id": float64(42)},
+		SchemaDefinitions: map[string]interface{}{
+			"runIdNumber": map[string]interface{}{"type": "number"},
+		},
+	}
+
+	result, _, err := engine.ExecuteProtocol(context.Background(), protocol, NewExecutionContext("trace-1", "!room:example.com", "@peer:example.com", match))
+	if err != nil {
+		t.Fatalf("ExecuteProtocol() unexpected error: %v", err)
+	}
+	if result != "42" {
+		t.Fatalf("ExecuteProtocol() result = %q, want 42", result)
+	}
+}
+
+func TestEngineExecuteProtocol_OutputSchemaRefValidation_Fails(t *testing.T) {
+	dispatcher := &fakeDispatcher{}
+	engine := NewEngine(dispatcher)
+
+	protocol := gosutospec.WorkflowProtocol{
+		ID: "kumo.news.request.v1",
+		Steps: []gosutospec.WorkflowProtocolStep{
+			{
+				Type:            "persist",
+				PersistKey:      "last_run_id",
+				PersistValue:    "{{input.run_id}}",
+				OutputSchemaRef: "runIdString",
+			},
+		},
+	}
+
+	match := &InboundProtocolMatch{
+		Protocol: protocol,
+		Payload:  map[string]interface{}{"run_id": float64(42)},
+		SchemaDefinitions: map[string]interface{}{
+			"runIdString": map[string]interface{}{"type": "string"},
+		},
+	}
+
+	_, _, err := engine.ExecuteProtocol(context.Background(), protocol, NewExecutionContext("trace-1", "!room:example.com", "@peer:example.com", match))
+	if err == nil {
+		t.Fatal("ExecuteProtocol() expected schema validation error")
+	}
+	if !HasCode(err, CodeSchemaValidation) {
+		t.Fatalf("expected schema validation error code, got: %v", err)
 	}
 }
