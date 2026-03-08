@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bdobrica/Ruriko/common/spec/gosuto"
 	"github.com/santhosh-tekuri/jsonschema/v5"
 	"gopkg.in/yaml.v3"
 )
@@ -167,6 +168,129 @@ workflow:
 
 			if err != nil {
 				t.Fatalf("schema.Validate: unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestGosutoV1SchemaAndParse_WorkflowTriggerContractParity(t *testing.T) {
+	schema := compileGosutoV1Schema(t)
+
+	tests := []struct {
+		name      string
+		yamlDoc   string
+		wantValid bool
+	}{
+		{
+			name: "valid matrix trigger",
+			yamlDoc: `
+apiVersion: gosuto/v1
+metadata:
+  name: parity-agent
+trust:
+  allowedRooms: ["!room:example.com"]
+  allowedSenders: ["@alice:example.com"]
+workflow:
+  protocols:
+    - id: kairo.news.request.v1
+      trigger:
+        type: matrix.protocol_message
+        prefix: KAIRO_NEWS_REQUEST
+`,
+			wantValid: true,
+		},
+		{
+			name: "valid gateway trigger without prefix",
+			yamlDoc: `
+apiVersion: gosuto/v1
+metadata:
+  name: parity-agent
+trust:
+  allowedRooms: ["!room:example.com"]
+  allowedSenders: ["@alice:example.com"]
+workflow:
+  protocols:
+    - id: gateway.refresh.v1
+      trigger:
+        type: gateway.event
+`,
+			wantValid: true,
+		},
+		{
+			name: "invalid unknown trigger type",
+			yamlDoc: `
+apiVersion: gosuto/v1
+metadata:
+  name: parity-agent
+trust:
+  allowedRooms: ["!room:example.com"]
+  allowedSenders: ["@alice:example.com"]
+workflow:
+  protocols:
+    - id: kairo.news.request.v1
+      trigger:
+        type: matrix.message
+        prefix: KAIRO_NEWS_REQUEST
+`,
+			wantValid: false,
+		},
+		{
+			name: "invalid matrix trigger missing prefix",
+			yamlDoc: `
+apiVersion: gosuto/v1
+metadata:
+  name: parity-agent
+trust:
+  allowedRooms: ["!room:example.com"]
+  allowedSenders: ["@alice:example.com"]
+workflow:
+  protocols:
+    - id: kairo.news.request.v1
+      trigger:
+        type: matrix.protocol_message
+`,
+			wantValid: false,
+		},
+		{
+			name: "invalid trigger prefix with whitespace",
+			yamlDoc: `
+apiVersion: gosuto/v1
+metadata:
+  name: parity-agent
+trust:
+  allowedRooms: ["!room:example.com"]
+  allowedSenders: ["@alice:example.com"]
+workflow:
+  protocols:
+    - id: kairo.news.request.v1
+      trigger:
+        type: matrix.protocol_message
+        prefix: KAIRO NEWS REQUEST
+`,
+			wantValid: false,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			var doc map[string]interface{}
+			if err := yaml.Unmarshal([]byte(tc.yamlDoc), &doc); err != nil {
+				t.Fatalf("yaml.Unmarshal: %v", err)
+			}
+
+			schemaErr := schema.Validate(doc)
+			_, parseErr := gosuto.Parse([]byte(tc.yamlDoc))
+
+			schemaValid := schemaErr == nil
+			parseValid := parseErr == nil
+
+			if schemaValid != parseValid {
+				t.Fatalf("schema/parse drift detected: schemaValid=%t (err=%v), parseValid=%t (err=%v)", schemaValid, schemaErr, parseValid, parseErr)
+			}
+
+			if schemaValid != tc.wantValid {
+				t.Fatalf("validity mismatch: got schemaValid=%t parseValid=%t, want %t (schemaErr=%v parseErr=%v)", schemaValid, parseValid, tc.wantValid, schemaErr, parseErr)
 			}
 		})
 	}
