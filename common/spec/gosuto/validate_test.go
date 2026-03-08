@@ -239,6 +239,26 @@ func TestValidate_InvalidYAML(t *testing.T) {
 	}
 }
 
+func TestParse_UnknownFieldRejected(t *testing.T) {
+	_, err := gosuto.Parse([]byte(`
+apiVersion: gosuto/v1
+metadata:
+  name: x
+trust:
+  allowedRooms: ["!r:e"]
+  allowedSenders: ["@a:e"]
+workflow:
+  defaults:
+    maxPlanItems: 5
+`))
+	if err == nil {
+		t.Fatal("expected error for unknown field workflow.defaults, got nil")
+	}
+	if !strings.Contains(err.Error(), "field defaults not found") {
+		t.Fatalf("expected unknown field error, got: %v", err)
+	}
+}
+
 // ── Saito agent template tests ────────────────────────────────────────────────
 
 // saitoRendered is the saito-agent gosuto.yaml template with Go template vars
@@ -592,7 +612,7 @@ capabilities:
     allow: false
 
 approvals:
-  requireApproval: false
+  enabled: false
 
 persona:
   systemPrompt: |
@@ -2037,9 +2057,6 @@ workflow:
 			steps:
 				- type: "plan"
 					prompt: "create plan"
-					schemas:
-						searchPlan:
-							type: object
 `)
 	if err == nil {
 		t.Fatal("expected error for missing plan outputSchemaRef, got nil")

@@ -326,13 +326,14 @@ workflow:
 	if schemaErr == nil {
 		t.Fatal("expected schema validation error for workflow.defaults, got nil")
 	}
-	// Parse currently decodes YAML permissively and ignores unknown fields.
-	// The schema remains the canonical guard for rejecting undeclared fields.
-	if parseErr != nil {
-		t.Fatalf("gosuto.Parse should remain permissive for unknown fields here, got: %v", parseErr)
+	if parseErr == nil {
+		t.Fatal("expected gosuto.Parse error for workflow.defaults, got nil")
 	}
 
 	if !strings.Contains(strings.ToLower(schemaErr.Error()), "additionalproperties") {
 		t.Fatalf("schema error = %v, want additionalProperties violation", schemaErr)
+	}
+	if !strings.Contains(parseErr.Error(), "field defaults not found") {
+		t.Fatalf("parse error = %v, want unknown field defaults", parseErr)
 	}
 }

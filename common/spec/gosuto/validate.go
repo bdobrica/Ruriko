@@ -1,6 +1,7 @@
 package gosuto
 
 import (
+	"bytes"
 	"fmt"
 	"strconv"
 	"strings"
@@ -12,7 +13,9 @@ import (
 // It is the canonical entry point for loading Gosuto configurations.
 func Parse(data []byte) (*Config, error) {
 	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&cfg); err != nil {
 		return nil, fmt.Errorf("gosuto parse: %w", err)
 	}
 	if err := Validate(&cfg); err != nil {
