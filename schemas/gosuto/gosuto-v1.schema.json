@@ -548,9 +548,35 @@
           ]
         },
         "prefix": {
-          "type": "string"
+          "type": "string",
+          "pattern": "^$|^\\S+$"
         }
       },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "matrix.protocol_message"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "required": [
+              "prefix"
+            ],
+            "properties": {
+              "prefix": {
+                "type": "string",
+                "pattern": "^\\S+$"
+              }
+            }
+          }
+        }
+      ],
       "additionalProperties": false
     },
     "workflowSchemaRef": {

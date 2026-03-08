@@ -2111,3 +2111,20 @@ workflow:
 		t.Fatalf("gateway.event without trigger.prefix should be valid: %v", err)
 	}
 }
+
+func TestValidate_WorkflowTrigger_GatewayPrefixWhitespaceOnlyRejected(t *testing.T) {
+	_, err := parseR61YAML(r61Base + r61Trust + `
+workflow:
+	protocols:
+		- id: "gateway.refresh.v1"
+			trigger:
+				type: "gateway.event"
+				prefix: "   "
+`)
+	if err == nil {
+		t.Fatal("expected error for gateway.event trigger.prefix containing whitespace, got nil")
+	}
+	if !strings.Contains(err.Error(), "must not contain whitespace") {
+		t.Errorf("error should mention prefix whitespace restriction, got: %v", err)
+	}
+}

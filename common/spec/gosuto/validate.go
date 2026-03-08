@@ -393,8 +393,9 @@ func validateWorkflowTrigger(protocolID string, trigger WorkflowTrigger) error {
 		return fmt.Errorf("workflow protocol %s: trigger.type must not be empty", protocolID)
 	}
 
+	rawPrefix := trigger.Prefix
 	prefix := strings.TrimSpace(trigger.Prefix)
-	if prefix != "" && strings.ContainsAny(prefix, " \t\n\r") {
+	if rawPrefix != "" && strings.ContainsAny(rawPrefix, " \t\n\r") {
 		return fmt.Errorf("workflow protocol %s: trigger.prefix %q must not contain whitespace", protocolID, trigger.Prefix)
 	}
 

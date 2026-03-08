@@ -61,3 +61,113 @@ func TestRegistry_Render_CanonicalTemplates_ValidateAgainstGosutoV1Schema(t *tes
 		})
 	}
 }
+
+func TestGosutoV1Schema_WorkflowTriggerContract(t *testing.T) {
+	schema := compileGosutoV1Schema(t)
+
+	tests := []struct {
+		name     string
+		yamlDoc  string
+		wantErr  bool
+		errMatch string
+	}{
+		{
+			name: "unknown trigger type rejected",
+			yamlDoc: `
+apiVersion: gosuto/v1
+metadata:
+  name: test-agent
+trust:
+  allowedRooms: ["!room:example.com"]
+  allowedSenders: ["@alice:example.com"]
+workflow:
+  protocols:
+    - id: kairo.news.request.v1
+      trigger:
+        type: matrix.message
+        prefix: KAIRO_NEWS_REQUEST
+`,
+			wantErr:  true,
+			errMatch: "enum",
+		},
+		{
+			name: "matrix trigger requires prefix",
+			yamlDoc: `
+apiVersion: gosuto/v1
+metadata:
+  name: test-agent
+trust:
+  allowedRooms: ["!room:example.com"]
+  allowedSenders: ["@alice:example.com"]
+workflow:
+  protocols:
+    - id: kairo.news.request.v1
+      trigger:
+        type: matrix.protocol_message
+`,
+			wantErr:  true,
+			errMatch: "prefix",
+		},
+		{
+			name: "prefix with whitespace rejected",
+			yamlDoc: `
+apiVersion: gosuto/v1
+metadata:
+  name: test-agent
+trust:
+  allowedRooms: ["!room:example.com"]
+  allowedSenders: ["@alice:example.com"]
+workflow:
+  protocols:
+    - id: kairo.news.request.v1
+      trigger:
+        type: matrix.protocol_message
+        prefix: KAIRO NEWS REQUEST
+`,
+			wantErr:  true,
+			errMatch: "pattern",
+		},
+		{
+			name: "gateway trigger allows missing prefix",
+			yamlDoc: `
+apiVersion: gosuto/v1
+metadata:
+  name: test-agent
+trust:
+  allowedRooms: ["!room:example.com"]
+  allowedSenders: ["@alice:example.com"]
+workflow:
+  protocols:
+    - id: gateway.refresh.v1
+      trigger:
+        type: gateway.event
+`,
+			wantErr: false,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			var doc map[string]interface{}
+			if err := yaml.Unmarshal([]byte(tc.yamlDoc), &doc); err != nil {
+				t.Fatalf("yaml.Unmarshal: %v", err)
+			}
+
+			err := schema.Validate(doc)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected schema validation error, got nil")
+				}
+				if tc.errMatch != "" && !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(tc.errMatch)) {
+					t.Fatalf("schema error = %v, want substring %q", err, tc.errMatch)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("schema.Validate: unexpected error: %v", err)
+			}
+		})
+	}
+}
