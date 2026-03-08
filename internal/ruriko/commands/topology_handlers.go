@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -20,14 +21,19 @@ import (
 // from the agent's configured peer context and stores a new Gosuto version
 // when the rendered topology changes.
 //
-// Usage: /ruriko topology refresh <agent> [--operator-room <room-id>]
+// Usage: /ruriko topology refresh <agent> [--operator-room <room-id>] [--push true|false]
 func (h *Handlers) HandleTopologyRefresh(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
 	ctx = trace.WithTraceID(ctx, traceID)
 
 	agentID, _ := cmd.GetArg(0)
 	if strings.TrimSpace(agentID) == "" {
-		return "", fmt.Errorf("usage: /ruriko topology refresh <agent> [--operator-room <room-id>]")
+		return "", fmt.Errorf("usage: /ruriko topology refresh <agent> [--operator-room <room-id>] [--push true|false]")
+	}
+
+	pushRequested, err := parsePushFlag(cmd)
+	if err != nil {
+		return "", err
 	}
 
 	if _, err := h.store.GetAgent(ctx, agentID); err != nil {
@@ -50,9 +56,22 @@ func (h *Handlers) HandleTopologyRefresh(ctx context.Context, cmd *Command, evt 
 	}
 
 	if gv == nil {
+		pushApplied, pushMessage := false, ""
+		if pushRequested {
+			latest, latestErr := h.store.GetLatestGosutoVersion(ctx, agentID)
+			if latestErr != nil {
+				pushMessage = fmt.Sprintf("⚠️  Push requested but no Gosuto version is available for apply: %v", latestErr)
+			} else {
+				pushApplied, pushMessage = h.maybePushGosutoVersion(ctx, agentID, latest)
+			}
+		}
 		if err := h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "topology.refresh", agentID, "success",
-			store.AuditPayload{"changed": false}, ""); err != nil {
+			store.AuditPayload{"changed": false, "push_requested": pushRequested, "push_applied": pushApplied, "push_message": pushMessage}, ""); err != nil {
 			slog.Warn("audit write failed", "op", "topology.refresh", "agent", agentID, "err", err)
+		}
+
+		if pushRequested && pushMessage != "" {
+			return fmt.Sprintf("ℹ️  Topology for **%s** is already up to date.\n\n%s\n\n(trace: %s)", agentID, pushMessage, traceID), nil
 		}
 		return fmt.Sprintf("ℹ️  Topology for **%s** is already up to date.\n\n(trace: %s)", agentID, traceID), nil
 	}
@@ -61,15 +80,25 @@ func (h *Handlers) HandleTopologyRefresh(ctx context.Context, cmd *Command, evt 
 		slog.Warn("gosuto prune failed", "agent", agentID, "err", err)
 	}
 
+	pushApplied, pushMessage := false, ""
+	if pushRequested {
+		pushApplied, pushMessage = h.maybePushGosutoVersion(ctx, agentID, gv)
+	}
+
 	if err := h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "topology.refresh", agentID, "success",
-		store.AuditPayload{"changed": true, "version": gv.Version, "hash": gv.Hash[:16]}, ""); err != nil {
+		store.AuditPayload{"changed": true, "version": gv.Version, "hash": gv.Hash[:16], "push_requested": pushRequested, "push_applied": pushApplied, "push_message": pushMessage}, ""); err != nil {
 		slog.Warn("audit write failed", "op", "topology.refresh", "agent", agentID, "err", err)
 	}
 
-	return fmt.Sprintf(
+	resp := fmt.Sprintf(
 		"✅ Topology for **%s** refreshed — stored as Gosuto **v%d** (hash: `%s...`)\n\nRun `/ruriko gosuto push %s` to apply to the running agent.\n\n(trace: %s)",
 		agentID, gv.Version, gv.Hash[:16], agentID, traceID,
-	), nil
+	)
+	if pushRequested && pushMessage != "" {
+		resp = fmt.Sprintf("✅ Topology for **%s** refreshed — stored as Gosuto **v%d** (hash: `%s...`)\n\n%s\n\n(trace: %s)",
+			agentID, gv.Version, gv.Hash[:16], pushMessage, traceID)
+	}
+	return resp, nil
 }
 
 // HandleTopologyPeerSet upserts an explicit peer trust + messaging tuple into
@@ -77,14 +106,19 @@ func (h *Handlers) HandleTopologyRefresh(ctx context.Context, cmd *Command, evt 
 //
 // Usage:
 //
-//	/ruriko topology peer-set <agent> --alias <alias> --mxid <mxid> --room <room-id> --protocol <id> [--target-room <room-id>]
+//	/ruriko topology peer-set <agent> --alias <alias> --mxid <mxid> --room <room-id> --protocol <id> [--target-room <room-id>] [--push true|false]
 func (h *Handlers) HandleTopologyPeerSet(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
 	ctx = trace.WithTraceID(ctx, traceID)
 
 	agentID, _ := cmd.GetArg(0)
 	if strings.TrimSpace(agentID) == "" {
-		return "", fmt.Errorf("usage: /ruriko topology peer-set <agent> --alias <alias> --mxid <mxid> --room <room-id> --protocol <id> [--target-room <room-id>]")
+		return "", fmt.Errorf("usage: /ruriko topology peer-set <agent> --alias <alias> --mxid <mxid> --room <room-id> --protocol <id> [--target-room <room-id>] [--push true|false]")
+	}
+
+	pushRequested, err := parsePushFlag(cmd)
+	if err != nil {
+		return "", err
 	}
 
 	alias := strings.TrimSpace(cmd.GetFlag("alias", ""))
@@ -119,9 +153,17 @@ func (h *Handlers) HandleTopologyPeerSet(ctx context.Context, cmd *Command, evt 
 		return "", err
 	}
 	if !changed {
+		pushApplied, pushMessage := false, ""
+		if pushRequested {
+			pushApplied, pushMessage = h.maybePushGosutoVersion(ctx, agentID, baseGV)
+		}
 		if err := h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "topology.peer-set", agentID, "success",
-			store.AuditPayload{"changed": false, "alias": alias, "protocol": protocolID}, ""); err != nil {
+			store.AuditPayload{"changed": false, "alias": alias, "protocol": protocolID, "push_requested": pushRequested, "push_applied": pushApplied, "push_message": pushMessage}, ""); err != nil {
 			slog.Warn("audit write failed", "op", "topology.peer-set", "agent", agentID, "err", err)
+		}
+
+		if pushRequested && pushMessage != "" {
+			return fmt.Sprintf("ℹ️  Topology peer mapping for **%s** is unchanged.\n\n%s\n\n(trace: %s)", agentID, pushMessage, traceID), nil
 		}
 		return fmt.Sprintf("ℹ️  Topology peer mapping for **%s** is unchanged.\n\n(trace: %s)", agentID, traceID), nil
 	}
@@ -137,23 +179,38 @@ func (h *Handlers) HandleTopologyPeerSet(ctx context.Context, cmd *Command, evt 
 		return "", err
 	}
 
+	pushApplied, pushMessage := false, ""
+	if pushRequested {
+		pushApplied, pushMessage = h.maybePushGosutoVersion(ctx, agentID, gv)
+	}
+
 	if err := h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "topology.peer-set", agentID, "success",
 		store.AuditPayload{
-			"changed":  true,
-			"alias":    alias,
-			"mxid":     mxid,
-			"room":     roomID,
-			"protocol": protocolID,
-			"version":  gv.Version,
-			"hash":     gv.Hash[:16],
+			"changed":        true,
+			"alias":          alias,
+			"mxid":           mxid,
+			"room":           roomID,
+			"protocol":       protocolID,
+			"version":        gv.Version,
+			"hash":           gv.Hash[:16],
+			"push_requested": pushRequested,
+			"push_applied":   pushApplied,
+			"push_message":   pushMessage,
 		}, ""); err != nil {
 		slog.Warn("audit write failed", "op", "topology.peer-set", "agent", agentID, "err", err)
 	}
 
-	return fmt.Sprintf(
+	resp := fmt.Sprintf(
 		"✅ Topology peer mapping added for **%s** (`%s` -> `%s`) — Gosuto **v%d** (hash: `%s...`)\n\nRun `/ruriko gosuto push %s` to apply to the running agent.\n\n(trace: %s)",
 		agentID, alias, protocolID, gv.Version, gv.Hash[:16], agentID, traceID,
-	), nil
+	)
+	if pushRequested && pushMessage != "" {
+		resp = fmt.Sprintf(
+			"✅ Topology peer mapping added for **%s** (`%s` -> `%s`) — Gosuto **v%d** (hash: `%s...`)\n\n%s\n\n(trace: %s)",
+			agentID, alias, protocolID, gv.Version, gv.Hash[:16], pushMessage, traceID,
+		)
+	}
+	return resp, nil
 }
 
 // HandleTopologyPeerRemove removes explicit peer mappings (trust and messaging)
@@ -161,14 +218,19 @@ func (h *Handlers) HandleTopologyPeerSet(ctx context.Context, cmd *Command, evt 
 //
 // Usage:
 //
-//	/ruriko topology peer-remove <agent> --alias <alias> [--protocol <id>]
+//	/ruriko topology peer-remove <agent> --alias <alias> [--protocol <id>] [--push true|false]
 func (h *Handlers) HandleTopologyPeerRemove(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
 	traceID := trace.GenerateID()
 	ctx = trace.WithTraceID(ctx, traceID)
 
 	agentID, _ := cmd.GetArg(0)
 	if strings.TrimSpace(agentID) == "" {
-		return "", fmt.Errorf("usage: /ruriko topology peer-remove <agent> --alias <alias> [--protocol <id>]")
+		return "", fmt.Errorf("usage: /ruriko topology peer-remove <agent> --alias <alias> [--protocol <id>] [--push true|false]")
+	}
+
+	pushRequested, err := parsePushFlag(cmd)
+	if err != nil {
+		return "", err
 	}
 
 	alias := strings.TrimSpace(cmd.GetFlag("alias", ""))
@@ -196,9 +258,17 @@ func (h *Handlers) HandleTopologyPeerRemove(ctx context.Context, cmd *Command, e
 		return "", err
 	}
 	if !changed {
+		pushApplied, pushMessage := false, ""
+		if pushRequested {
+			pushApplied, pushMessage = h.maybePushGosutoVersion(ctx, agentID, baseGV)
+		}
 		if err := h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "topology.peer-remove", agentID, "success",
-			store.AuditPayload{"changed": false, "alias": alias, "protocol": protocolID}, ""); err != nil {
+			store.AuditPayload{"changed": false, "alias": alias, "protocol": protocolID, "push_requested": pushRequested, "push_applied": pushApplied, "push_message": pushMessage}, ""); err != nil {
 			slog.Warn("audit write failed", "op", "topology.peer-remove", "agent", agentID, "err", err)
+		}
+
+		if pushRequested && pushMessage != "" {
+			return fmt.Sprintf("ℹ️  No topology changes for **%s** (alias `%s`).\n\n%s\n\n(trace: %s)", agentID, alias, pushMessage, traceID), nil
 		}
 		return fmt.Sprintf("ℹ️  No topology changes for **%s** (alias `%s`).\n\n(trace: %s)", agentID, alias, traceID), nil
 	}
@@ -209,21 +279,75 @@ func (h *Handlers) HandleTopologyPeerRemove(ctx context.Context, cmd *Command, e
 		return "", err
 	}
 
+	pushApplied, pushMessage := false, ""
+	if pushRequested {
+		pushApplied, pushMessage = h.maybePushGosutoVersion(ctx, agentID, gv)
+	}
+
 	if err := h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "topology.peer-remove", agentID, "success",
 		store.AuditPayload{
-			"changed":  true,
-			"alias":    alias,
-			"protocol": protocolID,
-			"version":  gv.Version,
-			"hash":     gv.Hash[:16],
+			"changed":        true,
+			"alias":          alias,
+			"protocol":       protocolID,
+			"version":        gv.Version,
+			"hash":           gv.Hash[:16],
+			"push_requested": pushRequested,
+			"push_applied":   pushApplied,
+			"push_message":   pushMessage,
 		}, ""); err != nil {
 		slog.Warn("audit write failed", "op", "topology.peer-remove", "agent", agentID, "err", err)
 	}
 
-	return fmt.Sprintf(
+	resp := fmt.Sprintf(
 		"✅ Topology peer mapping removed for **%s** (alias: `%s`) — Gosuto **v%d** (hash: `%s...`)\n\nRun `/ruriko gosuto push %s` to apply to the running agent.\n\n(trace: %s)",
 		agentID, alias, gv.Version, gv.Hash[:16], agentID, traceID,
-	), nil
+	)
+	if pushRequested && pushMessage != "" {
+		resp = fmt.Sprintf(
+			"✅ Topology peer mapping removed for **%s** (alias: `%s`) — Gosuto **v%d** (hash: `%s...`)\n\n%s\n\n(trace: %s)",
+			agentID, alias, gv.Version, gv.Hash[:16], pushMessage, traceID,
+		)
+	}
+	return resp, nil
+}
+
+func parsePushFlag(cmd *Command) (bool, error) {
+	raw := strings.TrimSpace(cmd.GetFlag("push", ""))
+	if raw == "" {
+		return false, nil
+	}
+	val, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, fmt.Errorf("invalid --push %q: expected true or false", raw)
+	}
+	return val, nil
+}
+
+// maybePushGosutoVersion attempts ACP apply for an already stored Gosuto
+// version. Push failures are intentionally non-fatal for topology commands:
+// config changes remain versioned, and operators can retry push explicitly.
+func (h *Handlers) maybePushGosutoVersion(ctx context.Context, agentID string, gv *store.GosutoVersion) (bool, string) {
+	agent, err := h.store.GetAgent(ctx, agentID)
+	if err != nil {
+		return false, fmt.Sprintf("⚠️  Push requested, but agent lookup failed: %v", err)
+	}
+	if !agent.ControlURL.Valid || strings.TrimSpace(agent.ControlURL.String) == "" {
+		return false, fmt.Sprintf("⚠️  Push requested, but agent **%s** has no control URL; is it running?", agentID)
+	}
+
+	token := ""
+	if agent.ACPToken.Valid {
+		token = agent.ACPToken.String
+	}
+	if err := pushGosuto(ctx, agent.ControlURL.String, token, gv); err != nil {
+		return false, fmt.Sprintf("⚠️  Gosuto v%d stored, but ACP push failed: %v", gv.Version, err)
+	}
+
+	if err := h.store.SetAgentDesiredGosutoHash(ctx, agentID, gv.Hash); err != nil {
+		slog.Warn("failed to record desired gosuto hash after topology push", "agent", agentID, "err", err)
+	}
+
+	return true, fmt.Sprintf("📤 Gosuto v%d pushed to running agent **%s**.", gv.Version, agentID)
 }
 
 func validateTopologyPeerSetFlags(alias, mxid, roomID, protocolID, targetRoom string) error {

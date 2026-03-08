@@ -274,3 +274,88 @@ func TestHandleTopologyRefresh_StoresUpdatedMeshVersion(t *testing.T) {
 		t.Fatalf("user target mismatch: %+v", cfg.Messaging.AllowedTargets)
 	}
 }
+
+func TestHandleTopologyPeerRemove_PushTrue_AppliesViaACP(t *testing.T) {
+	acp := newMockACPServer()
+	defer acp.srv.Close()
+
+	h, s := newTopologyFixture(t, false)
+
+	seedTopologyAgent(t, s, "kumo", gosutospec.Config{
+		APIVersion: gosutospec.SpecVersion,
+		Metadata:   gosutospec.Metadata{Name: "kumo"},
+		Trust: gosutospec.Trust{
+			AllowedRooms:   []string{"!kumo-admin:localhost"},
+			AllowedSenders: []string{"*"},
+			AdminRoom:      "!kumo-admin:localhost",
+			TrustedPeers: []gosutospec.TrustedPeer{
+				{Alias: "marketbot", MXID: "@marketbot:localhost", RoomID: "!marketbot-room:localhost", Protocols: []string{"marketbot.news.request.v1"}},
+			},
+		},
+		Messaging: gosutospec.Messaging{
+			AllowedTargets: []gosutospec.MessagingTarget{{Alias: "marketbot", RoomID: "!marketbot-room:localhost"}},
+		},
+	})
+
+	if err := s.UpdateAgentHandle(context.Background(), "kumo", "cid-kumo", acp.srv.URL, "gitai:test"); err != nil {
+		t.Fatalf("UpdateAgentHandle: %v", err)
+	}
+
+	cmd := parseCmd(t, "/ruriko topology peer-remove kumo --alias marketbot --push true")
+	resp, err := h.HandleTopologyPeerRemove(context.Background(), cmd, fakeEvent("@admin:example.com"))
+	if err != nil {
+		t.Fatalf("HandleTopologyPeerRemove: %v", err)
+	}
+	if !strings.Contains(resp, "Gosuto v2 pushed to running agent") {
+		t.Fatalf("expected push confirmation in response, got: %s", resp)
+	}
+
+	latest, err := s.GetLatestGosutoVersion(context.Background(), "kumo")
+	if err != nil {
+		t.Fatalf("GetLatestGosutoVersion: %v", err)
+	}
+
+	acp.mu.Lock()
+	appliedHash := acp.appliedHash
+	acp.mu.Unlock()
+	if appliedHash != latest.Hash {
+		t.Fatalf("expected ACP applied hash %q, got %q", latest.Hash, appliedHash)
+	}
+}
+
+func TestHandleTopologyPeerRemove_PushTrue_NoControlURL_NonFatal(t *testing.T) {
+	h, s := newTopologyFixture(t, false)
+
+	seedTopologyAgent(t, s, "kumo", gosutospec.Config{
+		APIVersion: gosutospec.SpecVersion,
+		Metadata:   gosutospec.Metadata{Name: "kumo"},
+		Trust: gosutospec.Trust{
+			AllowedRooms:   []string{"!kumo-admin:localhost"},
+			AllowedSenders: []string{"*"},
+			AdminRoom:      "!kumo-admin:localhost",
+			TrustedPeers: []gosutospec.TrustedPeer{
+				{Alias: "marketbot", MXID: "@marketbot:localhost", RoomID: "!marketbot-room:localhost", Protocols: []string{"marketbot.news.request.v1"}},
+			},
+		},
+		Messaging: gosutospec.Messaging{
+			AllowedTargets: []gosutospec.MessagingTarget{{Alias: "marketbot", RoomID: "!marketbot-room:localhost"}},
+		},
+	})
+
+	cmd := parseCmd(t, "/ruriko topology peer-remove kumo --alias marketbot --push true")
+	resp, err := h.HandleTopologyPeerRemove(context.Background(), cmd, fakeEvent("@admin:example.com"))
+	if err != nil {
+		t.Fatalf("expected non-fatal push warning, got error: %v", err)
+	}
+	if !strings.Contains(resp, "Push requested") {
+		t.Fatalf("expected push warning in response, got: %s", resp)
+	}
+
+	latest, err := s.GetLatestGosutoVersion(context.Background(), "kumo")
+	if err != nil {
+		t.Fatalf("GetLatestGosutoVersion: %v", err)
+	}
+	if latest.Version != 2 {
+		t.Fatalf("expected version to still be stored as v2, got v%d", latest.Version)
+	}
+}

@@ -27,6 +27,10 @@
   - `/ruriko topology peer-remove <agent> --alias <alias> [--protocol <id>]`
 - Added approval-gating for topology widening command:
   - `topology.peer-set`
+- Extended topology commands with optional apply orchestration:
+  - `--push true|false` on `topology refresh|peer-set|peer-remove`
+  - ACP apply attempts use existing Gosuto push path (`/config/apply`)
+  - push failures are surfaced as non-fatal warnings when version storage succeeds
 - Added focused command tests:
   - `internal/ruriko/commands/topology_handlers_test.go`
 

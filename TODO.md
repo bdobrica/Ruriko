@@ -353,6 +353,7 @@ The MVP is ready when **all** of the following are true:
 - [ ] Update `docs/invariants.md` if needed to explicitly reference protocol-trust gating semantics
 - [x] Add operator-facing alternate peer topology examples for `/ruriko agents create` peer override flags in `OPERATIONS.md` and `docs/ops/agent-mesh-topology.md`
 - [x] Start deterministic topology update command surface in `internal/ruriko/commands` (`topology refresh`, `topology peer-set`, `topology peer-remove`) with approval-gated widening for peer-set
+- [x] Extend topology commands with optional `--push true|false` apply orchestration (non-fatal push warning on apply failure after successful versioning)
 - [ ] Keep [REFACTOR.md](REFACTOR.md) and [TODO.md](TODO.md) in sync as implementation lands
 
 ### Definition of done
