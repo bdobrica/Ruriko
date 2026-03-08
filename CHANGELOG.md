@@ -14,6 +14,10 @@
   - `OPERATIONS.md`
   - `README.md`
 - Updated workflow-engine temporary plan and roadmap status to mark Phase 7 as in progress.
+- Fixed canonical live bootstrap rendering for `kumo-agent` so peer placeholders are fully substituted before ACP apply:
+  - `test/integration/canonical_workflow_bootstrap.py`
+  - now sets `PeerAlias`, `PeerMXID`, `PeerRoom`, `PeerProtocolID`, `PeerProtocolPrefix`
+  - resolves strict live-check failure `trustedPeers[0].mxid "{{.PeerMXID}}" must start with '@'`
 
 ---
 
