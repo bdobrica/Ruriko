@@ -26,9 +26,11 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 
 	gosutospec "github.com/bdobrica/Ruriko/common/spec/gosuto"
+	"github.com/bdobrica/Ruriko/internal/ruriko/approvals"
 	"github.com/bdobrica/Ruriko/internal/ruriko/commands"
 	"github.com/bdobrica/Ruriko/internal/ruriko/runtime"
 	"github.com/bdobrica/Ruriko/internal/ruriko/secrets"
@@ -788,5 +790,281 @@ func TestProvisioningPipeline_CanonicalKumoRunsEnsureIfMissing(t *testing.T) {
 	joined := strings.Join(sender.messages(), "\n")
 	if !strings.Contains(joined, "Post-provision ensure") {
 		t.Fatalf("expected post-provision ensure breadcrumb, got:\n%s", joined)
+	}
+}
+
+func TestProvisioningPipeline_CanonicalKumoEnsure_ApprovalDecisionReplay(t *testing.T) {
+	acp := newMockACPServer()
+	defer acp.srv.Close()
+
+	f, err := os.CreateTemp(t.TempDir(), "ruriko-kumo-ensure-approval-test-*.db")
+	if err != nil {
+		t.Fatalf("temp db: %v", err)
+	}
+	f.Close()
+
+	s, err := appstore.New(f.Name())
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	masterKey := make([]byte, 32)
+	for i := range masterKey {
+		masterKey[i] = byte(i + 1)
+	}
+	sec, err := secrets.New(s, masterKey)
+	if err != nil {
+		t.Fatalf("secrets.New: %v", err)
+	}
+
+	if err := s.CreateAgent(context.Background(), &appstore.Agent{ID: "kairo", DisplayName: "kairo", Template: "kairo-agent", Status: "running"}); err != nil {
+		t.Fatalf("CreateAgent(kairo): %v", err)
+	}
+	kairoCfg := gosutospec.Config{
+		APIVersion: gosutospec.SpecVersion,
+		Metadata:   gosutospec.Metadata{Name: "kairo"},
+		Trust: gosutospec.Trust{
+			AllowedRooms:   []string{"!kairo-admin:localhost"},
+			AllowedSenders: []string{"*"},
+			AdminRoom:      "!kairo-admin:localhost",
+		},
+	}
+	kairoRaw, err := yaml.Marshal(&kairoCfg)
+	if err != nil {
+		t.Fatalf("marshal kairo cfg: %v", err)
+	}
+	if err := s.CreateGosutoVersion(context.Background(), &appstore.GosutoVersion{
+		AgentID:       "kairo",
+		Version:       1,
+		Hash:          "seed-hash-kairo",
+		YAMLBlob:      string(kairoRaw),
+		CreatedByMXID: "@admin:example.com",
+	}); err != nil {
+		t.Fatalf("CreateGosutoVersion(kairo): %v", err)
+	}
+
+	kumoFS := fstest.MapFS{
+		"kumo-agent/gosuto.yaml": &fstest.MapFile{Data: []byte(kumoEnsureBootstrapYAML)},
+	}
+
+	sender := &capturingSender{}
+	h := commands.NewHandlers(commands.HandlersConfig{
+		Store:      s,
+		Secrets:    sec,
+		Runtime:    &stubRuntime{controlURL: acp.srv.URL},
+		Templates:  templates.NewRegistry(kumoFS),
+		RoomSender: sender,
+		AdminRooms: []string{"!admin:example.com"},
+		Approvals:  approvals.NewGate(approvals.NewStore(s.DB()), time.Hour),
+	})
+
+	h.SetDispatch(func(ctx context.Context, action string, cmd *commands.Command, evt *event.Event) (string, error) {
+		switch action {
+		case "topology.peer-ensure":
+			return h.HandleTopologyPeerEnsure(ctx, cmd, evt)
+		default:
+			return "", fmt.Errorf("unsupported action in test dispatch: %s", action)
+		}
+	})
+
+	router := commands.NewRouter("/ruriko")
+	cmd, err := router.Parse("/ruriko agents create --name kumo --template kumo-agent --image gitai:test")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	if _, err := h.HandleAgentsCreate(context.Background(), cmd, fakeEvent("@admin:example.com")); err != nil {
+		t.Fatalf("HandleAgentsCreate: %v", err)
+	}
+
+	waitFor(t, 10*time.Second, func() bool {
+		agent, err := s.GetAgent(context.Background(), "kumo")
+		if err != nil {
+			return false
+		}
+		return agent.ProvisioningState == "healthy"
+	})
+
+	approvalStore := approvals.NewStore(s.DB())
+	waitFor(t, 10*time.Second, func() bool {
+		pending, err := approvalStore.List(context.Background(), string(approvals.StatusPending))
+		if err != nil {
+			return false
+		}
+		return len(pending) == 1 && pending[0].Action == "topology.peer-ensure"
+	})
+
+	before, err := s.GetLatestGosutoVersion(context.Background(), "kumo")
+	if err != nil {
+		t.Fatalf("GetLatestGosutoVersion(before approval): %v", err)
+	}
+	if before.Version != 1 {
+		t.Fatalf("expected v1 before approval replay, got v%d", before.Version)
+	}
+
+	pending, err := approvalStore.List(context.Background(), string(approvals.StatusPending))
+	if err != nil {
+		t.Fatalf("approval list pending: %v", err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("expected 1 pending approval, got %d", len(pending))
+	}
+
+	decisionResp, err := h.HandleApprovalDecision(context.Background(), "approve "+pending[0].ID, fakeEvent("@reviewer:example.com"))
+	if err != nil {
+		t.Fatalf("HandleApprovalDecision: %v", err)
+	}
+	if !strings.Contains(decisionResp, "Approved by") {
+		t.Fatalf("expected approval decision response, got: %s", decisionResp)
+	}
+	if !strings.Contains(decisionResp, "Gosuto v2 pushed to running agent") {
+		t.Fatalf("expected push confirmation after approval decision replay, got: %s", decisionResp)
+	}
+
+	after, err := s.GetLatestGosutoVersion(context.Background(), "kumo")
+	if err != nil {
+		t.Fatalf("GetLatestGosutoVersion(after approval): %v", err)
+	}
+	if after.Version != 2 {
+		t.Fatalf("expected v2 after approval replay, got v%d", after.Version)
+	}
+
+	approved, err := approvalStore.Get(context.Background(), pending[0].ID)
+	if err != nil {
+		t.Fatalf("approval get: %v", err)
+	}
+	if approved.Status != approvals.StatusApproved {
+		t.Fatalf("expected approval status approved, got %s", approved.Status)
+	}
+
+	acp.mu.Lock()
+	appliedHash := acp.appliedHash
+	acp.mu.Unlock()
+	if appliedHash != after.Hash {
+		t.Fatalf("expected ACP applied hash %q, got %q", after.Hash, appliedHash)
+	}
+
+	joined := strings.Join(sender.messages(), "\n")
+	if !strings.Contains(joined, "Approval required") {
+		t.Fatalf("expected approval-required breadcrumb from canonical ensure, got:\n%s", joined)
+	}
+}
+
+func TestProvisioningPipeline_CanonicalKumoEnsure_ResolvesNonDefaultPeerAliasRoom(t *testing.T) {
+	acp := newMockACPServer()
+	defer acp.srv.Close()
+
+	f, err := os.CreateTemp(t.TempDir(), "ruriko-kumo-ensure-nondefault-peer-room-test-*.db")
+	if err != nil {
+		t.Fatalf("temp db: %v", err)
+	}
+	f.Close()
+
+	s, err := appstore.New(f.Name())
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	masterKey := make([]byte, 32)
+	for i := range masterKey {
+		masterKey[i] = byte(i + 1)
+	}
+	sec, err := secrets.New(s, masterKey)
+	if err != nil {
+		t.Fatalf("secrets.New: %v", err)
+	}
+
+	if err := s.CreateAgent(context.Background(), &appstore.Agent{ID: "atlas", DisplayName: "atlas", Template: "atlas-agent", Status: "running"}); err != nil {
+		t.Fatalf("CreateAgent(atlas): %v", err)
+	}
+	atlasCfg := gosutospec.Config{
+		APIVersion: gosutospec.SpecVersion,
+		Metadata:   gosutospec.Metadata{Name: "atlas"},
+		Trust: gosutospec.Trust{
+			AllowedRooms:   []string{"!atlas-admin:localhost"},
+			AllowedSenders: []string{"*"},
+			AdminRoom:      "!atlas-admin:localhost",
+		},
+	}
+	atlasRaw, err := yaml.Marshal(&atlasCfg)
+	if err != nil {
+		t.Fatalf("marshal atlas cfg: %v", err)
+	}
+	if err := s.CreateGosutoVersion(context.Background(), &appstore.GosutoVersion{
+		AgentID:       "atlas",
+		Version:       1,
+		Hash:          "seed-hash-atlas",
+		YAMLBlob:      string(atlasRaw),
+		CreatedByMXID: "@admin:example.com",
+	}); err != nil {
+		t.Fatalf("CreateGosutoVersion(atlas): %v", err)
+	}
+
+	kumoFS := fstest.MapFS{
+		"kumo-agent/gosuto.yaml": &fstest.MapFile{Data: []byte(kumoEnsureBootstrapYAML)},
+	}
+
+	h := commands.NewHandlers(commands.HandlersConfig{
+		Store:      s,
+		Secrets:    sec,
+		Runtime:    &stubRuntime{controlURL: acp.srv.URL},
+		Templates:  templates.NewRegistry(kumoFS),
+		RoomSender: &capturingSender{},
+		AdminRooms: []string{"!admin:example.com"},
+	})
+
+	router := commands.NewRouter("/ruriko")
+	cmd, err := router.Parse("/ruriko agents create --name kumo --template kumo-agent --image gitai:test --peer-alias atlas --peer-mxid @atlas:localhost --peer-protocol-id atlas.news.request.v1 --peer-protocol-prefix ATLAS_NEWS_REQUEST")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	if _, err := h.HandleAgentsCreate(context.Background(), cmd, fakeEvent("@admin:example.com")); err != nil {
+		t.Fatalf("HandleAgentsCreate: %v", err)
+	}
+
+	waitFor(t, 10*time.Second, func() bool {
+		agent, err := s.GetAgent(context.Background(), "kumo")
+		if err != nil {
+			return false
+		}
+		return agent.ProvisioningState == "healthy"
+	})
+
+	gv, err := s.GetLatestGosutoVersion(context.Background(), "kumo")
+	if err != nil {
+		t.Fatalf("GetLatestGosutoVersion(kumo): %v", err)
+	}
+	if gv.Version < 2 {
+		t.Fatalf("expected post-provision ensure to create follow-up version, got v%d", gv.Version)
+	}
+
+	cfg, err := gosutospec.Parse([]byte(gv.YAMLBlob))
+	if err != nil {
+		t.Fatalf("gosuto.Parse(kumo): %v", err)
+	}
+
+	if len(cfg.Trust.TrustedPeers) != 1 {
+		t.Fatalf("trustedPeers count = %d, want 1", len(cfg.Trust.TrustedPeers))
+	}
+	peer := cfg.Trust.TrustedPeers[0]
+	if peer.Alias != "atlas" || peer.MXID != "@atlas:localhost" || peer.RoomID != "!atlas-admin:localhost" {
+		t.Fatalf("unexpected trusted peer from non-default alias resolution: %+v", peer)
+	}
+	if len(peer.Protocols) != 1 || peer.Protocols[0] != "atlas.news.request.v1" {
+		t.Fatalf("unexpected ensured peer protocols: %+v", peer.Protocols)
+	}
+
+	foundAtlasTarget := false
+	for _, target := range cfg.Messaging.AllowedTargets {
+		if target.Alias == "atlas" && target.RoomID == "!atlas-admin:localhost" {
+			foundAtlasTarget = true
+			break
+		}
+	}
+	if !foundAtlasTarget {
+		t.Fatalf("expected ensured atlas messaging target in %+v", cfg.Messaging.AllowedTargets)
 	}
 }
