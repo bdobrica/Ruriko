@@ -554,6 +554,7 @@ func New(config *Config) (*App, error) {
 	router.Register("schedule.list", handlers.HandleScheduleList)
 	router.Register("topology.refresh", handlers.HandleTopologyRefresh)
 	router.Register("topology.peer-set", handlers.HandleTopologyPeerSet)
+	router.Register("topology.peer-ensure", handlers.HandleTopologyPeerEnsure)
 	router.Register("topology.peer-remove", handlers.HandleTopologyPeerRemove)
 	router.Register("audit.tail", handlers.HandleAuditTail)
 	router.Register("trace", handlers.HandleTrace)

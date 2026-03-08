@@ -24,9 +24,11 @@
 - Started deterministic topology update command surface (Phase 6):
   - `/ruriko topology refresh <agent> [--operator-room <room-id>]`
   - `/ruriko topology peer-set <agent> --alias <alias> --mxid <mxid> --room <room-id> --protocol <id> [--target-room <room-id>]`
+  - `/ruriko topology peer-ensure <agent> --alias <alias> --mxid <mxid> --room <room-id> --protocol <id> [--target-room <room-id>]`
   - `/ruriko topology peer-remove <agent> --alias <alias> [--protocol <id>]`
 - Added approval-gating for topology widening command:
   - `topology.peer-set`
+  - `topology.peer-ensure`
 - Extended topology commands with optional apply orchestration:
   - `--push true|false` on `topology refresh|peer-set|peer-remove`
   - ACP apply attempts use existing Gosuto push path (`/config/apply`)
@@ -34,6 +36,7 @@
 - Added focused command tests:
   - `internal/ruriko/commands/topology_handlers_test.go`
   - includes approval decision replay integration for `topology peer-set --push true` (`approve <id>` -> dispatch -> versioned update -> ACP apply)
+  - includes deterministic ensure-if-missing coverage for `topology peer-ensure` (idempotent no-op, conflict refusal, and approval decision replay with ACP apply)
 
 ---
 

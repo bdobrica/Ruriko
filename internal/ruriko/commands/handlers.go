@@ -269,6 +269,7 @@ func (h *Handlers) HandleHelp(ctx context.Context, cmd *Command, evt *event.Even
 **Topology Commands:**
 • /ruriko topology refresh <agent> [--operator-room <room-id>] [--push true|false] - Recompute messaging topology from peer context
 • /ruriko topology peer-set <agent> --alias <alias> --mxid <mxid> --room <room-id> --protocol <id> [--target-room <room-id>] [--push true|false] - Add/update trusted peer + messaging mapping (approval-gated)
+• /ruriko topology peer-ensure <agent> --alias <alias> --mxid <mxid> --room <room-id> --protocol <id> [--target-room <room-id>] [--push true|false] - Ensure trusted peer + messaging mapping exists without rewriting existing mappings (approval-gated on changes)
 • /ruriko topology peer-remove <agent> --alias <alias> [--protocol <id>] [--push true|false] - Remove trusted peer + messaging mapping
 
 **Secrets Commands (admin only):**

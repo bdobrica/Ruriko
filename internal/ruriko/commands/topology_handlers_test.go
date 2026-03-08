@@ -452,3 +452,152 @@ func TestHandleTopologyPeerSet_PushTrue_ApprovalDecisionDispatchesAndApplies(t *
 		t.Fatalf("expected ACP applied hash %q, got %q", latest.Hash, appliedHash)
 	}
 }
+
+func TestHandleTopologyPeerEnsure_NoOpWhenAlreadyPresent(t *testing.T) {
+	h, s := newTopologyFixture(t, true)
+
+	seedTopologyAgent(t, s, "kumo", gosutospec.Config{
+		APIVersion: gosutospec.SpecVersion,
+		Metadata:   gosutospec.Metadata{Name: "kumo"},
+		Trust: gosutospec.Trust{
+			AllowedRooms:   []string{"!kumo-admin:localhost"},
+			AllowedSenders: []string{"*"},
+			AdminRoom:      "!kumo-admin:localhost",
+			TrustedPeers: []gosutospec.TrustedPeer{
+				{Alias: "marketbot", MXID: "@marketbot:localhost", RoomID: "!marketbot-room:localhost", Protocols: []string{"marketbot.news.request.v1"}},
+			},
+		},
+		Messaging: gosutospec.Messaging{
+			AllowedTargets: []gosutospec.MessagingTarget{{Alias: "marketbot", RoomID: "!marketbot-room:localhost"}},
+		},
+	})
+
+	cmd := parseCmd(t, "/ruriko topology peer-ensure kumo --alias marketbot --mxid @marketbot:localhost --room !marketbot-room:localhost --protocol marketbot.news.request.v1")
+	resp, err := h.HandleTopologyPeerEnsure(context.Background(), cmd, fakeEvent("@admin:example.com"))
+	if err != nil {
+		t.Fatalf("HandleTopologyPeerEnsure: %v", err)
+	}
+	if !strings.Contains(resp, "already satisfies ensure requirements") {
+		t.Fatalf("unexpected response: %s", resp)
+	}
+
+	latest, err := s.GetLatestGosutoVersion(context.Background(), "kumo")
+	if err != nil {
+		t.Fatalf("GetLatestGosutoVersion: %v", err)
+	}
+	if latest.Version != 1 {
+		t.Fatalf("expected no new version for no-op ensure, got v%d", latest.Version)
+	}
+}
+
+func TestHandleTopologyPeerEnsure_ConflictingAliasRefuses(t *testing.T) {
+	h, s := newTopologyFixture(t, false)
+
+	seedTopologyAgent(t, s, "kumo", gosutospec.Config{
+		APIVersion: gosutospec.SpecVersion,
+		Metadata:   gosutospec.Metadata{Name: "kumo"},
+		Trust: gosutospec.Trust{
+			AllowedRooms:   []string{"!kumo-admin:localhost"},
+			AllowedSenders: []string{"*"},
+			AdminRoom:      "!kumo-admin:localhost",
+			TrustedPeers: []gosutospec.TrustedPeer{
+				{Alias: "marketbot", MXID: "@other:localhost", RoomID: "!other-room:localhost", Protocols: []string{"other.protocol.v1"}},
+			},
+		},
+	})
+
+	cmd := parseCmd(t, "/ruriko topology peer-ensure kumo --alias marketbot --mxid @marketbot:localhost --room !marketbot-room:localhost --protocol marketbot.news.request.v1")
+	_, err := h.HandleTopologyPeerEnsure(context.Background(), cmd, fakeEvent("@admin:example.com"))
+	if err == nil {
+		t.Fatal("expected conflict error, got nil")
+	}
+	if !strings.Contains(err.Error(), "existing trusted peer alias maps") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestHandleTopologyPeerEnsure_PushTrue_ApprovalDecisionDispatchesAndApplies(t *testing.T) {
+	acp := newMockACPServer()
+	defer acp.srv.Close()
+
+	h, s := newTopologyFixture(t, true)
+
+	seedTopologyAgent(t, s, "kumo", gosutospec.Config{
+		APIVersion: gosutospec.SpecVersion,
+		Metadata:   gosutospec.Metadata{Name: "kumo"},
+		Trust: gosutospec.Trust{
+			AllowedRooms:   []string{"!kumo-admin:localhost"},
+			AllowedSenders: []string{"*"},
+			AdminRoom:      "!kumo-admin:localhost",
+		},
+	})
+
+	if err := s.UpdateAgentHandle(context.Background(), "kumo", "cid-kumo", acp.srv.URL, "gitai:test"); err != nil {
+		t.Fatalf("UpdateAgentHandle: %v", err)
+	}
+
+	h.SetDispatch(func(ctx context.Context, action string, cmd *commands.Command, evt *event.Event) (string, error) {
+		switch action {
+		case "topology.peer-ensure":
+			return h.HandleTopologyPeerEnsure(ctx, cmd, evt)
+		default:
+			return "", nil
+		}
+	})
+
+	requestCmd := parseCmd(t, "/ruriko topology peer-ensure kumo --alias marketbot --mxid @marketbot:localhost --room !marketbot-room:localhost --protocol marketbot.news.request.v1 --push true")
+
+	requestResp, err := h.HandleTopologyPeerEnsure(context.Background(), requestCmd, fakeEvent("@admin:example.com"))
+	if err != nil {
+		t.Fatalf("HandleTopologyPeerEnsure (request): %v", err)
+	}
+	if !strings.Contains(requestResp, "Approval required") {
+		t.Fatalf("expected approval-required response, got: %s", requestResp)
+	}
+
+	approvalStore := approvals.NewStore(s.DB())
+	pending, err := approvalStore.List(context.Background(), string(approvals.StatusPending))
+	if err != nil {
+		t.Fatalf("approval list pending: %v", err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("expected 1 pending approval, got %d", len(pending))
+	}
+	if pending[0].Action != "topology.peer-ensure" {
+		t.Fatalf("unexpected pending action: %s", pending[0].Action)
+	}
+
+	decisionResp, err := h.HandleApprovalDecision(context.Background(), "approve "+pending[0].ID, fakeEvent("@reviewer:example.com"))
+	if err != nil {
+		t.Fatalf("HandleApprovalDecision: %v", err)
+	}
+	if !strings.Contains(decisionResp, "Approved by") {
+		t.Fatalf("expected approval decision response, got: %s", decisionResp)
+	}
+	if !strings.Contains(decisionResp, "Gosuto v2 pushed to running agent") {
+		t.Fatalf("expected push confirmation in approval decision response, got: %s", decisionResp)
+	}
+
+	approved, err := approvalStore.Get(context.Background(), pending[0].ID)
+	if err != nil {
+		t.Fatalf("approval get: %v", err)
+	}
+	if approved.Status != approvals.StatusApproved {
+		t.Fatalf("expected approval status approved, got %s", approved.Status)
+	}
+
+	latest, err := s.GetLatestGosutoVersion(context.Background(), "kumo")
+	if err != nil {
+		t.Fatalf("GetLatestGosutoVersion: %v", err)
+	}
+	if latest.Version != 2 {
+		t.Fatalf("expected new version v2 after approval, got v%d", latest.Version)
+	}
+
+	acp.mu.Lock()
+	appliedHash := acp.appliedHash
+	acp.mu.Unlock()
+	if appliedHash != latest.Hash {
+		t.Fatalf("expected ACP applied hash %q, got %q", latest.Hash, appliedHash)
+	}
+}

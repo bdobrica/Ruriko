@@ -213,6 +213,141 @@ func (h *Handlers) HandleTopologyPeerSet(ctx context.Context, cmd *Command, evt 
 	return resp, nil
 }
 
+// HandleTopologyPeerEnsure adds a peer trust + messaging tuple only when
+// required entries are missing. Existing mappings are not rewritten.
+//
+// Usage:
+//
+//	/ruriko topology peer-ensure <agent> --alias <alias> --mxid <mxid> --room <room-id> --protocol <id> [--target-room <room-id>] [--push true|false]
+func (h *Handlers) HandleTopologyPeerEnsure(ctx context.Context, cmd *Command, evt *event.Event) (string, error) {
+	traceID := trace.GenerateID()
+	ctx = trace.WithTraceID(ctx, traceID)
+
+	agentID, _ := cmd.GetArg(0)
+	if strings.TrimSpace(agentID) == "" {
+		return "", fmt.Errorf("usage: /ruriko topology peer-ensure <agent> --alias <alias> --mxid <mxid> --room <room-id> --protocol <id> [--target-room <room-id>] [--push true|false]")
+	}
+
+	pushRequested, err := parsePushFlag(cmd)
+	if err != nil {
+		return "", err
+	}
+
+	alias := strings.TrimSpace(cmd.GetFlag("alias", ""))
+	mxid := strings.TrimSpace(cmd.GetFlag("mxid", ""))
+	roomID := strings.TrimSpace(cmd.GetFlag("room", ""))
+	protocolID := strings.TrimSpace(cmd.GetFlag("protocol", ""))
+	targetRoom := strings.TrimSpace(cmd.GetFlag("target-room", roomID))
+
+	if err := validateTopologyPeerSetFlags(alias, mxid, roomID, protocolID, targetRoom); err != nil {
+		return "", err
+	}
+
+	baseGV, cfg, err := h.loadAgentGosutoForTopology(ctx, traceID, evt.Sender.String(), agentID, "topology.peer-ensure")
+	if err != nil {
+		return "", err
+	}
+
+	if conflict := findTopologyEnsureConflict(cfg, alias, mxid, roomID, targetRoom); conflict != "" {
+		err := fmt.Errorf("cannot ensure peer mapping for alias %q: %s", alias, conflict)
+		_ = h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "topology.peer-ensure", agentID, "error", nil, err.Error())
+		return "", err
+	}
+
+	peerMissing := !hasTrustedPeerProtocol(cfg.Trust.TrustedPeers, alias, mxid, roomID, protocolID)
+	targetMissing := !hasMessagingTarget(cfg.Messaging.AllowedTargets, alias, targetRoom)
+
+	if !peerMissing && !targetMissing {
+		pushApplied, pushMessage := false, ""
+		if pushRequested {
+			pushApplied, pushMessage = h.maybePushGosutoVersion(ctx, agentID, baseGV)
+		}
+		if err := h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "topology.peer-ensure", agentID, "success",
+			store.AuditPayload{"changed": false, "alias": alias, "protocol": protocolID, "push_requested": pushRequested, "push_applied": pushApplied, "push_message": pushMessage}, ""); err != nil {
+			slog.Warn("audit write failed", "op", "topology.peer-ensure", "agent", agentID, "err", err)
+		}
+
+		if pushRequested && pushMessage != "" {
+			return fmt.Sprintf("ℹ️  Topology peer mapping for **%s** already satisfies ensure requirements.\n\n%s\n\n(trace: %s)", agentID, pushMessage, traceID), nil
+		}
+		return fmt.Sprintf("ℹ️  Topology peer mapping for **%s** already satisfies ensure requirements.\n\n(trace: %s)", agentID, traceID), nil
+	}
+
+	if peerMissing {
+		cfg.Trust.TrustedPeers = upsertTrustedPeer(cfg.Trust.TrustedPeers, gosutospec.TrustedPeer{
+			MXID:      mxid,
+			RoomID:    roomID,
+			Alias:     alias,
+			Protocols: []string{protocolID},
+		})
+	}
+	if targetMissing {
+		cfg.Messaging.AllowedTargets = upsertMessagingTarget(cfg.Messaging.AllowedTargets, gosutospec.MessagingTarget{
+			Alias:  alias,
+			RoomID: targetRoom,
+		})
+	}
+
+	rawYAML, changed, err := renderValidatedUpdatedTopology(cfg, []byte(baseGV.YAMLBlob))
+	if err != nil {
+		_ = h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "topology.peer-ensure", agentID, "error", nil, err.Error())
+		return "", err
+	}
+	if !changed {
+		if err := h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "topology.peer-ensure", agentID, "success",
+			store.AuditPayload{"changed": false, "alias": alias, "protocol": protocolID, "push_requested": pushRequested}, ""); err != nil {
+			slog.Warn("audit write failed", "op", "topology.peer-ensure", "agent", agentID, "err", err)
+		}
+		return fmt.Sprintf("ℹ️  Topology peer mapping for **%s** already satisfies ensure requirements.\n\n(trace: %s)", agentID, traceID), nil
+	}
+
+	// Ensure can widen trust/messaging and is approval-gated.
+	if msg, needed, err := h.requestApprovalIfNeeded(ctx, "topology.peer-ensure", agentID, cmd, evt); needed {
+		return msg, err
+	}
+
+	gv, err := h.storeTopologyVersion(ctx, agentID, rawYAML, evt.Sender.String())
+	if err != nil {
+		_ = h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "topology.peer-ensure", agentID, "error", nil, err.Error())
+		return "", err
+	}
+
+	pushApplied, pushMessage := false, ""
+	if pushRequested {
+		pushApplied, pushMessage = h.maybePushGosutoVersion(ctx, agentID, gv)
+	}
+
+	if err := h.store.WriteAudit(ctx, traceID, evt.Sender.String(), "topology.peer-ensure", agentID, "success",
+		store.AuditPayload{
+			"changed":        true,
+			"alias":          alias,
+			"mxid":           mxid,
+			"room":           roomID,
+			"protocol":       protocolID,
+			"peer_added":     peerMissing,
+			"target_added":   targetMissing,
+			"version":        gv.Version,
+			"hash":           gv.Hash[:16],
+			"push_requested": pushRequested,
+			"push_applied":   pushApplied,
+			"push_message":   pushMessage,
+		}, ""); err != nil {
+		slog.Warn("audit write failed", "op", "topology.peer-ensure", "agent", agentID, "err", err)
+	}
+
+	resp := fmt.Sprintf(
+		"✅ Topology ensure applied for **%s** (`%s` -> `%s`) — Gosuto **v%d** (hash: `%s...`)\n\nRun `/ruriko gosuto push %s` to apply to the running agent.\n\n(trace: %s)",
+		agentID, alias, protocolID, gv.Version, gv.Hash[:16], agentID, traceID,
+	)
+	if pushRequested && pushMessage != "" {
+		resp = fmt.Sprintf(
+			"✅ Topology ensure applied for **%s** (`%s` -> `%s`) — Gosuto **v%d** (hash: `%s...`)\n\n%s\n\n(trace: %s)",
+			agentID, alias, protocolID, gv.Version, gv.Hash[:16], pushMessage, traceID,
+		)
+	}
+	return resp, nil
+}
+
 // HandleTopologyPeerRemove removes explicit peer mappings (trust and messaging)
 // from an agent Gosuto config. This is a deterministic restricting operation.
 //
@@ -498,6 +633,47 @@ func hasTrustedPeerAlias(peers []gosutospec.TrustedPeer, alias string) bool {
 		}
 	}
 	return false
+}
+
+func hasTrustedPeerProtocol(peers []gosutospec.TrustedPeer, alias, mxid, roomID, protocolID string) bool {
+	for _, p := range peers {
+		if p.Alias != alias || p.MXID != mxid || p.RoomID != roomID {
+			continue
+		}
+		if containsString(p.Protocols, protocolID) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasMessagingTarget(targets []gosutospec.MessagingTarget, alias, roomID string) bool {
+	for _, t := range targets {
+		if t.Alias == alias && t.RoomID == roomID {
+			return true
+		}
+	}
+	return false
+}
+
+func findTopologyEnsureConflict(cfg *gosutospec.Config, alias, mxid, roomID, targetRoom string) string {
+	for _, p := range cfg.Trust.TrustedPeers {
+		if p.Alias != alias {
+			continue
+		}
+		if p.MXID != mxid || p.RoomID != roomID {
+			return fmt.Sprintf("existing trusted peer alias maps to mxid=%q room=%q", p.MXID, p.RoomID)
+		}
+	}
+	for _, t := range cfg.Messaging.AllowedTargets {
+		if t.Alias != alias {
+			continue
+		}
+		if t.RoomID != targetRoom {
+			return fmt.Sprintf("existing messaging target alias maps to room=%q", t.RoomID)
+		}
+	}
+	return ""
 }
 
 func upsertMessagingTarget(targets []gosutospec.MessagingTarget, incoming gosutospec.MessagingTarget) []gosutospec.MessagingTarget {
