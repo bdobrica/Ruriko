@@ -235,6 +235,14 @@ type WorkflowProtocolStep struct {
 	MaxIterations int                    `yaml:"maxIterations,omitempty" json:"maxIterations,omitempty"`
 	Steps         []WorkflowProtocolStep `yaml:"steps,omitempty" json:"steps,omitempty"`
 
+	// ForEachIterationSchemaRef optionally validates each per-iteration contract
+	// object produced by type=for_each.
+	ForEachIterationSchemaRef string `yaml:"forEachIterationSchemaRef,omitempty" json:"forEachIterationSchemaRef,omitempty"`
+
+	// ForEachResultSchemaRef optionally validates each per-iteration terminal
+	// result value produced by nested steps in type=for_each.
+	ForEachResultSchemaRef string `yaml:"forEachResultSchemaRef,omitempty" json:"forEachResultSchemaRef,omitempty"`
+
 	// CollectFrom is used by type=collect.
 	CollectFrom string `yaml:"collectFrom,omitempty" json:"collectFrom,omitempty"`
 

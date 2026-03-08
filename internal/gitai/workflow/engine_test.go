@@ -336,6 +336,94 @@ func TestEngineExecuteProtocol_ForEachCollect_MaxIterationsExceeded(t *testing.T
 	}
 }
 
+func TestEngineExecuteProtocol_ForEach_IterationSchemaHooks_Succeed(t *testing.T) {
+	dispatcher := &fakeDispatcher{}
+	runner := NewRunner(dispatcher)
+
+	protocol := gosutospec.WorkflowProtocol{
+		ID: "kumo.news.request.v1",
+		Steps: []gosutospec.WorkflowProtocolStep{
+			{
+				Type:                      "for_each",
+				ItemsExpr:                 "{{input.tickers}}",
+				ItemVar:                   "ticker",
+				MaxIterations:             3,
+				ForEachResultSchemaRef:    "iterResult",
+				ForEachIterationSchemaRef: "iterContract",
+				Steps: []gosutospec.WorkflowProtocolStep{
+					{Type: "persist", PersistKey: "last_ticker", PersistValue: "{{state.ticker}}"},
+				},
+			},
+		},
+	}
+
+	state := NewStateFromExecutionContext(NewExecutionContext("trace-1", "!room:example.com", "@peer:example.com", &InboundProtocolMatch{
+		Protocol: protocol,
+		Payload: map[string]interface{}{
+			"tickers": []interface{}{"AAPL", "MSFT"},
+		},
+		SchemaDefinitions: map[string]interface{}{
+			"iterResult": map[string]interface{}{"type": "string"},
+			"iterContract": map[string]interface{}{
+				"type":     "object",
+				"required": []interface{}{"index", "item", "outputs", "result"},
+				"properties": map[string]interface{}{
+					"item":    map[string]interface{}{"type": "string"},
+					"outputs": map[string]interface{}{"type": "object"},
+					"result":  map[string]interface{}{"type": "string"},
+				},
+			},
+		},
+	}))
+
+	_, _, err := runner.Run(context.Background(), protocol, state)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+}
+
+func TestEngineExecuteProtocol_ForEach_IterationResultSchemaHook_Fails(t *testing.T) {
+	dispatcher := &fakeDispatcher{}
+	runner := NewRunner(dispatcher)
+
+	protocol := gosutospec.WorkflowProtocol{
+		ID: "kumo.news.request.v1",
+		Steps: []gosutospec.WorkflowProtocolStep{
+			{
+				Type:                   "for_each",
+				ItemsExpr:              "{{input.tickers}}",
+				ItemVar:                "ticker",
+				MaxIterations:          3,
+				ForEachResultSchemaRef: "iterResultObject",
+				Steps: []gosutospec.WorkflowProtocolStep{
+					{Type: "persist", PersistKey: "last_ticker", PersistValue: "{{state.ticker}}"},
+				},
+			},
+		},
+	}
+
+	state := NewStateFromExecutionContext(NewExecutionContext("trace-1", "!room:example.com", "@peer:example.com", &InboundProtocolMatch{
+		Protocol: protocol,
+		Payload: map[string]interface{}{
+			"tickers": []interface{}{"AAPL", "MSFT"},
+		},
+		SchemaDefinitions: map[string]interface{}{
+			"iterResultObject": map[string]interface{}{"type": "object"},
+		},
+	}))
+
+	_, _, err := runner.Run(context.Background(), protocol, state)
+	if err == nil {
+		t.Fatal("Run() expected for_each iteration result schema validation error")
+	}
+	if !HasCode(err, CodeSchemaValidation) {
+		t.Fatalf("expected schema validation error code, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "result schema validation failed") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestEngineExecuteProtocol_PlanStep_SchemaBoundStructuredOutput(t *testing.T) {
 	dispatcher := &fakeDispatcher{planResult: `{"items":[{"query":"AAPL earnings"},{"query":"MSFT guidance"}]}`}
 	runner := NewRunner(dispatcher)

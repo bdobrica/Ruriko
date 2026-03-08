@@ -304,6 +304,22 @@ func validateWorkflow(w Workflow) error {
 				return err
 			}
 		}
+		if ref := step.ForEachIterationSchemaRef; ref != "" {
+			if step.Type != "for_each" {
+				return fmt.Errorf("workflow protocol %s, %s: forEachIterationSchemaRef is only valid for for_each", protocolID, stepPath)
+			}
+			if err := validateSchemaRef(protocolID, "outputSchemaRef", ref, topLevelStepIndex); err != nil {
+				return err
+			}
+		}
+		if ref := step.ForEachResultSchemaRef; ref != "" {
+			if step.Type != "for_each" {
+				return fmt.Errorf("workflow protocol %s, %s: forEachResultSchemaRef is only valid for for_each", protocolID, stepPath)
+			}
+			if err := validateSchemaRef(protocolID, "outputSchemaRef", ref, topLevelStepIndex); err != nil {
+				return err
+			}
+		}
 
 		switch step.Type {
 		case "plan":

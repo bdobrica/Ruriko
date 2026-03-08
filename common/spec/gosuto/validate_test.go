@@ -1941,6 +1941,57 @@ workflow:
 	}
 }
 
+func TestValidate_WorkflowForEachIterationSchemaRef_NonForEachRejected(t *testing.T) {
+	_, err := parseR61YAML(r61Base + r61Trust + `
+workflow:
+	schemas:
+		iterContract:
+			type: object
+	protocols:
+		- id: "kairo.news.request.v1"
+			trigger:
+				type: "matrix.protocol_message"
+			steps:
+				- type: "persist"
+					persistKey: "x"
+					persistValue: "1"
+					forEachIterationSchemaRef: "iterContract"
+`)
+	if err == nil {
+		t.Fatal("expected error for forEachIterationSchemaRef on non-for_each step, got nil")
+	}
+	if !strings.Contains(err.Error(), "forEachIterationSchemaRef is only valid for for_each") {
+		t.Errorf("unexpected forEachIterationSchemaRef validation error: %v", err)
+	}
+}
+
+func TestValidate_WorkflowForEachResultSchemaRef_NotFound(t *testing.T) {
+	_, err := parseR61YAML(r61Base + r61Trust + `
+workflow:
+	schemas:
+		iterContract:
+			type: object
+	protocols:
+		- id: "kairo.news.request.v1"
+			trigger:
+				type: "matrix.protocol_message"
+			steps:
+				- type: "for_each"
+					itemsExpr: "{{input.tickers}}"
+					forEachResultSchemaRef: "iterResult"
+					steps:
+						- type: "persist"
+							persistKey: "x"
+							persistValue: "{{state.item}}"
+`)
+	if err == nil {
+		t.Fatal("expected error for missing forEachResultSchemaRef target, got nil")
+	}
+	if !strings.Contains(err.Error(), "output schema ref iterResult not found") {
+		t.Errorf("unexpected forEachResultSchemaRef validation error: %v", err)
+	}
+}
+
 func TestValidate_WorkflowPlan_RequiresPrompt(t *testing.T) {
 	_, err := parseR61YAML(r61Base + r61Trust + `
 workflow:

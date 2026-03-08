@@ -300,12 +300,21 @@ func (r *Runner) runStep(ctx context.Context, protocolID string, step gosutospec
 				}
 			}
 
-			iterationResults = append(iterationResults, map[string]interface{}{
+			iterationContract := map[string]interface{}{
 				"index":   i,
 				"item":    item,
 				"outputs": outputs,
 				"result":  iterationFinal,
-			})
+			}
+
+			if err := validateOutputAgainstSchemaRef(protocolID, step.ForEachResultSchemaRef, iterationFinal, state); err != nil {
+				return nil, totalNestedToolCalls, fmt.Errorf("for_each iteration %d result schema validation failed: %w", i, err)
+			}
+			if err := validateOutputAgainstSchemaRef(protocolID, step.ForEachIterationSchemaRef, iterationContract, state); err != nil {
+				return nil, totalNestedToolCalls, fmt.Errorf("for_each iteration %d contract schema validation failed: %w", i, err)
+			}
+
+			iterationResults = append(iterationResults, iterationContract)
 		}
 
 		return iterationResults, totalNestedToolCalls, nil
@@ -449,7 +458,11 @@ func parseStructuredJSON(raw string) (interface{}, error) {
 }
 
 func validateStepOutputSchema(protocolID string, step gosutospec.WorkflowProtocolStep, output interface{}, state *State) error {
-	ref := strings.TrimSpace(step.OutputSchemaRef)
+	return validateOutputAgainstSchemaRef(protocolID, step.OutputSchemaRef, output, state)
+}
+
+func validateOutputAgainstSchemaRef(protocolID, schemaRef string, output interface{}, state *State) error {
+	ref := strings.TrimSpace(schemaRef)
 	if ref == "" {
 		return nil
 	}
