@@ -113,14 +113,19 @@ func newDiskRegistry(t *testing.T) *templates.Registry {
 }
 
 var canonicalVars = templates.TemplateVars{
-	AgentName:      "test-agent",
-	DisplayName:    "Test Agent",
-	AdminRoom:      "!admin:example.com",
-	AgentMXID:      "@test-agent:example.com",
-	OperatorMXID:   "@operator:example.com",
-	KairoAdminRoom: "!kairo-admin:example.com",
-	KumoAdminRoom:  "!kumo-admin:example.com",
-	UserRoom:       "!user-dm:example.com",
+	AgentName:          "test-agent",
+	DisplayName:        "Test Agent",
+	AdminRoom:          "!admin:example.com",
+	AgentMXID:          "@test-agent:example.com",
+	OperatorMXID:       "@operator:example.com",
+	KairoAdminRoom:     "!kairo-admin:example.com",
+	KumoAdminRoom:      "!kumo-admin:example.com",
+	UserRoom:           "!user-dm:example.com",
+	PeerAlias:          "kairo",
+	PeerMXID:           "@kairo:localhost",
+	PeerRoom:           "!kairo-admin:example.com",
+	PeerProtocolID:     "kairo.news.request.v1",
+	PeerProtocolPrefix: "KAIRO_NEWS_REQUEST",
 }
 
 func TestRegistry_List_IncludesCanonicalTemplates(t *testing.T) {
@@ -223,7 +228,7 @@ func TestRegistry_Render_KumoAgent(t *testing.T) {
 		"gpt-4o",
 		"${BRAVE_API_KEY}",
 		"messaging:",
-		"alias: kairo",
+		"alias: \"kairo\"",
 		"alias: user",
 		"!kairo-admin:example.com",
 		"!user-dm:example.com",

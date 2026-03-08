@@ -14,11 +14,11 @@ trust:
   allowedSenders:
     - "*"
   trustedPeers:
-    - mxid: "@kairo:localhost"
-      roomId: "{{.AdminRoom}}"
-      alias: kairo
+    - mxid: "{{.PeerMXID}}"
+      roomId: "{{.PeerRoom}}"
+      alias: "{{.PeerAlias}}"
       protocols:
-        - kairo.news.request.v1
+        - "{{.PeerProtocolID}}"
   requireE2EE: false
   adminRoom: "{{.AdminRoom}}"
 
@@ -53,8 +53,8 @@ capabilities:
 
 messaging:
   allowedTargets:
-    - roomId: "{{.KairoAdminRoom}}"
-      alias: kairo
+    - roomId: "{{.PeerRoom}}"
+      alias: "{{.PeerAlias}}"
     - roomId: "{{.UserRoom}}"
       alias: user
   maxMessagesPerMinute: 30
@@ -128,10 +128,10 @@ workflow:
         result:
           type: string
   protocols:
-    - id: kairo.news.request.v1
+    - id: "{{.PeerProtocolID}}"
       trigger:
         type: matrix.protocol_message
-        prefix: KAIRO_NEWS_REQUEST
+        prefix: "{{.PeerProtocolPrefix}}"
       inputSchemaRef: kairoNewsRequest
       retries: 1
       steps:
@@ -163,8 +163,8 @@ workflow:
           outputSchemaRef: kumoNewsResponse
           retries: 2
         - type: send_message
-          targetAlias: kairo
-          payloadTemplate: "Hey kairo, KUMO_NEWS_RESPONSE $steps.step_4"
+          targetAlias: "{{.PeerAlias}}"
+          payloadTemplate: "Hey {{.PeerAlias}}, KUMO_NEWS_RESPONSE $steps.step_4"
         - type: persist
           persistKey: kumo.last_response
           persistValue: "$steps.step_4"
@@ -221,5 +221,5 @@ instructions:
   context:
     user: "The user is the sole approver. Only contact them directly if explicitly instructed."
     peers:
-      - name: "kairo"
-        role: "Finance/analysis agent — primary requester. Sends you tickers or topics; you return a news summary."
+      - name: "{{.PeerAlias}}"
+        role: "Primary requester peer. Sends you tickers or topics; you return a news summary."

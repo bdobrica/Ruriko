@@ -152,9 +152,13 @@ func (h *Handlers) runProvisioningPipeline(ctx context.Context, args provisionAr
 	}
 
 	vars := templates.TemplateVars{
-		AgentName:    agentID,
-		DisplayName:  args.displayName,
-		OperatorMXID: args.operatorMXID,
+		AgentName:          agentID,
+		DisplayName:        args.displayName,
+		OperatorMXID:       args.operatorMXID,
+		PeerAlias:          "kairo",
+		PeerMXID:           "@kairo:localhost",
+		PeerProtocolID:     "kairo.news.request.v1",
+		PeerProtocolPrefix: "KAIRO_NEWS_REQUEST",
 	}
 
 	// Populate room IDs from the admin rooms configured in MATRIX_ADMIN_ROOMS.
@@ -167,6 +171,7 @@ func (h *Handlers) runProvisioningPipeline(ctx context.Context, args provisionAr
 		// mesh topology injection (InjectMeshTopology below) overrides them.
 		vars.KairoAdminRoom = h.adminRooms[0]
 		vars.KumoAdminRoom = h.adminRooms[0]
+		vars.PeerRoom = h.adminRooms[0]
 	}
 	if len(h.adminRooms) > 1 {
 		vars.UserRoom = h.adminRooms[1]

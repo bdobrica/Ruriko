@@ -54,6 +54,26 @@ type TemplateVars struct {
 	// UserRoom is the Matrix DM room ID for the human operator.
 	// Populated at provision time so agents can send final reports to the user.
 	UserRoom string
+
+	// PeerAlias is the logical alias for the primary requesting peer used by
+	// peer-collaboration templates (for example the Kumo template).
+	PeerAlias string
+
+	// PeerMXID is the Matrix MXID for the primary requesting peer trusted for
+	// protocol-triggered workflows.
+	PeerMXID string
+
+	// PeerRoom is the Matrix room ID where the requesting peer is expected to
+	// exchange protocol messages with this agent.
+	PeerRoom string
+
+	// PeerProtocolID is the inbound protocol ID accepted from the requesting
+	// peer for protocol workflow execution.
+	PeerProtocolID string
+
+	// PeerProtocolPrefix is the protocol message prefix matched for
+	// matrix.protocol_message triggers.
+	PeerProtocolPrefix string
 }
 
 // Registry resolves and renders Gosuto templates from a filesystem root.
