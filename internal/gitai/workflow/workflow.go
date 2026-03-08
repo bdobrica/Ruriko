@@ -367,7 +367,7 @@ func RunStepWithRetryThenRefuse(protocolID, stepType string, retries int, run fu
 
 func isSchemaRetryStep(stepType string) bool {
 	switch strings.TrimSpace(stepType) {
-	case "parse_input", "summarize":
+	case "parse_input", "summarize", "plan":
 		return true
 	default:
 		return false

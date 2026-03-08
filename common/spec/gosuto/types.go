@@ -195,7 +195,7 @@ type WorkflowTrigger struct {
 // WorkflowProtocolStep is one primitive operation in a workflow protocol.
 type WorkflowProtocolStep struct {
 	// Type is one of:
-	// parse_input, tool, branch, summarize, send_message, persist, for_each, collect.
+	// parse_input, tool, branch, summarize, plan, send_message, persist, for_each, collect.
 	Type string `yaml:"type" json:"type"`
 
 	// Tool is used by type=tool.
@@ -207,7 +207,7 @@ type WorkflowProtocolStep struct {
 	// BranchExpr is used by type=branch.
 	BranchExpr string `yaml:"branchExpr,omitempty" json:"branchExpr,omitempty"`
 
-	// Prompt is used by type=summarize.
+	// Prompt is used by type=summarize and type=plan.
 	Prompt string `yaml:"prompt,omitempty" json:"prompt,omitempty"`
 
 	// InputSchemaRef optionally points to workflow.schemas.

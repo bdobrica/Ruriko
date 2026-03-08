@@ -279,6 +279,7 @@ func validateWorkflow(w Workflow) error {
 		"tool":         {},
 		"branch":       {},
 		"summarize":    {},
+		"plan":         {},
 		"send_message": {},
 		"persist":      {},
 		"for_each":     {},
@@ -305,6 +306,13 @@ func validateWorkflow(w Workflow) error {
 		}
 
 		switch step.Type {
+		case "plan":
+			if strings.TrimSpace(step.Prompt) == "" {
+				return fmt.Errorf("workflow protocol %s, %s: plan requires prompt", protocolID, stepPath)
+			}
+			if strings.TrimSpace(step.OutputSchemaRef) == "" {
+				return fmt.Errorf("workflow protocol %s, %s: plan requires outputSchemaRef", protocolID, stepPath)
+			}
 		case "for_each":
 			if strings.TrimSpace(step.ItemsExpr) == "" {
 				return fmt.Errorf("workflow protocol %s, %s: for_each requires itemsExpr", protocolID, stepPath)

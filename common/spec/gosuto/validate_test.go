@@ -1920,3 +1920,47 @@ workflow:
 		t.Errorf("unexpected collect validation error: %v", err)
 	}
 }
+
+func TestValidate_WorkflowPlan_RequiresPrompt(t *testing.T) {
+	_, err := parseR61YAML(r61Base + r61Trust + `
+workflow:
+	protocols:
+		- id: "kairo.news.request.v1"
+			trigger:
+				type: "matrix.protocol_message"
+			steps:
+				- type: "plan"
+					outputSchemaRef: "searchPlan"
+	schemas:
+		searchPlan:
+			type: object
+`)
+	if err == nil {
+		t.Fatal("expected error for missing plan prompt, got nil")
+	}
+	if !strings.Contains(err.Error(), "plan requires prompt") {
+		t.Errorf("unexpected plan validation error: %v", err)
+	}
+}
+
+func TestValidate_WorkflowPlan_RequiresOutputSchemaRef(t *testing.T) {
+	_, err := parseR61YAML(r61Base + r61Trust + `
+workflow:
+	protocols:
+		- id: "kairo.news.request.v1"
+			trigger:
+				type: "matrix.protocol_message"
+			steps:
+				- type: "plan"
+					prompt: "create plan"
+					schemas:
+						searchPlan:
+							type: object
+`)
+	if err == nil {
+		t.Fatal("expected error for missing plan outputSchemaRef, got nil")
+	}
+	if !strings.Contains(err.Error(), "plan requires outputSchemaRef") {
+		t.Errorf("unexpected plan validation error: %v", err)
+	}
+}

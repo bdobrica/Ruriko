@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -166,6 +167,28 @@ func (r *Runner) runStep(ctx context.Context, protocolID string, step gosutospec
 			return nil, 0, err
 		}
 		return result, 0, nil
+
+	case "plan":
+		if strings.TrimSpace(step.OutputSchemaRef) == "" {
+			return nil, 0, fmt.Errorf("plan step requires outputSchemaRef")
+		}
+		promptAny, err := interpolateValue(step.Prompt, state)
+		if err != nil {
+			return nil, 0, fmt.Errorf("interpolate plan prompt: %w", err)
+		}
+		prompt, ok := promptAny.(string)
+		if !ok || strings.TrimSpace(prompt) == "" {
+			return nil, 0, fmt.Errorf("plan step requires non-empty prompt")
+		}
+		raw, err := r.dispatcher.Summarize(ctx, prompt, state)
+		if err != nil {
+			return nil, 0, err
+		}
+		structured, err := parseStructuredJSON(raw)
+		if err != nil {
+			return nil, 0, fmt.Errorf("plan step expected JSON output: %w", err)
+		}
+		return structured, 0, nil
 
 	case "send_message":
 		targetAny, err := interpolateValue(step.TargetAlias, state)
@@ -342,6 +365,29 @@ func asInterfaceSlice(value interface{}) ([]interface{}, error) {
 	return out, nil
 }
 
+func parseStructuredJSON(raw string) (interface{}, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil, fmt.Errorf("empty response")
+	}
+	if strings.HasPrefix(trimmed, "```") {
+		trimmed = strings.TrimPrefix(trimmed, "```")
+		trimmed = strings.TrimSpace(trimmed)
+		if strings.HasPrefix(strings.ToLower(trimmed), "json") {
+			trimmed = strings.TrimSpace(trimmed[4:])
+		}
+		if idx := strings.LastIndex(trimmed, "```"); idx >= 0 {
+			trimmed = strings.TrimSpace(trimmed[:idx])
+		}
+	}
+
+	var out interface{}
+	if err := json.Unmarshal([]byte(trimmed), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func validateStepOutputSchema(protocolID string, step gosutospec.WorkflowProtocolStep, output interface{}, state *State) error {
 	ref := strings.TrimSpace(step.OutputSchemaRef)
 	if ref == "" {
@@ -505,6 +551,26 @@ func resolvePathToken(token string, state *State) (interface{}, bool) {
 				return output, true
 			}
 			return contract, true
+		}
+	}
+	if parts[0] == "steps" && len(parts) > 2 {
+		if contract, ok := state.StepOutputs[parts[1]]; ok {
+			if parts[2] == "output" {
+				resolved, ok := resolvePath(contract, parts[2:])
+				if ok {
+					return resolved, true
+				}
+			}
+			if outputObj, ok := contract["output"].(map[string]interface{}); ok {
+				resolved, ok := resolvePath(outputObj, parts[2:])
+				if ok {
+					return resolved, true
+				}
+			}
+			resolved, ok := resolvePath(contract, parts[2:])
+			if ok {
+				return resolved, true
+			}
 		}
 	}
 

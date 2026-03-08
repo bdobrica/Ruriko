@@ -12,6 +12,7 @@ type fakeDispatcher struct {
 	tools      []string
 	args       []map[string]interface{}
 	summarized []string
+	planResult string
 }
 
 func (f *fakeDispatcher) DispatchTool(_ context.Context, _ string, _ string, name string, args map[string]interface{}) (string, error) {
@@ -22,6 +23,9 @@ func (f *fakeDispatcher) DispatchTool(_ context.Context, _ string, _ string, nam
 
 func (f *fakeDispatcher) Summarize(_ context.Context, prompt string, _ *State) (string, error) {
 	f.summarized = append(f.summarized, prompt)
+	if f.planResult != "" {
+		return f.planResult, nil
+	}
 	return "summary-result", nil
 }
 
@@ -329,5 +333,95 @@ func TestEngineExecuteProtocol_ForEachCollect_MaxIterationsExceeded(t *testing.T
 	}
 	if !strings.Contains(err.Error(), "exceeds maxIterations") {
 		t.Fatalf("expected maxIterations error, got: %v", err)
+	}
+}
+
+func TestEngineExecuteProtocol_PlanStep_SchemaBoundStructuredOutput(t *testing.T) {
+	dispatcher := &fakeDispatcher{planResult: `{"items":[{"query":"AAPL earnings"},{"query":"MSFT guidance"}]}`}
+	runner := NewRunner(dispatcher)
+
+	protocol := gosutospec.WorkflowProtocol{
+		ID: "kumo.news.request.v1",
+		Steps: []gosutospec.WorkflowProtocolStep{
+			{
+				Type:            "plan",
+				Prompt:          "Create a search plan for {{input.topic}}",
+				OutputSchemaRef: "searchPlan",
+			},
+			{
+				Type:          "for_each",
+				ItemsExpr:     "{{steps.step_0.items}}",
+				ItemVar:       "plan_item",
+				MaxIterations: 5,
+				Steps: []gosutospec.WorkflowProtocolStep{
+					{Type: "persist", PersistKey: "last_query", PersistValue: "{{state.plan_item.query}}"},
+				},
+			},
+		},
+	}
+
+	state := NewStateFromExecutionContext(NewExecutionContext("trace-1", "!room:example.com", "@peer:example.com", &InboundProtocolMatch{
+		Protocol: protocol,
+		Payload: map[string]interface{}{
+			"topic": "earnings season",
+		},
+		SchemaDefinitions: map[string]interface{}{
+			"searchPlan": map[string]interface{}{
+				"type":     "object",
+				"required": []interface{}{"items"},
+				"properties": map[string]interface{}{
+					"items": map[string]interface{}{"type": "array"},
+				},
+			},
+		},
+	}))
+
+	_, toolCalls, err := runner.Run(context.Background(), protocol, state)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if toolCalls != 0 {
+		t.Fatalf("Run() toolCalls = %d, want 0", toolCalls)
+	}
+	planOutput, ok := state.StepOutputs["step_0"]["output"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("step_0 output type = %T, want map[string]interface{}", state.StepOutputs["step_0"]["output"])
+	}
+	items, ok := planOutput["items"].([]interface{})
+	if !ok || len(items) != 2 {
+		t.Fatalf("plan items = %#v, want 2 entries", planOutput["items"])
+	}
+}
+
+func TestEngineExecuteProtocol_PlanStep_RejectsNonJSONOutput(t *testing.T) {
+	dispatcher := &fakeDispatcher{planResult: "this is not json"}
+	engine := NewEngine(dispatcher)
+
+	protocol := gosutospec.WorkflowProtocol{
+		ID: "kumo.news.request.v1",
+		Steps: []gosutospec.WorkflowProtocolStep{
+			{
+				Type:            "plan",
+				Prompt:          "Create plan",
+				OutputSchemaRef: "searchPlan",
+			},
+		},
+	}
+
+	_, _, err := engine.ExecuteProtocol(context.Background(), protocol, NewExecutionContext("trace-1", "!room:example.com", "@peer:example.com", &InboundProtocolMatch{
+		Protocol: protocol,
+		Payload:  map[string]interface{}{"topic": "news"},
+		SchemaDefinitions: map[string]interface{}{
+			"searchPlan": map[string]interface{}{"type": "object"},
+		},
+	}))
+	if err == nil {
+		t.Fatal("ExecuteProtocol() expected JSON parsing error for plan step")
+	}
+	if !HasCode(err, CodeSchemaValidation) {
+		t.Fatalf("expected schema validation error code, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "step plan failed") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
