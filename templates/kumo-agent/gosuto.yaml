@@ -89,6 +89,44 @@ workflow:
           type: array
         material:
           type: boolean
+    searchPlan:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required:
+              - query
+            properties:
+              query:
+                type: string
+    searchResult:
+      type: string
+    searchIterationContract:
+      type: object
+      required:
+        - index
+        - item
+        - outputs
+        - result
+      properties:
+        index:
+          type: integer
+        item:
+          type: object
+          required:
+            - query
+          properties:
+            query:
+              type: string
+        outputs:
+          type: object
+        result:
+          type: string
   protocols:
     - id: kairo.news.request.v1
       trigger:
@@ -100,20 +138,36 @@ workflow:
         - type: parse_input
           inputSchemaRef: kairoNewsRequest
           retries: 1
-        - type: tool
-          tool: brave-search__web_search
-          argsTemplate:
-            query: "$input.tickers stock news latest"
+        - type: plan
+          prompt: "Build a concise search plan for these tickers: $input.tickers"
+          outputSchemaRef: searchPlan
+          retries: 1
+        - type: for_each
+          itemsExpr: "$steps.step_1.items"
+          itemVar: plan_item
+          maxIterations: 5
+          forEachResultSchemaRef: searchResult
+          forEachIterationSchemaRef: searchIterationContract
+          steps:
+            - type: tool
+              tool: brave-search__web_search
+              argsTemplate:
+                query: "$state.plan_item.query"
+              outputSchemaRef: searchResult
+        - type: collect
+          collectFrom: "$steps.step_2"
+          collectMode: result
+          collectFlatten: false
         - type: summarize
-          prompt: Summarize material news and provide concise headlines for Kairo.
+          prompt: "Summarize the collected search results and produce the response schema for run $input.run_id"
           outputSchemaRef: kumoNewsResponse
           retries: 2
         - type: send_message
           targetAlias: kairo
-          payloadTemplate: "Hey kairo, KUMO_NEWS_RESPONSE $output.json"
+          payloadTemplate: "Hey kairo, KUMO_NEWS_RESPONSE $steps.step_4"
         - type: persist
           persistKey: kumo.last_response
-          persistValue: "$output.json"
+          persistValue: "$steps.step_4"
 
 persona:
   systemPrompt: |

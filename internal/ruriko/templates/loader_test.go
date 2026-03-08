@@ -227,6 +227,10 @@ func TestRegistry_Render_KumoAgent(t *testing.T) {
 		"alias: user",
 		"!kairo-admin:example.com",
 		"!user-dm:example.com",
+		"type: for_each",
+		"forEachResultSchemaRef: searchResult",
+		"forEachIterationSchemaRef: searchIterationContract",
+		"searchIterationContract:",
 	}
 
 	for _, want := range checks {
