@@ -243,6 +243,11 @@ Run standalone Kumo workflow checks (no Ruriko; Kumo + Tuwunel only):
 * `make test-kumo-live-compose`
 * `make test-kumo-live-compose-summary`
 
+Run standalone Saito scheduling checks (no Ruriko; Saito + Tuwunel only):
+
+* `make test-saito-live-compose`
+* `make test-saito-live-compose-2cycles`
+
 Useful overrides:
 
 * `RURIKO_SAITO_TIMEOUT_SECONDS` (default `300`)
@@ -258,6 +263,10 @@ Useful overrides:
 * `KUMO_LIVE_OPENAI_API_KEY` (default `dummy-live-key`)
 * `KUMO_LIVE_BRAVE_API_KEY` (set for live Brave API execution)
 * `KUMO_LIVE_REQUIRE_SUMMARY` (`0`/`1`, default `0`)
+* `SAITO_LIVE_CRON_EXPRESSION` (default `@every 15s`)
+* `SAITO_LIVE_CRON_MESSAGE_PREFIX` (default `SAITO_LIVE_TICK`)
+* `SAITO_LIVE_REQUEST_TIMEOUT_SECONDS` (default `180`)
+* `SAITO_LIVE_REQUIRED_DELIVERIES` (default `1`)
 
 ---
 

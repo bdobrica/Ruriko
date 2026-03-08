@@ -1,0 +1,58 @@
+services:
+  tuwunel:
+    build:
+      context: ../../examples/docker-compose
+      dockerfile: Dockerfile.tuwunel
+    container_name: saito-live-tuwunel
+    restart: unless-stopped
+    ports:
+      - "${SAITO_LIVE_TUWUNEL_HOST:-127.0.0.1}:${SAITO_LIVE_TUWUNEL_PORT:-18018}:8008"
+    environment:
+      CONDUWUIT_SERVER_NAME: ${SAITO_LIVE_TUWUNEL_SERVER_NAME:-localhost}
+      CONDUWUIT_DATABASE_PATH: /var/lib/tuwunel
+      CONDUWUIT_ALLOW_REGISTRATION: "true"
+      CONDUWUIT_REGISTRATION_TOKEN: ${SAITO_LIVE_TUWUNEL_REGISTRATION_TOKEN:-saito-live-registration-token}
+      CONDUWUIT_ALLOW_FEDERATION: "false"
+      CONDUWUIT_ALLOW_PUBLIC_ROOM_DIRECTORY: "false"
+      CONDUWUIT_PORT: "8008"
+      CONDUWUIT_LOG: warn
+    volumes:
+      - saito-live-tuwunel-data:/var/lib/tuwunel
+    healthcheck:
+      test: ["CMD", "curl", "-fsSL", "http://localhost:8008/_matrix/client/versions"]
+      interval: 15s
+      timeout: 8s
+      retries: 8
+      start_period: 15s
+
+  saito:
+    image: ${SAITO_LIVE_GITAI_IMAGE:-gitai:latest}
+    container_name: saito-live-saito
+    restart: "no"
+    depends_on:
+      tuwunel:
+        condition: service_healthy
+    ports:
+      - "${SAITO_LIVE_ACP_HOST:-127.0.0.1}:${SAITO_LIVE_ACP_PORT:-18765}:8765"
+    environment:
+      GITAI_AGENT_ID: ${SAITO_LIVE_AGENT_ID:-saito}
+      GITAI_DB_PATH: /data/gitai.db
+      GITAI_GOSUTO_FILE: /config/gosuto.yaml
+      GITAI_ACP_ADDR: ":8765"
+      GITAI_ACP_TOKEN: ${SAITO_LIVE_ACP_TOKEN:-saito-live-acp-token}
+      MATRIX_HOMESERVER: ${SAITO_LIVE_MATRIX_HOMESERVER:-http://tuwunel:8008}
+      MATRIX_USER_ID: ${SAITO_LIVE_SAITO_MXID:-@saito-live-placeholder:localhost}
+      MATRIX_ACCESS_TOKEN: ${SAITO_LIVE_SAITO_TOKEN:-saito-live-placeholder-token}
+      LLM_PROVIDER: openai
+      LLM_API_KEY: ${SAITO_LIVE_OPENAI_API_KEY:-dummy-live-key}
+      LLM_BASE_URL: ${SAITO_LIVE_OPENAI_BASE_URL:-http://127.0.0.1:9/v1}
+      LOG_LEVEL: ${SAITO_LIVE_LOG_LEVEL:-debug}
+      LOG_FORMAT: ${SAITO_LIVE_LOG_FORMAT:-text}
+      GITAI_LLM_CALL_HARD_LIMIT: ${SAITO_LIVE_LLM_CALL_HARD_LIMIT:-0}
+    volumes:
+      - ${SAITO_LIVE_GOSUTO_FILE:-./templates/saito-agent/gosuto.yaml}:/config/gosuto.yaml:ro
+      - saito-live-data:/data
+
+volumes:
+  saito-live-data:
+  saito-live-tuwunel-data:

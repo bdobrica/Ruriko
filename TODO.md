@@ -83,6 +83,8 @@ The following is built and functional:
 - ✅ **R19.3 (maintenance)**: Quote-aware deterministic command parsing for schedule flags + live test fail-fast/convergence hardening
 - ✅ **R19.4 (maintenance)**: Standalone Kumo live compose integration harness (`tuwunel + kumo`, OpenAI payload capture proxy, Brave invocation evidence, optional summary-delivery gate)
 - ✅ **R19.5 (maintenance)**: Gitai runtime image now includes `nodejs`/`npm` (`npx`) to run MCP servers shipped in canonical templates (Brave Search, Fetch)
+- ✅ **R19.6 (maintenance)**: Standalone Saito live compose integration harness (`tuwunel + saito`) with ACP `schedule.upsert` runtime cron setup and Python Matrix delivery verification
+- ✅ **R19.7 (maintenance)**: Strict standalone Saito verification target requiring multiple cron deliveries (`make test-saito-live-compose-2cycles`)
 - ✅ **R10**: Conversation memory — STM tracker, LTM interface, seal pipeline, context assembly, SQLite/OpenAI/LLM persistent backends
 
 ---

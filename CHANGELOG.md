@@ -7,6 +7,16 @@
 
 ## 🧹 Maintenance Updates (2026-03-08 · phase 7 hardening kickoff)
 
+- Added standalone Saito live integration harness (no Ruriko dependency) to validate ACP-driven DB scheduler flow directly in Gitai:
+  - `test/integration/test-saito-live-compose.sh`
+  - `test/integration/docker-compose.saito-live.yaml`
+  - `test/integration/saito_live_matrix_verify.py`
+- Added dedicated orchestration target:
+  - `make test-saito-live-compose`
+- Added strict standalone Saito verification target:
+  - `make test-saito-live-compose-2cycles` (requires 2 cron deliveries)
+- The new flow boots `tuwunel + saito`, applies a runtime schedule via ACP `POST /tools/call` (`schedule.upsert`), and verifies cron-delivered Matrix output with a Python sync probe.
+
 - Updated `deploy/docker/Dockerfile.gitai` runtime image to include `nodejs` + `npm` (`npx`) so MCP servers declared with `command: npx` (e.g. Brave Search, Fetch) can start in live integration runs.
 
 - Added standalone Kumo live integration harness (no Ruriko dependency) to validate Gosuto-driven workflow execution directly in Gitai:

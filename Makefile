@@ -1,4 +1,4 @@
-.PHONY: all build build-ruriko build-gitai build-tools test test-integration test-integration-nlp test-saito-scheduling test-saito-scheduling-live-precheck test-saito-scheduling-live test-ruriko-saito-operator-live test-canonical-workflow-live-provisioning test-canonical-workflow-live-admin-room test-canonical-workflow-live-compose test-canonical-workflow-live-compose-3cycles test-canonical-workflow-live-security test-canonical-workflow-live test-kumo-live-compose test-kumo-live-compose-summary lint fmt clean run-ruriko run-gitai install help
+.PHONY: all build build-ruriko build-gitai build-tools test test-integration test-integration-nlp test-saito-scheduling test-saito-scheduling-live-precheck test-saito-scheduling-live test-ruriko-saito-operator-live test-saito-live-compose test-saito-live-compose-2cycles test-canonical-workflow-live-provisioning test-canonical-workflow-live-admin-room test-canonical-workflow-live-compose test-canonical-workflow-live-compose-3cycles test-canonical-workflow-live-security test-canonical-workflow-live test-kumo-live-compose test-kumo-live-compose-summary lint fmt clean run-ruriko run-gitai install help
 
 # Build variables
 BINARY_DIR := bin
@@ -73,6 +73,14 @@ test-saito-scheduling-live: test-saito-scheduling-live-precheck ## Run live comp
 test-ruriko-saito-operator-live: ## Run deterministic live operator->Ruriko->Saito schedule flow (2 cron cycles, 5m timeout)
 	@echo "Running live Ruriko/Saito/operator deterministic flow..."
 	./test/integration/test-ruriko-saito-operator-live-compose.sh
+
+test-saito-live-compose: ## Run standalone Saito + Tuwunel live cron probe (ACP schedule.upsert + Python matrix verification)
+	@echo "Running standalone Saito live compose check..."
+	bash ./test/integration/test-saito-live-compose.sh
+
+test-saito-live-compose-2cycles: ## Run standalone Saito live probe and require two cron deliveries
+	@echo "Running standalone Saito live compose check with 2-cycle requirement..."
+	SAITO_LIVE_REQUIRED_DELIVERIES=2 bash ./test/integration/test-saito-live-compose.sh
 
 test-canonical-workflow-live-provisioning: ## Check canonical provisioning prerequisites (DB rows, containers, LLM keys)
 	@echo "Running canonical provisioning precheck..."
