@@ -178,6 +178,8 @@ type App struct {
 	terminateProcess func(code int)
 	memorySTM        *gitaiMemorySTM
 	memoryAssembler  *commonmemory.ContextAssembler
+	workflowEngine   *workflow.Engine
+	workflowEngineMu sync.Once
 }
 
 // New creates and initialises all Gitai subsystems. It does NOT start any
@@ -523,6 +525,7 @@ func (a *App) handleMessage(ctx context.Context, evt *event.Event) {
 	}
 
 	cfg := a.gosutoLdr.Config()
+	var protocolMatch *workflow.InboundProtocolMatch
 	if cfg != nil {
 		if target, directedBody, directed := parseDirectedAgentMessage(text); directed {
 			fallbackAgentID := ""
@@ -556,6 +559,7 @@ func (a *App) handleMessage(ctx context.Context, evt *event.Event) {
 			)
 			return
 		}
+		protocolMatch = match
 	}
 
 	// Generate trace ID for this turn.
@@ -572,7 +576,11 @@ func (a *App) handleMessage(ctx context.Context, evt *event.Event) {
 		result    string
 		toolCalls int
 	)
-	result, toolCalls, err = a.runTurn(ctx, roomID, sender, text, evt.ID.String())
+	if protocolMatch != nil && len(protocolMatch.Protocol.Steps) > 0 {
+		result, toolCalls, err = a.runWorkflowTurn(ctx, roomID, sender, protocolMatch)
+	} else {
+		result, toolCalls, err = a.runTurn(ctx, roomID, sender, text, evt.ID.String())
+	}
 	if err != nil {
 		log.Error("turn failed", "err", err)
 		if a.matrixCli != nil && shouldSendTurnErrorReply(cfg, sender, err) {
@@ -1318,7 +1326,11 @@ func (a *App) runEventTurn(ctx context.Context, evt *envelope.Event) {
 	startedAt := time.Now()
 	result := ""
 	toolCalls := 0
-	result, toolCalls, err = a.runTurn(ctx, adminRoom, senderLabel, userText, "")
+	if match, ok := workflow.MatchGatewayProtocol(cfg, evt); ok && len(match.Protocol.Steps) > 0 {
+		result, toolCalls, err = a.runWorkflowTurn(ctx, adminRoom, senderLabel, match)
+	} else {
+		result, toolCalls, err = a.runTurn(ctx, adminRoom, senderLabel, userText, "")
+	}
 	durationMS := time.Since(startedAt).Milliseconds()
 
 	if err != nil {
