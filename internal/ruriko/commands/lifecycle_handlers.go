@@ -117,7 +117,7 @@ func (h *Handlers) HandleAgentsCreate(ctx context.Context, cmd *Command, evt *ev
 
 	agentID := cmd.GetFlag("name", "")
 	if agentID == "" {
-		return "", fmt.Errorf("usage: /ruriko agents create --name <id> --template <template> --image <image>")
+		return "", fmt.Errorf("usage: /ruriko agents create --name <id> --template <template> --image <image> [--peer-alias <alias> --peer-mxid <mxid> --peer-room <room-id> --peer-protocol-id <id> --peer-protocol-prefix <prefix>]")
 	}
 
 	if err := validateAgentID(agentID); err != nil {
@@ -135,6 +135,28 @@ func (h *Handlers) HandleAgentsCreate(ctx context.Context, cmd *Command, evt *ev
 	}
 
 	displayName := cmd.GetFlag("display-name", agentID)
+
+	peerAlias := strings.TrimSpace(cmd.GetFlag("peer-alias", "kairo"))
+	peerMXID := strings.TrimSpace(cmd.GetFlag("peer-mxid", "@kairo:localhost"))
+	peerRoom := strings.TrimSpace(cmd.GetFlag("peer-room", ""))
+	peerProtocolID := strings.TrimSpace(cmd.GetFlag("peer-protocol-id", "kairo.news.request.v1"))
+	peerProtocolPrefix := strings.TrimSpace(cmd.GetFlag("peer-protocol-prefix", "KAIRO_NEWS_REQUEST"))
+
+	if peerAlias == "" {
+		return "", fmt.Errorf("--peer-alias must not be empty")
+	}
+	if peerMXID == "" || !strings.HasPrefix(peerMXID, "@") {
+		return "", fmt.Errorf("--peer-mxid must start with '@'")
+	}
+	if peerRoom != "" && !strings.HasPrefix(peerRoom, "!") {
+		return "", fmt.Errorf("--peer-room must start with '!'")
+	}
+	if peerProtocolID == "" {
+		return "", fmt.Errorf("--peer-protocol-id must not be empty")
+	}
+	if peerProtocolPrefix == "" {
+		return "", fmt.Errorf("--peer-protocol-prefix must not be empty")
+	}
 
 	// Check that agent ID is not already taken
 	if existing, _ := h.store.GetAgent(ctx, agentID); existing != nil {
@@ -254,15 +276,20 @@ func (h *Handlers) HandleAgentsCreate(ctx context.Context, cmd *Command, evt *ev
 	// --- with template registry: async pipeline -------------------------
 	if h.templates != nil {
 		pipelineArgs := provisionArgs{
-			agentID:      agentID,
-			template:     template,
-			displayName:  displayName,
-			handle:       handle,
-			controlURL:   handle.ControlURL,
-			acpToken:     acpToken,
-			roomID:       evt.RoomID.String(),
-			operatorMXID: evt.Sender.String(),
-			traceID:      traceID,
+			agentID:            agentID,
+			template:           template,
+			displayName:        displayName,
+			peerAlias:          peerAlias,
+			peerMXID:           peerMXID,
+			peerRoom:           peerRoom,
+			peerProtocolID:     peerProtocolID,
+			peerProtocolPrefix: peerProtocolPrefix,
+			handle:             handle,
+			controlURL:         handle.ControlURL,
+			acpToken:           acpToken,
+			roomID:             evt.RoomID.String(),
+			operatorMXID:       evt.Sender.String(),
+			traceID:            traceID,
 		}
 
 		// Launch the pipeline in a background goroutine using a detached context

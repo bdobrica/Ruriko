@@ -251,7 +251,7 @@ func (h *Handlers) HandleHelp(ctx context.Context, cmd *Command, evt *event.Even
 **Agent Commands:**
 • /ruriko agents list - List all agents
 • /ruriko agents show <name> - Show agent details
-• /ruriko agents create --name <id> --template <tmpl> --image <image> [--mxid <existing>] - Create agent
+• /ruriko agents create --name <id> --template <tmpl> --image <image> [--mxid <existing>] [--peer-alias <alias> --peer-mxid <mxid> --peer-room <room-id> --peer-protocol-id <id> --peer-protocol-prefix <prefix>] - Create agent
 • /ruriko agents stop <name> - Stop agent
 • /ruriko agents start <name> - Start agent
 • /ruriko agents respawn <name> - Force respawn agent

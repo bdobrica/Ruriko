@@ -55,15 +55,20 @@ const (
 // provisionArgs bundles all inputs required by the async provisioning pipeline.
 // All strings are safe to capture; no pointers to mutable state.
 type provisionArgs struct {
-	agentID      string
-	template     string
-	displayName  string
-	handle       runtime.AgentHandle
-	controlURL   string
-	acpToken     string
-	roomID       string
-	operatorMXID string
-	traceID      string
+	agentID            string
+	template           string
+	displayName        string
+	peerAlias          string
+	peerMXID           string
+	peerRoom           string
+	peerProtocolID     string
+	peerProtocolPrefix string
+	handle             runtime.AgentHandle
+	controlURL         string
+	acpToken           string
+	roomID             string
+	operatorMXID       string
+	traceID            string
 }
 
 // runProvisioningPipeline executes the post-spawn provisioning pipeline
@@ -155,10 +160,10 @@ func (h *Handlers) runProvisioningPipeline(ctx context.Context, args provisionAr
 		AgentName:          agentID,
 		DisplayName:        args.displayName,
 		OperatorMXID:       args.operatorMXID,
-		PeerAlias:          "kairo",
-		PeerMXID:           "@kairo:localhost",
-		PeerProtocolID:     "kairo.news.request.v1",
-		PeerProtocolPrefix: "KAIRO_NEWS_REQUEST",
+		PeerAlias:          args.peerAlias,
+		PeerMXID:           args.peerMXID,
+		PeerProtocolID:     args.peerProtocolID,
+		PeerProtocolPrefix: args.peerProtocolPrefix,
 	}
 
 	// Populate room IDs from the admin rooms configured in MATRIX_ADMIN_ROOMS.
@@ -171,7 +176,12 @@ func (h *Handlers) runProvisioningPipeline(ctx context.Context, args provisionAr
 		// mesh topology injection (InjectMeshTopology below) overrides them.
 		vars.KairoAdminRoom = h.adminRooms[0]
 		vars.KumoAdminRoom = h.adminRooms[0]
-		vars.PeerRoom = h.adminRooms[0]
+		if vars.PeerRoom == "" {
+			vars.PeerRoom = h.adminRooms[0]
+		}
+	}
+	if args.peerRoom != "" {
+		vars.PeerRoom = args.peerRoom
 	}
 	if len(h.adminRooms) > 1 {
 		vars.UserRoom = h.adminRooms[1]

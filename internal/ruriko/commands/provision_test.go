@@ -27,6 +27,7 @@ import (
 
 	"maunium.net/go/mautrix/id"
 
+	gosutospec "github.com/bdobrica/Ruriko/common/spec/gosuto"
 	"github.com/bdobrica/Ruriko/internal/ruriko/commands"
 	"github.com/bdobrica/Ruriko/internal/ruriko/runtime"
 	"github.com/bdobrica/Ruriko/internal/ruriko/secrets"
@@ -174,6 +175,28 @@ gateways:
     config:
       authType: hmac-sha256
       hmacSecretRef: "{{.AgentName}}.webhook-secret"
+`
+
+const peerAwareGosutoYAML = `apiVersion: gosuto/v1
+metadata:
+  name: "{{.AgentName}}"
+  template: peer-template
+trust:
+  allowedRooms: ["!admin:example.com"]
+  allowedSenders: ["{{.OperatorMXID}}"]
+  trustedPeers:
+    - mxid: "{{.PeerMXID}}"
+      roomId: "{{.PeerRoom}}"
+      alias: "{{.PeerAlias}}"
+      protocols:
+        - "{{.PeerProtocolID}}"
+workflow:
+  protocols:
+    - id: "{{.PeerProtocolID}}"
+      trigger:
+        type: matrix.protocol_message
+        prefix: "{{.PeerProtocolPrefix}}"
+      steps: []
 `
 
 func newTestTemplateRegistry(t *testing.T) *templates.Registry {
@@ -524,5 +547,112 @@ func TestProvisioningPipeline_GatewayBearing(t *testing.T) {
 	// The hmacSecretRef is "gwbot.webhook-secret" after template rendering.
 	if !strings.Contains(joined, "gwbot.webhook-secret") {
 		t.Errorf("expected gateway secret ref 'gwbot.webhook-secret' in breadcrumbs:\n%s", joined)
+	}
+}
+
+func TestProvisioningPipeline_PeerTopologyFlags_NonKairoWiring(t *testing.T) {
+	acp := newMockACPServer()
+	defer acp.srv.Close()
+
+	f, err := os.CreateTemp(t.TempDir(), "ruriko-peer-test-*.db")
+	if err != nil {
+		t.Fatalf("temp db: %v", err)
+	}
+	f.Close()
+
+	s, err := appstore.New(f.Name())
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	masterKey := make([]byte, 32)
+	for i := range masterKey {
+		masterKey[i] = byte(i + 1)
+	}
+	sec, err := secrets.New(s, masterKey)
+	if err != nil {
+		t.Fatalf("secrets.New: %v", err)
+	}
+
+	peerFS := fstest.MapFS{
+		"peer-template/gosuto.yaml": &fstest.MapFile{Data: []byte(peerAwareGosutoYAML)},
+	}
+
+	h := commands.NewHandlers(commands.HandlersConfig{
+		Store:      s,
+		Secrets:    sec,
+		Runtime:    &stubRuntime{controlURL: acp.srv.URL},
+		Templates:  templates.NewRegistry(peerFS),
+		RoomSender: &capturingSender{},
+		AdminRooms: []string{"!admin:example.com"},
+	})
+
+	router := commands.NewRouter("/ruriko")
+	cmd, err := router.Parse("/ruriko agents create --name atlasbot --template peer-template --image gitai:test --peer-alias atlas --peer-mxid @atlas:example.com --peer-room !atlas-room:example.com --peer-protocol-id atlas.news.request.v1 --peer-protocol-prefix ATLAS_NEWS_REQUEST")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	if _, err := h.HandleAgentsCreate(context.Background(), cmd, fakeEvent("@admin:example.com")); err != nil {
+		t.Fatalf("HandleAgentsCreate: %v", err)
+	}
+
+	waitFor(t, 10*time.Second, func() bool {
+		agent, err := s.GetAgent(context.Background(), "atlasbot")
+		if err != nil {
+			return false
+		}
+		return agent.ProvisioningState == "healthy"
+	})
+
+	gv, err := s.GetLatestGosutoVersion(context.Background(), "atlasbot")
+	if err != nil {
+		t.Fatalf("GetLatestGosutoVersion: %v", err)
+	}
+
+	cfg, err := gosutospec.Parse([]byte(gv.YAMLBlob))
+	if err != nil {
+		t.Fatalf("gosuto.Parse: %v", err)
+	}
+
+	if len(cfg.Trust.TrustedPeers) != 1 {
+		t.Fatalf("trustedPeers count = %d, want 1", len(cfg.Trust.TrustedPeers))
+	}
+	peer := cfg.Trust.TrustedPeers[0]
+	if peer.Alias != "atlas" {
+		t.Fatalf("trusted peer alias = %q, want atlas", peer.Alias)
+	}
+	if peer.MXID != "@atlas:example.com" {
+		t.Fatalf("trusted peer mxid = %q, want @atlas:example.com", peer.MXID)
+	}
+	if peer.RoomID != "!atlas-room:example.com" {
+		t.Fatalf("trusted peer roomId = %q, want !atlas-room:example.com", peer.RoomID)
+	}
+	if len(peer.Protocols) != 1 || peer.Protocols[0] != "atlas.news.request.v1" {
+		t.Fatalf("trusted peer protocols = %#v, want [atlas.news.request.v1]", peer.Protocols)
+	}
+
+	if len(cfg.Workflow.Protocols) != 1 {
+		t.Fatalf("workflow protocols count = %d, want 1", len(cfg.Workflow.Protocols))
+	}
+	if cfg.Workflow.Protocols[0].ID != "atlas.news.request.v1" {
+		t.Fatalf("workflow protocol id = %q, want atlas.news.request.v1", cfg.Workflow.Protocols[0].ID)
+	}
+	if cfg.Workflow.Protocols[0].Trigger.Prefix != "ATLAS_NEWS_REQUEST" {
+		t.Fatalf("workflow protocol prefix = %q, want ATLAS_NEWS_REQUEST", cfg.Workflow.Protocols[0].Trigger.Prefix)
+	}
+}
+
+func TestHandleAgentsCreate_InvalidPeerMXIDRejected(t *testing.T) {
+	h, _, _ := newHandlerFixture(t)
+	cmd := parseCmd(t, "/ruriko agents create --name atlasbot --template cron --image img:latest --peer-mxid atlas:example.com")
+
+	_, err := h.HandleAgentsCreate(context.Background(), cmd, fakeEvent("@alice:example.com"))
+	if err == nil {
+		t.Fatal("expected invalid --peer-mxid error, got nil")
+	}
+	if !strings.Contains(err.Error(), "--peer-mxid must start with '@'") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
