@@ -266,6 +266,11 @@ func (h *Handlers) HandleHelp(ctx context.Context, cmd *Command, evt *event.Even
 • /ruriko schedule disable --agent <id> --id <n> - Disable a schedule by ID on an agent
 • /ruriko schedule list --agent <id> [--enabled true|false] [--gateway <name>] - List schedules from an agent
 
+**Topology Commands:**
+• /ruriko topology refresh <agent> [--operator-room <room-id>] - Recompute messaging topology from peer context
+• /ruriko topology peer-set <agent> --alias <alias> --mxid <mxid> --room <room-id> --protocol <id> [--target-room <room-id>] - Add/update trusted peer + messaging mapping (approval-gated)
+• /ruriko topology peer-remove <agent> --alias <alias> [--protocol <id>] - Remove trusted peer + messaging mapping
+
 **Secrets Commands (admin only):**
 • /ruriko secrets list - List secret names and metadata
 • /ruriko secrets set <name> --type <type> - Issue one-time Kuze link to store/update a secret

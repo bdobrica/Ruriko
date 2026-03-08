@@ -21,6 +21,14 @@
   - `--peer-room`
   - `--peer-protocol-id`
   - `--peer-protocol-prefix`
+- Started deterministic topology update command surface (Phase 6):
+  - `/ruriko topology refresh <agent> [--operator-room <room-id>]`
+  - `/ruriko topology peer-set <agent> --alias <alias> --mxid <mxid> --room <room-id> --protocol <id> [--target-room <room-id>]`
+  - `/ruriko topology peer-remove <agent> --alias <alias> [--protocol <id>]`
+- Added approval-gating for topology widening command:
+  - `topology.peer-set`
+- Added focused command tests:
+  - `internal/ruriko/commands/topology_handlers_test.go`
 
 ---
 

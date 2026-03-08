@@ -13,12 +13,13 @@ import (
 // gatedActions is the set of command handler keys that require approval before
 // execution. Handlers check this via IsGated() before proceeding.
 var gatedActions = map[string]bool{
-	"agents.delete":   true,
-	"agents.disable":  true,
-	"secrets.delete":  true,
-	"secrets.rotate":  true,
-	"gosuto.set":      true,
-	"gosuto.rollback": true,
+	"agents.delete":     true,
+	"agents.disable":    true,
+	"secrets.delete":    true,
+	"secrets.rotate":    true,
+	"gosuto.set":        true,
+	"gosuto.rollback":   true,
+	"topology.peer-set": true,
 }
 
 // IsGated returns true when the given action requires an approval.
