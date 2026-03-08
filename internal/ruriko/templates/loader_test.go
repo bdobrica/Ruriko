@@ -245,6 +245,64 @@ func TestRegistry_Render_KumoAgent(t *testing.T) {
 	}
 }
 
+func TestRegistry_Render_KumoAgent_NonKairoPeerOverride(t *testing.T) {
+	reg := newDiskRegistry(t)
+
+	vars := canonicalVars
+	vars.PeerAlias = "atlas"
+	vars.PeerMXID = "@atlas:example.com"
+	vars.PeerRoom = "!atlas-room:example.com"
+	vars.PeerProtocolID = "atlas.news.request.v1"
+	vars.PeerProtocolPrefix = "ATLAS_NEWS_REQUEST"
+
+	rendered, err := reg.Render("kumo-agent", vars)
+	if err != nil {
+		t.Fatalf("Render kumo-agent (non-kairo peer): %v", err)
+	}
+
+	cfg, err := gosutospec.Parse(rendered)
+	if err != nil {
+		t.Fatalf("gosuto.Parse kumo-agent (non-kairo peer): %v", err)
+	}
+
+	if len(cfg.Trust.TrustedPeers) != 1 {
+		t.Fatalf("trustedPeers count = %d, want 1", len(cfg.Trust.TrustedPeers))
+	}
+	peer := cfg.Trust.TrustedPeers[0]
+	if peer.Alias != "atlas" || peer.MXID != "@atlas:example.com" || peer.RoomID != "!atlas-room:example.com" {
+		t.Fatalf("unexpected trusted peer: %+v", peer)
+	}
+	if len(peer.Protocols) != 1 || peer.Protocols[0] != "atlas.news.request.v1" {
+		t.Fatalf("unexpected trusted peer protocols: %+v", peer.Protocols)
+	}
+
+	if len(cfg.Workflow.Protocols) != 1 {
+		t.Fatalf("workflow protocols count = %d, want 1", len(cfg.Workflow.Protocols))
+	}
+	if cfg.Workflow.Protocols[0].ID != "atlas.news.request.v1" {
+		t.Fatalf("workflow protocol id = %q, want atlas.news.request.v1", cfg.Workflow.Protocols[0].ID)
+	}
+	if cfg.Workflow.Protocols[0].Trigger.Prefix != "ATLAS_NEWS_REQUEST" {
+		t.Fatalf("workflow protocol trigger prefix = %q, want ATLAS_NEWS_REQUEST", cfg.Workflow.Protocols[0].Trigger.Prefix)
+	}
+
+	foundAtlasTarget := false
+	for _, target := range cfg.Messaging.AllowedTargets {
+		if target.Alias == "atlas" && target.RoomID == "!atlas-room:example.com" {
+			foundAtlasTarget = true
+			break
+		}
+	}
+	if !foundAtlasTarget {
+		t.Fatalf("expected atlas messaging target in %+v", cfg.Messaging.AllowedTargets)
+	}
+
+	renderedStr := string(rendered)
+	if !strings.Contains(renderedStr, `name: "atlas"`) {
+		t.Fatalf("expected instructions.context.peers to reference alias atlas, rendered YAML:\n%s", renderedStr)
+	}
+}
+
 func TestRegistry_Render_SaitoAgent_MissingVar(t *testing.T) {
 	reg := newDiskRegistry(t)
 

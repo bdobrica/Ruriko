@@ -264,7 +264,7 @@ The MVP is ready when **all** of the following are true:
 
 **Goal**: Replace hard-coded canonical Saito/Kairo/Kumo runtime branches with a generic Gosuto workflow engine while preserving policy-first security.
 
-**Status (2026-03-08)**: In progress. Gosuto workflow schema/validator formalization (Phase 4 equivalent) is complete; rollout-hardening work remains gated on closing the remaining topology/template deltas before Phase 7-style final hardening.
+**Status (2026-03-08)**: In progress. Gosuto workflow schema/validator formalization (Phase 4 equivalent), Kumo peer-generalization (Phase 5 equivalent), and deterministic topology controls (Phase 6 equivalent) are complete; Phase 7-style hardening can proceed.
 
 > Maps to REALIGNMENT_PLAN Phase 7.
 >
@@ -340,6 +340,7 @@ The MVP is ready when **all** of the following are true:
 - [x] Unit: schema-ref validation and trusted peer enforcement
 - [x] Unit: retry-then-refuse for parse/summarize schema failures
 - [x] Unit: NL dispatch refuses `topology.*` mutation actions; topology graph changes require explicit `/ruriko topology ...` command path
+- [x] Unit: real `kumo-agent` template validates with non-Kairo peer overrides (trusted peer/workflow trigger/messaging wiring)
 - [x] Integration: canonical loop uses workflow config only (no agent-name branching)
 - [x] Integration: protocol message from untrusted peer is rejected even with `allowedSenders: "*"`
 - [x] Integration: approval-required workflow tool step blocks until Ruriko decision

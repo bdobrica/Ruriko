@@ -5,6 +5,20 @@
 
 ---
 
+## 🧹 Maintenance Updates (2026-03-08 · phase 5 closure proof)
+
+- Added direct peer-generic closure proof for Kumo on the real template:
+  - `internal/ruriko/templates/loader_test.go`
+  - `TestRegistry_Render_KumoAgent_NonKairoPeerOverride`
+- The new test validates that non-Kairo peer overrides propagate deterministically through:
+  - `trust.trustedPeers`
+  - `workflow.protocols[].id` and `trigger.prefix`
+  - `messaging.allowedTargets`
+  - rendered peer context references in instructions
+- Updated planning status to mark Phase 5 complete and unblock Phase 7 start.
+
+---
+
 ## 🧹 Maintenance Updates (2026-03-08 · phase 6 exit-criteria proof)
 
 - Added explicit NL dispatch guard to refuse topology mutation actions from LLM intent output:
