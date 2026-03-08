@@ -295,3 +295,44 @@ workflow:
 		})
 	}
 }
+
+func TestGosutoV1SchemaAndParse_WorkflowDefaultsRejected(t *testing.T) {
+	schema := compileGosutoV1Schema(t)
+
+	yamlDoc := `
+apiVersion: gosuto/v1
+metadata:
+  name: parity-agent
+trust:
+  allowedRooms: ["!room:example.com"]
+  allowedSenders: ["@alice:example.com"]
+workflow:
+  defaults:
+    maxPlanItems: 5
+  protocols:
+    - id: gateway.refresh.v1
+      trigger:
+        type: gateway.event
+`
+
+	var doc map[string]interface{}
+	if err := yaml.Unmarshal([]byte(yamlDoc), &doc); err != nil {
+		t.Fatalf("yaml.Unmarshal: %v", err)
+	}
+
+	schemaErr := schema.Validate(doc)
+	_, parseErr := gosuto.Parse([]byte(yamlDoc))
+
+	if schemaErr == nil {
+		t.Fatal("expected schema validation error for workflow.defaults, got nil")
+	}
+	// Parse currently decodes YAML permissively and ignores unknown fields.
+	// The schema remains the canonical guard for rejecting undeclared fields.
+	if parseErr != nil {
+		t.Fatalf("gosuto.Parse should remain permissive for unknown fields here, got: %v", parseErr)
+	}
+
+	if !strings.Contains(strings.ToLower(schemaErr.Error()), "additionalproperties") {
+		t.Fatalf("schema error = %v, want additionalProperties violation", schemaErr)
+	}
+}

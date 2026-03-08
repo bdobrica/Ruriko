@@ -478,28 +478,11 @@
             "type": "object"
           }
         },
-        "defaults": {
-          "$ref": "#/$defs/workflowDefaults"
-        },
         "protocols": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/workflowProtocol"
           }
-        }
-      },
-      "additionalProperties": false
-    },
-    "workflowDefaults": {
-      "type": "object",
-      "properties": {
-        "maxPlanItems": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "maxResultsPerItem": {
-          "type": "integer",
-          "minimum": 1
         }
       },
       "additionalProperties": false
