@@ -360,7 +360,13 @@ workflow:
 | Field    | Type   | Required | Description |
 |----------|--------|----------|-------------|
 | `type`   | string | ✅       | Trigger type (`matrix.protocol_message`, `gateway.event`) |
-| `prefix` | string | ❌       | Prefix matcher for matrix protocol messages |
+| `prefix` | string | ❌       | Trigger matcher prefix (`matrix.protocol_message`: required protocol prefix, `gateway.event`: optional exact event-type matcher) |
+
+Trigger validation rules:
+- `trigger.type` must be exactly `matrix.protocol_message` or `gateway.event`.
+- `trigger.prefix` must not contain whitespace.
+- `matrix.protocol_message` requires a non-empty `trigger.prefix`.
+- `gateway.event` allows empty `trigger.prefix` (matches any event type).
 
 #### `workflow.protocols[].steps[]`
 

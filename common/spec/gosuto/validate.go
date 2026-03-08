@@ -366,6 +366,9 @@ func validateWorkflow(w Workflow) error {
 		if strings.TrimSpace(protocol.ID) == "" {
 			return fmt.Errorf("protocols[%d]: id must not be empty", i)
 		}
+		if err := validateWorkflowTrigger(protocol.ID, protocol.Trigger); err != nil {
+			return err
+		}
 		if protocol.Retries < 0 {
 			return fmt.Errorf("workflow protocol %s: retries must be >= 0", protocol.ID)
 		}
@@ -379,6 +382,37 @@ func validateWorkflow(w Workflow) error {
 				return err
 			}
 		}
+	}
+
+	return nil
+}
+
+func validateWorkflowTrigger(protocolID string, trigger WorkflowTrigger) error {
+	triggerType := strings.TrimSpace(trigger.Type)
+	if triggerType == "" {
+		return fmt.Errorf("workflow protocol %s: trigger.type must not be empty", protocolID)
+	}
+
+	prefix := strings.TrimSpace(trigger.Prefix)
+	if prefix != "" && strings.ContainsAny(prefix, " \t\n\r") {
+		return fmt.Errorf("workflow protocol %s: trigger.prefix %q must not contain whitespace", protocolID, trigger.Prefix)
+	}
+
+	switch triggerType {
+	case "matrix.protocol_message":
+		if prefix == "" {
+			return fmt.Errorf("workflow protocol %s: trigger.prefix is required for trigger.type %q", protocolID, triggerType)
+		}
+	case "gateway.event":
+		// Prefix is optional for gateway.event; when set it is matched against event type.
+	default:
+		return fmt.Errorf(
+			"workflow protocol %s: trigger.type %q is invalid; valid values are %q and %q",
+			protocolID,
+			triggerType,
+			"matrix.protocol_message",
+			"gateway.event",
+		)
 	}
 
 	return nil

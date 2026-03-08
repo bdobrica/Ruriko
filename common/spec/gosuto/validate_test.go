@@ -1731,6 +1731,7 @@ workflow:
 		- id: "kairo.news.request.v1"
 			trigger:
 				type: "matrix.protocol_message"
+				prefix: "KAIRO_NEWS_REQUEST"
 			inputSchemaRef: "kairoNewsRequest"
 			steps: []
 `)
@@ -1752,6 +1753,7 @@ workflow:
 		- id: "kairo.news.request.v1"
 			trigger:
 				type: "matrix.protocol_message"
+				prefix: "KAIRO_NEWS_REQUEST"
 			inputSchemaRef: "kairoNewsRequest"
 			steps: []
 `)
@@ -1773,6 +1775,7 @@ workflow:
 		- id: "kairo.news.request.v1"
 			trigger:
 				type: "matrix.protocol_message"
+				prefix: "KAIRO_NEWS_REQUEST"
 			inputSchemaRef: "kairoNewsRequest"
 			steps:
 				- type: "summarize"
@@ -1797,6 +1800,7 @@ workflow:
 		- id: "kairo.news.request.v1"
 			trigger:
 				type: "matrix.protocol_message"
+				prefix: "KAIRO_NEWS_REQUEST"
 			inputSchemaRef: "   "
 			steps: []
 `)
@@ -1851,6 +1855,7 @@ workflow:
 		- id: "kairo.news.request.v1"
 			trigger:
 				type: "matrix.protocol_message"
+				prefix: "KAIRO_NEWS_REQUEST"
 			inputSchemaRef: "https://example.com/schema.json"
 			steps: []
 `)
@@ -1869,6 +1874,7 @@ workflow:
 		- id: "kairo.news.request.v1"
 			trigger:
 				type: "matrix.protocol_message"
+				prefix: "KAIRO_NEWS_REQUEST"
 			steps:
 				- type: "for_each"
 					steps:
@@ -1891,6 +1897,7 @@ workflow:
 		- id: "kairo.news.request.v1"
 			trigger:
 				type: "matrix.protocol_message"
+				prefix: "KAIRO_NEWS_REQUEST"
 			steps:
 				- type: "for_each"
 					itemsExpr: "{{input.tickers}}"
@@ -1910,6 +1917,7 @@ workflow:
 		- id: "kairo.news.request.v1"
 			trigger:
 				type: "matrix.protocol_message"
+				prefix: "KAIRO_NEWS_REQUEST"
 			steps:
 				- type: "collect"
 `)
@@ -1928,6 +1936,7 @@ workflow:
 		- id: "kairo.news.request.v1"
 			trigger:
 				type: "matrix.protocol_message"
+				prefix: "KAIRO_NEWS_REQUEST"
 			steps:
 				- type: "collect"
 					collectFrom: "{{steps.step_1}}"
@@ -1951,6 +1960,7 @@ workflow:
 		- id: "kairo.news.request.v1"
 			trigger:
 				type: "matrix.protocol_message"
+				prefix: "KAIRO_NEWS_REQUEST"
 			steps:
 				- type: "persist"
 					persistKey: "x"
@@ -1975,6 +1985,7 @@ workflow:
 		- id: "kairo.news.request.v1"
 			trigger:
 				type: "matrix.protocol_message"
+				prefix: "KAIRO_NEWS_REQUEST"
 			steps:
 				- type: "for_each"
 					itemsExpr: "{{input.tickers}}"
@@ -1999,6 +2010,7 @@ workflow:
 		- id: "kairo.news.request.v1"
 			trigger:
 				type: "matrix.protocol_message"
+				prefix: "KAIRO_NEWS_REQUEST"
 			steps:
 				- type: "plan"
 					outputSchemaRef: "searchPlan"
@@ -2021,6 +2033,7 @@ workflow:
 		- id: "kairo.news.request.v1"
 			trigger:
 				type: "matrix.protocol_message"
+				prefix: "KAIRO_NEWS_REQUEST"
 			steps:
 				- type: "plan"
 					prompt: "create plan"
@@ -2033,5 +2046,68 @@ workflow:
 	}
 	if !strings.Contains(err.Error(), "plan requires outputSchemaRef") {
 		t.Errorf("unexpected plan validation error: %v", err)
+	}
+}
+
+func TestValidate_WorkflowTrigger_RejectsUnknownType(t *testing.T) {
+	_, err := parseR61YAML(r61Base + r61Trust + `
+workflow:
+	protocols:
+		- id: "kairo.news.request.v1"
+			trigger:
+				type: "matrix.message"
+				prefix: "KAIRO_NEWS_REQUEST"
+`)
+	if err == nil {
+		t.Fatal("expected error for unknown workflow trigger.type, got nil")
+	}
+	if !strings.Contains(err.Error(), "trigger.type") {
+		t.Errorf("error should mention trigger.type, got: %v", err)
+	}
+}
+
+func TestValidate_WorkflowTrigger_MatrixRequiresPrefix(t *testing.T) {
+	_, err := parseR61YAML(r61Base + r61Trust + `
+workflow:
+	protocols:
+		- id: "kairo.news.request.v1"
+			trigger:
+				type: "matrix.protocol_message"
+`)
+	if err == nil {
+		t.Fatal("expected error for matrix.protocol_message without trigger.prefix, got nil")
+	}
+	if !strings.Contains(err.Error(), "trigger.prefix is required") {
+		t.Errorf("error should mention required trigger.prefix, got: %v", err)
+	}
+}
+
+func TestValidate_WorkflowTrigger_PrefixRejectsWhitespace(t *testing.T) {
+	_, err := parseR61YAML(r61Base + r61Trust + `
+workflow:
+	protocols:
+		- id: "kairo.news.request.v1"
+			trigger:
+				type: "matrix.protocol_message"
+				prefix: "KAIRO NEWS REQUEST"
+`)
+	if err == nil {
+		t.Fatal("expected error for trigger.prefix containing whitespace, got nil")
+	}
+	if !strings.Contains(err.Error(), "must not contain whitespace") {
+		t.Errorf("error should mention prefix whitespace restriction, got: %v", err)
+	}
+}
+
+func TestValidate_WorkflowTrigger_GatewayPrefixOptional(t *testing.T) {
+	_, err := parseR61YAML(r61Base + r61Trust + `
+workflow:
+	protocols:
+		- id: "gateway.refresh.v1"
+			trigger:
+				type: "gateway.event"
+`)
+	if err != nil {
+		t.Fatalf("gateway.event without trigger.prefix should be valid: %v", err)
 	}
 }
