@@ -339,6 +339,7 @@ The MVP is ready when **all** of the following are true:
 ### R6.7 Tests + end-to-end verification
 - [x] Unit: schema-ref validation and trusted peer enforcement
 - [x] Unit: retry-then-refuse for parse/summarize schema failures
+- [x] Unit: NL dispatch refuses `topology.*` mutation actions; topology graph changes require explicit `/ruriko topology ...` command path
 - [x] Integration: canonical loop uses workflow config only (no agent-name branching)
 - [x] Integration: protocol message from untrusted peer is rejected even with `allowedSenders: "*"`
 - [x] Integration: approval-required workflow tool step blocks until Ruriko decision

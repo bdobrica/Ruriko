@@ -921,6 +921,13 @@ func (h *Handlers) handleNLCommandIntent(ctx context.Context, resp *nlp.Classify
 		return "", nil
 	}
 
+	if blockedAction, blocked := blockedNLMutationAction(resp); blocked {
+		return fmt.Sprintf(
+			"⚠️ Topology changes must be requested explicitly with `/ruriko topology ...` commands. NL dispatch will not run `%s`.",
+			blockedAction,
+		), nil
+	}
+
 	var steps []nlStep
 	if len(resp.Steps) > 0 {
 		// Multi-step mutation (or plan) — decompose into individual confirmations.
@@ -961,6 +968,25 @@ func (h *Handlers) handleNLCommandIntent(ctx context.Context, resp *nlp.Classify
 		return fmt.Sprintf("📋 **Plan**: %s\n\n%s", resp.Explanation, firstStepPrompt), nil
 	}
 	return firstStepPrompt, nil
+}
+
+func blockedNLMutationAction(resp *nlp.ClassifyResponse) (string, bool) {
+	if resp == nil {
+		return "", false
+	}
+
+	if strings.HasPrefix(strings.TrimSpace(resp.Action), "topology.") {
+		return strings.TrimSpace(resp.Action), true
+	}
+
+	for _, step := range resp.Steps {
+		action := strings.TrimSpace(step.Action)
+		if strings.HasPrefix(action, "topology.") {
+			return action, true
+		}
+	}
+
+	return "", false
 }
 
 const nlMaxCorrectionRetries = 2

@@ -5,6 +5,21 @@
 
 ---
 
+## 🧹 Maintenance Updates (2026-03-08 · phase 6 exit-criteria proof)
+
+- Added explicit NL dispatch guard to refuse topology mutation actions from LLM intent output:
+  - `internal/ruriko/commands/natural_language.go`
+  - `topology.*` actions now require explicit `/ruriko topology ...` command invocation path
+- Added focused NL proof tests for this guard:
+  - `internal/ruriko/commands/nl_dispatch_test.go`
+  - `TestHandleNaturalLanguage_LLM_RejectsTopologyMutationAction`
+  - `TestHandleNaturalLanguage_LLM_RejectsTopologyMutationPlanStep`
+- Strengthened topology audit/version proof coverage:
+  - `internal/ruriko/commands/topology_handlers_test.go`
+  - `TestHandleTopologyPeerSet_RequiresApprovalThenApplies` now asserts success audit payload contains versioned change markers (`changed=true`, `version=2`)
+
+---
+
 ## 🧹 Maintenance Updates (2026-03-08 · workflow engine phase status alignment)
 
 - Closed workflow-engine temporary plan Phase 4 (Gosuto schema/validator formalization) as complete after parity checks across:

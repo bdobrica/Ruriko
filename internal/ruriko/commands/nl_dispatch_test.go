@@ -273,6 +273,55 @@ func TestHandleNaturalLanguage_LLM_CancelClearsSession(t *testing.T) {
 	}
 }
 
+func TestHandleNaturalLanguage_LLM_RejectsTopologyMutationAction(t *testing.T) {
+	stub := &nlpStub{resp: &nlp.ClassifyResponse{
+		Intent:      nlp.IntentCommand,
+		Action:      "topology.peer-set",
+		Explanation: "Wire kumo to marketbot.",
+		Confidence:  0.91,
+	}}
+	cap := &captureDispatch{response: "should-not-run"}
+	h := newNLHandlers(stub, cap)
+	evt := nlpFakeEvent()
+
+	reply, err := h.HandleNaturalLanguage(context.Background(), "connect kumo to marketbot", evt)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(reply, "Topology changes must be requested explicitly") {
+		t.Fatalf("expected explicit-command-path warning, got: %q", reply)
+	}
+	if len(cap.dispatched) != 0 {
+		t.Fatalf("expected no dispatch for topology mutation from NL path, got: %v", cap.dispatched)
+	}
+}
+
+func TestHandleNaturalLanguage_LLM_RejectsTopologyMutationPlanStep(t *testing.T) {
+	stub := &nlpStub{resp: &nlp.ClassifyResponse{
+		Intent:      nlp.IntentPlan,
+		Explanation: "Create kumo then wire topology.",
+		Confidence:  0.88,
+		Steps: []nlp.CommandStep{
+			{Action: "agents.create", Flags: map[string]string{"name": "kumo", "template": "kumo-agent"}},
+			{Action: "topology.peer-ensure", Flags: map[string]string{"agent": "kumo", "alias": "marketbot"}},
+		},
+	}}
+	cap := &captureDispatch{response: "should-not-run"}
+	h := newNLHandlers(stub, cap)
+	evt := nlpFakeEvent()
+
+	reply, err := h.HandleNaturalLanguage(context.Background(), "set up kumo and connect marketbot", evt)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(reply, "Topology changes must be requested explicitly") {
+		t.Fatalf("expected explicit-command-path warning, got: %q", reply)
+	}
+	if len(cap.dispatched) != 0 {
+		t.Fatalf("expected no dispatch for mixed plan with topology mutation, got: %v", cap.dispatched)
+	}
+}
+
 // TestHandleNaturalLanguage_LLM_AuditSourceNL verifies that confirmed NL
 // mutations write an audit entry with source: "nl" and llm_intent set.
 func TestHandleNaturalLanguage_LLM_AuditSourceNL(t *testing.T) {

@@ -148,6 +148,26 @@ func TestHandleTopologyPeerSet_RequiresApprovalThenApplies(t *testing.T) {
 	if cfg.Messaging.AllowedTargets[0].Alias != "marketbot" || cfg.Messaging.AllowedTargets[0].RoomID != "!marketbot-room:localhost" {
 		t.Fatalf("unexpected messaging target: %+v", cfg.Messaging.AllowedTargets[0])
 	}
+
+	audits, err := s.GetAuditLog(context.Background(), 50)
+	if err != nil {
+		t.Fatalf("GetAuditLog: %v", err)
+	}
+
+	var foundSuccess bool
+	for _, entry := range audits {
+		if entry.Action != "topology.peer-set" || entry.Result != "success" {
+			continue
+		}
+		payload := entry.PayloadJSON.String
+		if strings.Contains(payload, `"changed":true`) && strings.Contains(payload, `"version":2`) {
+			foundSuccess = true
+			break
+		}
+	}
+	if !foundSuccess {
+		t.Fatalf("expected topology.peer-set success audit entry with changed=true and version=2")
+	}
 }
 
 func TestHandleTopologyPeerRemove_RemovesTrustAndMessagingAlias(t *testing.T) {
