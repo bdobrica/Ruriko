@@ -1,0 +1,811 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ruriko.dev/schemas/gosuto/gosuto-v1.schema.json",
+  "title": "Gosuto v1",
+  "description": "Ruriko/Gitai agent configuration schema for gosuto/v1.",
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "metadata",
+    "trust"
+  ],
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "const": "gosuto/v1"
+    },
+    "metadata": {
+      "$ref": "#/$defs/metadata"
+    },
+    "trust": {
+      "$ref": "#/$defs/trust"
+    },
+    "limits": {
+      "$ref": "#/$defs/limits"
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/capability"
+      }
+    },
+    "approvals": {
+      "$ref": "#/$defs/approvals"
+    },
+    "mcps": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/mcpServer"
+      }
+    },
+    "gateways": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/gateway"
+      }
+    },
+    "secrets": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/secretRef"
+      }
+    },
+    "persona": {
+      "$ref": "#/$defs/persona"
+    },
+    "instructions": {
+      "$ref": "#/$defs/instructions"
+    },
+    "messaging": {
+      "$ref": "#/$defs/messaging"
+    },
+    "workflow": {
+      "$ref": "#/$defs/workflow"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "metadata": {
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "template": {
+          "type": "string"
+        },
+        "canonicalName": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "trust": {
+      "type": "object",
+      "required": [
+        "allowedRooms",
+        "allowedSenders"
+      ],
+      "properties": {
+        "allowedRooms": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "allowedSenders": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "requireE2EE": {
+          "type": "boolean"
+        },
+        "adminRoom": {
+          "type": "string"
+        },
+        "trustedPeers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/trustedPeer"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "trustedPeer": {
+      "type": "object",
+      "required": [
+        "mxid",
+        "roomId",
+        "protocols"
+      ],
+      "properties": {
+        "mxid": {
+          "type": "string",
+          "pattern": "^@"
+        },
+        "roomId": {
+          "type": "string",
+          "pattern": "^!"
+        },
+        "alias": {
+          "type": "string"
+        },
+        "protocols": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "limits": {
+      "type": "object",
+      "properties": {
+        "maxRequestsPerMinute": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maxTokensPerRequest": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maxConcurrentRequests": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maxMonthlyCostUSD": {
+          "type": "number",
+          "minimum": 0
+        },
+        "maxEventsPerMinute": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "capability": {
+      "type": "object",
+      "required": [
+        "name",
+        "allow"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mcp": {
+          "type": "string"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "allow": {
+          "type": "boolean"
+        },
+        "requireApproval": {
+          "type": "boolean"
+        },
+        "constraints": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "approvals": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "string"
+        },
+        "approvers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ttlSeconds": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "mcpServer": {
+      "type": "object",
+      "required": [
+        "name",
+        "command"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "autoRestart": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "gateway": {
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "type": "string"
+        },
+        "command": {
+          "type": "string"
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "config": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "autoRestart": {
+          "type": "boolean"
+        }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "type"
+          ],
+          "not": {
+            "required": [
+              "command"
+            ]
+          }
+        },
+        {
+          "required": [
+            "command"
+          ],
+          "not": {
+            "required": [
+              "type"
+            ]
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "secretRef": {
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "envVar": {
+          "type": "string"
+        },
+        "required": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "persona": {
+      "type": "object",
+      "properties": {
+        "systemPrompt": {
+          "type": "string"
+        },
+        "llmProvider": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "temperature": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "apiKeySecretRef": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "instructions": {
+      "type": "object",
+      "properties": {
+        "role": {
+          "type": "string"
+        },
+        "workflow": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/instructionWorkflowStep"
+          }
+        },
+        "context": {
+          "$ref": "#/$defs/instructionContext"
+        }
+      },
+      "additionalProperties": false
+    },
+    "instructionWorkflowStep": {
+      "type": "object",
+      "required": [
+        "trigger",
+        "action"
+      ],
+      "properties": {
+        "trigger": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "instructionContext": {
+      "type": "object",
+      "properties": {
+        "user": {
+          "type": "string"
+        },
+        "peers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/instructionPeer"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "instructionPeer": {
+      "type": "object",
+      "required": [
+        "name",
+        "role"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "messaging": {
+      "type": "object",
+      "properties": {
+        "allowedTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/messagingTarget"
+          }
+        },
+        "maxMessagesPerMinute": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "messagingTarget": {
+      "type": "object",
+      "required": [
+        "roomId",
+        "alias"
+      ],
+      "properties": {
+        "roomId": {
+          "type": "string",
+          "pattern": "^!"
+        },
+        "alias": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "workflow": {
+      "type": "object",
+      "properties": {
+        "schemas": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object"
+          }
+        },
+        "defaults": {
+          "$ref": "#/$defs/workflowDefaults"
+        },
+        "protocols": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/workflowProtocol"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "workflowDefaults": {
+      "type": "object",
+      "properties": {
+        "maxPlanItems": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxResultsPerItem": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "workflowProtocol": {
+      "type": "object",
+      "required": [
+        "id",
+        "trigger"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "trigger": {
+          "$ref": "#/$defs/workflowTrigger"
+        },
+        "inputSchemaRef": {
+          "$ref": "#/$defs/workflowSchemaRef"
+        },
+        "retries": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/workflowStep"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "workflowTrigger": {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "matrix.protocol_message",
+            "gateway.event"
+          ]
+        },
+        "prefix": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "workflowSchemaRef": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^#/\\\\]+$"
+    },
+    "workflowStep": {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "parse_input",
+            "tool",
+            "branch",
+            "summarize",
+            "plan",
+            "send_message",
+            "persist",
+            "for_each",
+            "collect"
+          ]
+        },
+        "tool": {
+          "type": "string"
+        },
+        "argsTemplate": {
+          "type": "object"
+        },
+        "branchExpr": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "inputSchemaRef": {
+          "$ref": "#/$defs/workflowSchemaRef"
+        },
+        "outputSchemaRef": {
+          "$ref": "#/$defs/workflowSchemaRef"
+        },
+        "retries": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "targetAlias": {
+          "type": "string"
+        },
+        "payloadTemplate": {
+          "type": "string"
+        },
+        "persistKey": {
+          "type": "string"
+        },
+        "persistValue": {
+          "type": "string"
+        },
+        "itemsExpr": {
+          "type": "string"
+        },
+        "itemVar": {
+          "type": "string"
+        },
+        "maxIterations": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/workflowStep"
+          }
+        },
+        "forEachIterationSchemaRef": {
+          "$ref": "#/$defs/workflowSchemaRef"
+        },
+        "forEachResultSchemaRef": {
+          "$ref": "#/$defs/workflowSchemaRef"
+        },
+        "collectFrom": {
+          "type": "string"
+        },
+        "collectMode": {
+          "type": "string",
+          "enum": [
+            "result",
+            "entry",
+            "outputs",
+            "item"
+          ]
+        },
+        "collectFlatten": {
+          "type": "boolean"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "tool"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "required": [
+              "tool"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "summarize"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "required": [
+              "prompt"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "plan"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "required": [
+              "prompt",
+              "outputSchemaRef"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "send_message"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "required": [
+              "targetAlias",
+              "payloadTemplate"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "persist"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "required": [
+              "persistKey",
+              "persistValue"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "for_each"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "required": [
+              "itemsExpr",
+              "steps"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "not": {
+                  "const": "for_each"
+                }
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "forEachIterationSchemaRef"
+                  ]
+                },
+                {
+                  "required": [
+                    "forEachResultSchemaRef"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "collect"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "required": [
+              "collectFrom"
+            ]
+          }
+        }
+      ],
+      "additionalProperties": false
+    }
+  }
+}
