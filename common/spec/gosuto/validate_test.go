@@ -1861,3 +1861,62 @@ workflow:
 		t.Errorf("unexpected external schema ref error: %v", err)
 	}
 }
+
+func TestValidate_WorkflowForEach_RequiresItemsExpr(t *testing.T) {
+	_, err := parseR61YAML(r61Base + r61Trust + `
+workflow:
+	protocols:
+		- id: "kairo.news.request.v1"
+			trigger:
+				type: "matrix.protocol_message"
+			steps:
+				- type: "for_each"
+					steps:
+						- type: "persist"
+							persistKey: "x"
+							persistValue: "1"
+`)
+	if err == nil {
+		t.Fatal("expected error for missing for_each itemsExpr, got nil")
+	}
+	if !strings.Contains(err.Error(), "for_each requires itemsExpr") {
+		t.Errorf("unexpected for_each validation error: %v", err)
+	}
+}
+
+func TestValidate_WorkflowForEach_RequiresNestedSteps(t *testing.T) {
+	_, err := parseR61YAML(r61Base + r61Trust + `
+workflow:
+	protocols:
+		- id: "kairo.news.request.v1"
+			trigger:
+				type: "matrix.protocol_message"
+			steps:
+				- type: "for_each"
+					itemsExpr: "{{input.tickers}}"
+`)
+	if err == nil {
+		t.Fatal("expected error for missing for_each nested steps, got nil")
+	}
+	if !strings.Contains(err.Error(), "for_each requires nested steps") {
+		t.Errorf("unexpected for_each validation error: %v", err)
+	}
+}
+
+func TestValidate_WorkflowCollect_RequiresCollectFrom(t *testing.T) {
+	_, err := parseR61YAML(r61Base + r61Trust + `
+workflow:
+	protocols:
+		- id: "kairo.news.request.v1"
+			trigger:
+				type: "matrix.protocol_message"
+			steps:
+				- type: "collect"
+`)
+	if err == nil {
+		t.Fatal("expected error for missing collectFrom, got nil")
+	}
+	if !strings.Contains(err.Error(), "collect requires collectFrom") {
+		t.Errorf("unexpected collect validation error: %v", err)
+	}
+}

@@ -240,3 +240,94 @@ func TestEngineExecuteProtocol_OutputSchemaRefValidation_Fails(t *testing.T) {
 		t.Fatalf("expected schema validation error code, got: %v", err)
 	}
 }
+
+func TestEngineExecuteProtocol_ForEachCollect_BoundedIteration(t *testing.T) {
+	dispatcher := &fakeDispatcher{}
+	runner := NewRunner(dispatcher)
+
+	protocol := gosutospec.WorkflowProtocol{
+		ID: "kumo.news.request.v1",
+		Steps: []gosutospec.WorkflowProtocolStep{
+			{Type: "parse_input"},
+			{
+				Type:          "for_each",
+				ItemsExpr:     "{{input.tickers}}",
+				ItemVar:       "ticker",
+				MaxIterations: 3,
+				Steps: []gosutospec.WorkflowProtocolStep{
+					{
+						Type: "tool",
+						Tool: "brave__search",
+						ArgsTemplate: map[string]interface{}{
+							"query": "ticker={{state.ticker}}",
+						},
+					},
+				},
+			},
+			{
+				Type:        "collect",
+				CollectFrom: "{{steps.step_1}}",
+			},
+		},
+	}
+
+	state := NewStateFromExecutionContext(NewExecutionContext("trace-1", "!room:example.com", "@peer:example.com", &InboundProtocolMatch{
+		Protocol: protocol,
+		Payload: map[string]interface{}{
+			"tickers": []interface{}{"AAPL", "MSFT"},
+		},
+	}))
+
+	result, toolCalls, err := runner.Run(context.Background(), protocol, state)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if result != "[tool-result tool-result]" {
+		t.Fatalf("Run() result = %q, want [tool-result tool-result]", result)
+	}
+	if toolCalls != 2 {
+		t.Fatalf("Run() toolCalls = %d, want 2", toolCalls)
+	}
+	if len(dispatcher.tools) != 2 {
+		t.Fatalf("tool dispatch count = %d, want 2", len(dispatcher.tools))
+	}
+	if got := dispatcher.args[0]["query"]; got != "ticker=AAPL" {
+		t.Fatalf("first query = %#v, want ticker=AAPL", got)
+	}
+	if got := dispatcher.args[1]["query"]; got != "ticker=MSFT" {
+		t.Fatalf("second query = %#v, want ticker=MSFT", got)
+	}
+}
+
+func TestEngineExecuteProtocol_ForEachCollect_MaxIterationsExceeded(t *testing.T) {
+	dispatcher := &fakeDispatcher{}
+	runner := NewRunner(dispatcher)
+
+	protocol := gosutospec.WorkflowProtocol{
+		ID: "kumo.news.request.v1",
+		Steps: []gosutospec.WorkflowProtocolStep{
+			{
+				Type:          "for_each",
+				ItemsExpr:     "{{input.tickers}}",
+				ItemVar:       "ticker",
+				MaxIterations: 1,
+				Steps: []gosutospec.WorkflowProtocolStep{
+					{Type: "persist", PersistKey: "last_ticker", PersistValue: "{{state.ticker}}"},
+				},
+			},
+		},
+	}
+
+	_, _, err := runner.Run(context.Background(), protocol, NewStateFromExecutionContext(NewExecutionContext("trace-1", "!room:example.com", "@peer:example.com", &InboundProtocolMatch{
+		Protocol: protocol,
+		Payload: map[string]interface{}{
+			"tickers": []interface{}{"AAPL", "MSFT"},
+		},
+	})))
+	if err == nil {
+		t.Fatal("Run() expected maxIterations error")
+	}
+	if !strings.Contains(err.Error(), "exceeds maxIterations") {
+		t.Fatalf("expected maxIterations error, got: %v", err)
+	}
+}

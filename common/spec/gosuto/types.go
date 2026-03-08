@@ -194,7 +194,8 @@ type WorkflowTrigger struct {
 
 // WorkflowProtocolStep is one primitive operation in a workflow protocol.
 type WorkflowProtocolStep struct {
-	// Type is one of: parse_input, tool, branch, summarize, send_message, persist.
+	// Type is one of:
+	// parse_input, tool, branch, summarize, send_message, persist, for_each, collect.
 	Type string `yaml:"type" json:"type"`
 
 	// Tool is used by type=tool.
@@ -227,6 +228,15 @@ type WorkflowProtocolStep struct {
 	// PersistKey and PersistValue are used by type=persist.
 	PersistKey   string `yaml:"persistKey,omitempty" json:"persistKey,omitempty"`
 	PersistValue string `yaml:"persistValue,omitempty" json:"persistValue,omitempty"`
+
+	// ItemsExpr, ItemVar, MaxIterations, and Steps are used by type=for_each.
+	ItemsExpr     string                 `yaml:"itemsExpr,omitempty" json:"itemsExpr,omitempty"`
+	ItemVar       string                 `yaml:"itemVar,omitempty" json:"itemVar,omitempty"`
+	MaxIterations int                    `yaml:"maxIterations,omitempty" json:"maxIterations,omitempty"`
+	Steps         []WorkflowProtocolStep `yaml:"steps,omitempty" json:"steps,omitempty"`
+
+	// CollectFrom is used by type=collect.
+	CollectFrom string `yaml:"collectFrom,omitempty" json:"collectFrom,omitempty"`
 }
 
 // Limits defines resource constraints on agent operations.

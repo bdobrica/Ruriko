@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -11,8 +12,9 @@ import (
 )
 
 const (
-	workflowCaller = "workflow"
-	stepPrefix     = "step_"
+	workflowCaller              = "workflow"
+	stepPrefix                  = "step_"
+	defaultForEachMaxIterations = 10
 )
 
 // Dispatcher is the deterministic boundary used by the workflow runtime.
@@ -60,7 +62,7 @@ func (r *Runner) Run(ctx context.Context, protocol gosutospec.WorkflowProtocol, 
 		var stepResult interface{}
 		stepToolCalls := 0
 		err := RunStepWithRetryThenRefuse(protocol.ID, step.Type, retries, func() error {
-			result, callCount, err := r.runStep(ctx, step, state)
+			result, callCount, err := r.runStep(ctx, protocol.ID, step, state)
 			if err != nil {
 				return err
 			}
@@ -125,7 +127,7 @@ func (r *Runner) Run(ctx context.Context, protocol gosutospec.WorkflowProtocol, 
 	return state.FinalOutput, toolCalls, nil
 }
 
-func (r *Runner) runStep(ctx context.Context, step gosutospec.WorkflowProtocolStep, state *State) (interface{}, int, error) {
+func (r *Runner) runStep(ctx context.Context, protocolID string, step gosutospec.WorkflowProtocolStep, state *State) (interface{}, int, error) {
 	switch strings.TrimSpace(step.Type) {
 	case "parse_input":
 		state.Values["parsed_input"] = cloneMap(state.Input)
@@ -202,12 +204,142 @@ func (r *Runner) runStep(ctx context.Context, step gosutospec.WorkflowProtocolSt
 		state.Values[step.PersistKey] = valueAny
 		return valueAny, 0, nil
 
+	case "for_each":
+		itemsExpr := strings.TrimSpace(step.ItemsExpr)
+		if itemsExpr == "" {
+			return nil, 0, fmt.Errorf("for_each step requires itemsExpr")
+		}
+		itemsAny, err := interpolateValue(itemsExpr, state)
+		if err != nil {
+			return nil, 0, fmt.Errorf("interpolate for_each itemsExpr: %w", err)
+		}
+		items, err := asInterfaceSlice(itemsAny)
+		if err != nil {
+			return nil, 0, fmt.Errorf("for_each itemsExpr must resolve to an array: %w", err)
+		}
+
+		maxIterations := step.MaxIterations
+		if maxIterations <= 0 {
+			maxIterations = defaultForEachMaxIterations
+		}
+		if len(items) > maxIterations {
+			return nil, 0, fmt.Errorf("for_each item count %d exceeds maxIterations %d", len(items), maxIterations)
+		}
+
+		if len(step.Steps) == 0 {
+			return nil, 0, fmt.Errorf("for_each step requires nested steps")
+		}
+
+		itemVar := strings.TrimSpace(step.ItemVar)
+		if itemVar == "" {
+			itemVar = "item"
+		}
+		indexVar := itemVar + "_index"
+
+		oldItem, hadItem := state.Values[itemVar]
+		oldIndex, hadIndex := state.Values[indexVar]
+		defer func() {
+			if hadItem {
+				state.Values[itemVar] = oldItem
+			} else {
+				delete(state.Values, itemVar)
+			}
+			if hadIndex {
+				state.Values[indexVar] = oldIndex
+			} else {
+				delete(state.Values, indexVar)
+			}
+		}()
+
+		iterationResults := make([]interface{}, 0, len(items))
+		totalNestedToolCalls := 0
+
+		for i, item := range items {
+			state.Values[itemVar] = item
+			state.Values[indexVar] = float64(i)
+
+			outputs := make(map[string]interface{}, len(step.Steps))
+			var iterationFinal interface{}
+
+			for nestedIndex, nestedStep := range step.Steps {
+				nestedResult, nestedToolCalls, err := r.runStep(ctx, protocolID, nestedStep, state)
+				totalNestedToolCalls += nestedToolCalls
+				if err != nil {
+					return nil, totalNestedToolCalls, fmt.Errorf("for_each iteration %d nested step %d (%s) failed: %w", i, nestedIndex, nestedStep.Type, err)
+				}
+				if err := validateStepOutputSchema(protocolID, nestedStep, nestedResult, state); err != nil {
+					return nil, totalNestedToolCalls, fmt.Errorf("for_each iteration %d nested step %d (%s) output validation failed: %w", i, nestedIndex, nestedStep.Type, err)
+				}
+				nestedKey := stepPrefix + strconv.Itoa(nestedIndex)
+				outputs[nestedKey] = nestedResult
+				if outputPresent(nestedResult) {
+					iterationFinal = nestedResult
+				}
+			}
+
+			iterationResults = append(iterationResults, map[string]interface{}{
+				"index":   i,
+				"item":    item,
+				"outputs": outputs,
+				"result":  iterationFinal,
+			})
+		}
+
+		return iterationResults, totalNestedToolCalls, nil
+
+	case "collect":
+		collectFrom := strings.TrimSpace(step.CollectFrom)
+		if collectFrom == "" {
+			return nil, 0, fmt.Errorf("collect step requires collectFrom")
+		}
+		sourceAny, err := interpolateValue(collectFrom, state)
+		if err != nil {
+			return nil, 0, fmt.Errorf("interpolate collect source: %w", err)
+		}
+		source, err := asInterfaceSlice(sourceAny)
+		if err != nil {
+			return nil, 0, fmt.Errorf("collect source must resolve to an array: %w", err)
+		}
+		collected := make([]interface{}, 0, len(source))
+		for _, entry := range source {
+			if obj, ok := entry.(map[string]interface{}); ok {
+				if result, exists := obj["result"]; exists {
+					if outputPresent(result) {
+						collected = append(collected, result)
+					}
+					continue
+				}
+			}
+			if outputPresent(entry) {
+				collected = append(collected, entry)
+			}
+		}
+		return collected, 0, nil
+
 	case "branch":
 		return nil, 0, fmt.Errorf("branch steps are not implemented yet")
 
 	default:
 		return nil, 0, fmt.Errorf("unsupported workflow step type %q", step.Type)
 	}
+}
+
+func asInterfaceSlice(value interface{}) ([]interface{}, error) {
+	if value == nil {
+		return nil, fmt.Errorf("value is nil")
+	}
+	if typed, ok := value.([]interface{}); ok {
+		return typed, nil
+	}
+	rv := reflect.ValueOf(value)
+	if rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array {
+		return nil, fmt.Errorf("value type %T is not an array", value)
+	}
+	out := make([]interface{}, 0, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		out = append(out, rv.Index(i).Interface())
+	}
+	return out, nil
 }
 
 func validateStepOutputSchema(protocolID string, step gosutospec.WorkflowProtocolStep, output interface{}, state *State) error {

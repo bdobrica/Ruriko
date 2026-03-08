@@ -2,6 +2,7 @@ package gosuto
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -280,6 +281,53 @@ func validateWorkflow(w Workflow) error {
 		"summarize":    {},
 		"send_message": {},
 		"persist":      {},
+		"for_each":     {},
+		"collect":      {},
+	}
+
+	var validateStep func(protocolID string, step WorkflowProtocolStep, stepPath string, topLevelStepIndex int) error
+	validateStep = func(protocolID string, step WorkflowProtocolStep, stepPath string, topLevelStepIndex int) error {
+		if _, ok := validStepTypes[step.Type]; !ok {
+			return fmt.Errorf("workflow protocol %s, %s: unknown step type %q", protocolID, stepPath, step.Type)
+		}
+		if step.Retries < 0 {
+			return fmt.Errorf("workflow protocol %s, %s: retries must be >= 0", protocolID, stepPath)
+		}
+		if ref := step.InputSchemaRef; ref != "" {
+			if err := validateSchemaRef(protocolID, "inputSchemaRef", ref, topLevelStepIndex); err != nil {
+				return err
+			}
+		}
+		if ref := step.OutputSchemaRef; ref != "" {
+			if err := validateSchemaRef(protocolID, "outputSchemaRef", ref, topLevelStepIndex); err != nil {
+				return err
+			}
+		}
+
+		switch step.Type {
+		case "for_each":
+			if strings.TrimSpace(step.ItemsExpr) == "" {
+				return fmt.Errorf("workflow protocol %s, %s: for_each requires itemsExpr", protocolID, stepPath)
+			}
+			if step.MaxIterations < 0 {
+				return fmt.Errorf("workflow protocol %s, %s: maxIterations must be >= 0", protocolID, stepPath)
+			}
+			if len(step.Steps) == 0 {
+				return fmt.Errorf("workflow protocol %s, %s: for_each requires nested steps", protocolID, stepPath)
+			}
+			for i, nested := range step.Steps {
+				nestedPath := stepPath + "." + strconv.Itoa(i)
+				if err := validateStep(protocolID, nested, nestedPath, topLevelStepIndex); err != nil {
+					return err
+				}
+			}
+		case "collect":
+			if strings.TrimSpace(step.CollectFrom) == "" {
+				return fmt.Errorf("workflow protocol %s, %s: collect requires collectFrom", protocolID, stepPath)
+			}
+		}
+
+		return nil
 	}
 
 	for i, protocol := range w.Protocols {
@@ -295,21 +343,8 @@ func validateWorkflow(w Workflow) error {
 			}
 		}
 		for stepIndex, step := range protocol.Steps {
-			if _, ok := validStepTypes[step.Type]; !ok {
-				return fmt.Errorf("workflow protocol %s, step %d: unknown step type %q", protocol.ID, stepIndex, step.Type)
-			}
-			if step.Retries < 0 {
-				return fmt.Errorf("workflow protocol %s, step %d: retries must be >= 0", protocol.ID, stepIndex)
-			}
-			if ref := step.InputSchemaRef; ref != "" {
-				if err := validateSchemaRef(protocol.ID, "inputSchemaRef", ref, stepIndex); err != nil {
-					return err
-				}
-			}
-			if ref := step.OutputSchemaRef; ref != "" {
-				if err := validateSchemaRef(protocol.ID, "outputSchemaRef", ref, stepIndex); err != nil {
-					return err
-				}
+			if err := validateStep(protocol.ID, step, fmt.Sprintf("step %d", stepIndex), stepIndex); err != nil {
+				return err
 			}
 		}
 	}
