@@ -237,6 +237,14 @@ type WorkflowProtocolStep struct {
 
 	// CollectFrom is used by type=collect.
 	CollectFrom string `yaml:"collectFrom,omitempty" json:"collectFrom,omitempty"`
+
+	// CollectMode controls which value from each source entry is aggregated for
+	// type=collect. Supported values: result (default), entry, outputs, item.
+	CollectMode string `yaml:"collectMode,omitempty" json:"collectMode,omitempty"`
+
+	// CollectFlatten controls whether collect flattens array-shaped selected
+	// values into one aggregated array.
+	CollectFlatten bool `yaml:"collectFlatten,omitempty" json:"collectFlatten,omitempty"`
 }
 
 // Limits defines resource constraints on agent operations.

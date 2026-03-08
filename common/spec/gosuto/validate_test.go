@@ -1921,6 +1921,26 @@ workflow:
 	}
 }
 
+func TestValidate_WorkflowCollect_InvalidCollectMode(t *testing.T) {
+	_, err := parseR61YAML(r61Base + r61Trust + `
+workflow:
+	protocols:
+		- id: "kairo.news.request.v1"
+			trigger:
+				type: "matrix.protocol_message"
+			steps:
+				- type: "collect"
+					collectFrom: "{{steps.step_1}}"
+					collectMode: "invalid"
+`)
+	if err == nil {
+		t.Fatal("expected error for invalid collectMode, got nil")
+	}
+	if !strings.Contains(err.Error(), "collectMode \"invalid\" is invalid") {
+		t.Errorf("unexpected collectMode validation error: %v", err)
+	}
+}
+
 func TestValidate_WorkflowPlan_RequiresPrompt(t *testing.T) {
 	_, err := parseR61YAML(r61Base + r61Trust + `
 workflow:

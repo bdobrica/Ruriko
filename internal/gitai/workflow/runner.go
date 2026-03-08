@@ -315,6 +315,10 @@ func (r *Runner) runStep(ctx context.Context, protocolID string, step gosutospec
 		if collectFrom == "" {
 			return nil, 0, fmt.Errorf("collect step requires collectFrom")
 		}
+		collectMode := strings.TrimSpace(step.CollectMode)
+		if collectMode == "" {
+			collectMode = "result"
+		}
 		sourceAny, err := interpolateValue(collectFrom, state)
 		if err != nil {
 			return nil, 0, fmt.Errorf("interpolate collect source: %w", err)
@@ -325,17 +329,20 @@ func (r *Runner) runStep(ctx context.Context, protocolID string, step gosutospec
 		}
 		collected := make([]interface{}, 0, len(source))
 		for _, entry := range source {
-			if obj, ok := entry.(map[string]interface{}); ok {
-				if result, exists := obj["result"]; exists {
-					if outputPresent(result) {
-						collected = append(collected, result)
-					}
+			selected, err := selectCollectValue(entry, collectMode)
+			if err != nil {
+				return nil, 0, err
+			}
+			if !outputPresent(selected) {
+				continue
+			}
+			if step.CollectFlatten {
+				if flat, ok := asOptionalInterfaceSlice(selected); ok {
+					collected = append(collected, flat...)
 					continue
 				}
 			}
-			if outputPresent(entry) {
-				collected = append(collected, entry)
-			}
+			collected = append(collected, selected)
 		}
 		return collected, 0, nil
 
@@ -363,6 +370,59 @@ func asInterfaceSlice(value interface{}) ([]interface{}, error) {
 		out = append(out, rv.Index(i).Interface())
 	}
 	return out, nil
+}
+
+func asOptionalInterfaceSlice(value interface{}) ([]interface{}, bool) {
+	if value == nil {
+		return nil, false
+	}
+	if typed, ok := value.([]interface{}); ok {
+		return typed, true
+	}
+	rv := reflect.ValueOf(value)
+	if rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array {
+		return nil, false
+	}
+	out := make([]interface{}, 0, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		out = append(out, rv.Index(i).Interface())
+	}
+	return out, true
+}
+
+func selectCollectValue(entry interface{}, mode string) (interface{}, error) {
+	obj, isObj := entry.(map[string]interface{})
+	switch mode {
+	case "result":
+		if isObj {
+			if result, exists := obj["result"]; exists {
+				return result, nil
+			}
+		}
+		return entry, nil
+	case "entry":
+		return entry, nil
+	case "outputs":
+		if !isObj {
+			return nil, fmt.Errorf("collect mode outputs requires object entries")
+		}
+		outputs, ok := obj["outputs"]
+		if !ok {
+			return nil, fmt.Errorf("collect mode outputs requires outputs field")
+		}
+		return outputs, nil
+	case "item":
+		if !isObj {
+			return nil, fmt.Errorf("collect mode item requires object entries")
+		}
+		item, ok := obj["item"]
+		if !ok {
+			return nil, fmt.Errorf("collect mode item requires item field")
+		}
+		return item, nil
+	default:
+		return nil, fmt.Errorf("collect mode %q is not supported", mode)
+	}
 }
 
 func parseStructuredJSON(raw string) (interface{}, error) {

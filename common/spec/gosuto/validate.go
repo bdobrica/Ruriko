@@ -333,6 +333,14 @@ func validateWorkflow(w Workflow) error {
 			if strings.TrimSpace(step.CollectFrom) == "" {
 				return fmt.Errorf("workflow protocol %s, %s: collect requires collectFrom", protocolID, stepPath)
 			}
+			if mode := strings.TrimSpace(step.CollectMode); mode != "" {
+				switch mode {
+				case "result", "entry", "outputs", "item":
+					// supported
+				default:
+					return fmt.Errorf("workflow protocol %s, %s: collectMode %q is invalid", protocolID, stepPath, mode)
+				}
+			}
 		}
 
 		return nil

@@ -425,3 +425,88 @@ func TestEngineExecuteProtocol_PlanStep_RejectsNonJSONOutput(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestEngineExecuteProtocol_Collect_ModeItemAndFlatten(t *testing.T) {
+	dispatcher := &fakeDispatcher{}
+	runner := NewRunner(dispatcher)
+
+	protocol := gosutospec.WorkflowProtocol{
+		ID: "kumo.news.request.v1",
+		Steps: []gosutospec.WorkflowProtocolStep{
+			{
+				Type:          "for_each",
+				ItemsExpr:     "{{input.buckets}}",
+				ItemVar:       "bucket",
+				MaxIterations: 5,
+				Steps: []gosutospec.WorkflowProtocolStep{
+					{Type: "persist", PersistKey: "last_bucket", PersistValue: "{{state.bucket}}"},
+				},
+			},
+			{
+				Type:           "collect",
+				CollectFrom:    "{{steps.step_0}}",
+				CollectMode:    "item",
+				CollectFlatten: true,
+			},
+		},
+	}
+
+	state := NewStateFromExecutionContext(NewExecutionContext("trace-1", "!room:example.com", "@peer:example.com", &InboundProtocolMatch{
+		Protocol: protocol,
+		Payload: map[string]interface{}{
+			"buckets": []interface{}{
+				[]interface{}{"a", "b"},
+				[]interface{}{"c"},
+			},
+		},
+	}))
+
+	result, _, err := runner.Run(context.Background(), protocol, state)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if result != "[a b c]" {
+		t.Fatalf("Run() result = %q, want [a b c]", result)
+	}
+}
+
+func TestEngineExecuteProtocol_Collect_ModeOutputs(t *testing.T) {
+	dispatcher := &fakeDispatcher{}
+	runner := NewRunner(dispatcher)
+
+	protocol := gosutospec.WorkflowProtocol{
+		ID: "kumo.news.request.v1",
+		Steps: []gosutospec.WorkflowProtocolStep{
+			{
+				Type:          "for_each",
+				ItemsExpr:     "{{input.tickers}}",
+				ItemVar:       "ticker",
+				MaxIterations: 5,
+				Steps: []gosutospec.WorkflowProtocolStep{
+					{Type: "persist", PersistKey: "last_ticker", PersistValue: "{{state.ticker}}"},
+				},
+			},
+			{
+				Type:        "collect",
+				CollectFrom: "{{steps.step_0}}",
+				CollectMode: "outputs",
+			},
+		},
+	}
+
+	state := NewStateFromExecutionContext(NewExecutionContext("trace-1", "!room:example.com", "@peer:example.com", &InboundProtocolMatch{
+		Protocol: protocol,
+		Payload: map[string]interface{}{
+			"tickers": []interface{}{"AAPL", "MSFT"},
+		},
+	}))
+
+	_, _, err := runner.Run(context.Background(), protocol, state)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	output, ok := state.StepOutputs["step_1"]["output"].([]interface{})
+	if !ok || len(output) != 2 {
+		t.Fatalf("collect output = %#v, want 2 entries", state.StepOutputs["step_1"]["output"])
+	}
+}
