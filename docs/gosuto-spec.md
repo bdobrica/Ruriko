@@ -22,6 +22,7 @@ apiVersion: gosuto/v1
 metadata:
   name: <agent-id>
   template: <template-name>        # informational only
+  canonicalName: <well-known-name> # optional singleton role name
   description: <free text>
 
 trust: { ... }
@@ -32,6 +33,7 @@ mcps: [ ... ]                      # optional
 gateways: [ ... ]                  # optional; event source gateways
 secrets: [ ... ]                   # optional
 persona: { ... }                   # optional
+workflow: { ... }                  # optional; deterministic protocol workflows
 ```
 
 ---
@@ -50,6 +52,7 @@ Must be exactly `"gosuto/v1"`.
 |---------------|--------|----------|----------------------------------------|
 | `name`        | string | ✅       | Agent identifier (matches Ruriko agent ID) |
 | `template`    | string | ❌       | Template the config was derived from   |
+| `canonicalName` | string | ❌     | Optional singleton role name (`saito`, `kairo`, `kumo`) |
 | `description` | string | ❌       | Human-readable purpose                 |
 
 ---
@@ -64,11 +67,27 @@ Defines the Matrix rooms and senders the agent pays attention to.
 | `allowedSenders` | []string | ✅       | User MXIDs (`@user:server`) or `"*"` for all senders |
 | `requireE2EE`    | bool     | ❌       | Refuse to operate in non-encrypted rooms             |
 | `adminRoom`      | string   | ❌       | Matrix room used for operator control messages       |
+| `trustedPeers`   | []object | ❌       | Exact peer trust tuples for protocol workflows       |
 
 **Validation rules:**
 - `allowedRooms` entries must start with `!` or be `"*"`.
 - `allowedSenders` entries must start with `@` or be `"*"`.
 - Both lists must contain at least one entry.
+
+`trustedPeers` object shape:
+
+| Field       | Type     | Required | Description |
+|-------------|----------|----------|-------------|
+| `mxid`      | string   | ✅       | Exact trusted peer MXID |
+| `roomId`    | string   | ✅       | Exact room ID where the peer is trusted |
+| `alias`     | string   | ❌       | Human-readable peer alias |
+| `protocols` | []string | ✅       | Protocol IDs this peer may send |
+
+Additional trusted-peer validation:
+- `mxid` must start with `@`.
+- `roomId` must start with `!`.
+- `protocols` must be non-empty.
+- Duplicate `(mxid, roomId, protocol)` tuples are rejected.
 
 ---
 
@@ -302,6 +321,214 @@ LLM persona configuration. **Non-authoritative** — all access control is enfor
 | `model`            | string  | —       | Model name: `"gpt-4o"`, `"claude-3-5-sonnet"`, etc.             |
 | `temperature`      | float64 | 0.0     | Sampling temperature; must be in `[0.0, 2.0]`                   |
 | `apiKeySecretRef`  | string  | —       | Secret ref for the LLM API key (resolved via Kuze/secrets store) |
+
+---
+
+### `workflow` *(optional)*
+
+Deterministic, protocol-driven workflows executed by Gitai.
+
+```yaml
+workflow:
+  schemas: {}
+  protocols: []
+```
+
+#### `workflow.schemas`
+
+- Local schema map keyed by name.
+- Used by `inputSchemaRef`, `outputSchemaRef`, `forEachResultSchemaRef`, and `forEachIterationSchemaRef`.
+- External references (URL/path/`#...`) are rejected.
+- Duplicate schema keys are rejected.
+
+#### `workflow.protocols[]`
+
+| Field            | Type   | Required | Description |
+|------------------|--------|----------|-------------|
+| `id`             | string | ✅       | Protocol identifier |
+| `trigger`        | object | ✅       | Protocol trigger matcher |
+| `inputSchemaRef` | string | ❌       | Schema key for inbound payload validation |
+| `retries`        | int    | ❌       | Protocol-level retry budget (must be `>= 0`) |
+| `steps`          | []step | ❌       | Ordered deterministic step list |
+
+`trigger` object:
+
+| Field    | Type   | Required | Description |
+|----------|--------|----------|-------------|
+| `type`   | string | ✅       | Trigger type (`matrix.protocol_message`, `gateway.event`) |
+| `prefix` | string | ❌       | Prefix matcher for matrix protocol messages |
+
+#### `workflow.protocols[].steps[]`
+
+Common step fields:
+
+| Field            | Type   | Required | Description |
+|------------------|--------|----------|-------------|
+| `type`           | string | ✅       | Step type |
+| `retries`        | int    | ❌       | Step retry override (`>= 0`) |
+| `inputSchemaRef` | string | ❌       | Optional schema key |
+| `outputSchemaRef`| string | ❌       | Optional schema key |
+
+Supported `type` values:
+- `parse_input`
+- `tool`
+- `branch` (reserved placeholder, currently not implemented)
+- `summarize`
+- `plan`
+- `send_message`
+- `persist`
+- `for_each`
+- `collect`
+
+##### `tool`
+
+| Field          | Type   | Required | Description |
+|----------------|--------|----------|-------------|
+| `tool`         | string | ✅       | Tool name routed via dispatcher |
+| `argsTemplate` | object | ❌       | Interpolated args object |
+
+##### `summarize`
+
+| Field    | Type   | Required | Description |
+|----------|--------|----------|-------------|
+| `prompt` | string | ✅       | Interpolated summarize prompt |
+
+##### `plan`
+
+| Field            | Type   | Required | Description |
+|------------------|--------|----------|-------------|
+| `prompt`         | string | ✅       | Interpolated plan prompt |
+| `outputSchemaRef`| string | ✅       | Schema key for structured plan output |
+
+Runtime behavior:
+- Plan output must be JSON (plain JSON or fenced JSON block).
+- Parsed JSON is validated via `outputSchemaRef`.
+
+##### `send_message`
+
+| Field             | Type   | Required | Description |
+|-------------------|--------|----------|-------------|
+| `targetAlias`     | string | ✅       | Allowed messaging target alias |
+| `payloadTemplate` | string | ✅       | Interpolated message payload |
+
+##### `persist`
+
+| Field          | Type   | Required | Description |
+|----------------|--------|----------|-------------|
+| `persistKey`   | string | ✅       | State key to write |
+| `persistValue` | string | ✅       | Interpolated value |
+
+##### `for_each`
+
+| Field                       | Type   | Required | Description |
+|-----------------------------|--------|----------|-------------|
+| `itemsExpr`                 | string | ✅       | Interpolated array expression |
+| `itemVar`                   | string | ❌       | Item variable name (default `item`) |
+| `maxIterations`             | int    | ❌       | Upper bound for loop items (`>= 0`) |
+| `steps`                     | []step | ✅       | Nested steps executed per item |
+| `forEachResultSchemaRef`    | string | ❌       | Schema key to validate each iteration `result` |
+| `forEachIterationSchemaRef` | string | ❌       | Schema key to validate each iteration contract object |
+
+Validation rules:
+- `itemsExpr` is required.
+- `steps` is required and non-empty.
+- `maxIterations` must be `>= 0`.
+- `forEachResultSchemaRef` and `forEachIterationSchemaRef` are valid only on `for_each`.
+
+Runtime iteration contract shape:
+
+```yaml
+index: <int>
+item: <original-item>
+outputs: <map of nested step outputs keyed by step_N>
+result: <last non-empty nested step output>
+```
+
+##### `collect`
+
+| Field            | Type   | Required | Description |
+|------------------|--------|----------|-------------|
+| `collectFrom`    | string | ✅       | Interpolated source array expression |
+| `collectMode`    | string | ❌       | `result` (default), `entry`, `outputs`, `item` |
+| `collectFlatten` | bool   | ❌       | Flatten array-shaped selected values |
+
+Validation rules:
+- `collectFrom` is required.
+- `collectMode` (if set) must be one of `result`, `entry`, `outputs`, `item`.
+
+#### Workflow example: strict iteration contracts
+
+```yaml
+workflow:
+  schemas:
+    kairoNewsRequest:
+      type: object
+      required: [run_id, topic]
+      properties:
+        run_id: { type: integer }
+        topic: { type: string }
+    searchPlan:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [query]
+            properties:
+              query: { type: string }
+    searchResult:
+      type: string
+    searchIterationContract:
+      type: object
+      required: [index, item, outputs, result]
+      properties:
+        index: { type: integer }
+        item:
+          type: object
+          required: [query]
+          properties:
+            query: { type: string }
+        outputs: { type: object }
+        result: { type: string }
+    kumoNewsResponse:
+      type: object
+      required: [run_id, summary, headlines, material]
+      properties:
+        run_id: { type: integer }
+        summary: { type: string }
+        headlines: { type: array }
+        material: { type: boolean }
+  protocols:
+    - id: kairo.news.request.v1
+      trigger:
+        type: matrix.protocol_message
+        prefix: KAIRO_NEWS_REQUEST
+      inputSchemaRef: kairoNewsRequest
+      steps:
+        - type: plan
+          prompt: "Build a concise search plan for {{input.topic}}"
+          outputSchemaRef: searchPlan
+        - type: for_each
+          itemsExpr: "{{steps.step_0.items}}"
+          itemVar: plan_item
+          maxIterations: 5
+          forEachResultSchemaRef: searchResult
+          forEachIterationSchemaRef: searchIterationContract
+          steps:
+            - type: tool
+              tool: brave-search__web_search
+              argsTemplate:
+                query: "{{state.plan_item.query}}"
+              outputSchemaRef: searchResult
+        - type: collect
+          collectFrom: "{{steps.step_1}}"
+          collectMode: result
+        - type: summarize
+          prompt: "Summarize collected results for run {{input.run_id}}"
+          outputSchemaRef: kumoNewsResponse
+```
 
 ---
 
