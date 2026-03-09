@@ -12,7 +12,7 @@ PROBE_PY="${ROOT_DIR}/test/integration/ruriko_saito_live_matrix_probe.py"
 PROVISION_SCRIPT="${ROOT_DIR}/test/integration/provision-fresh-stack.sh"
 OPENAI_PROXY_SCRIPT="${ROOT_DIR}/test/integration/openai_capture_proxy.py"
 
-TIMEOUT_SECONDS="${CANONICAL_LIVE_TIMEOUT_SECONDS:-300}"
+TIMEOUT_SECONDS="${CANONICAL_LIVE_TIMEOUT_SECONDS:-75}"
 SYNC_TIMEOUT_MS="${CANONICAL_LIVE_SYNC_TIMEOUT_MS:-15000}"
 POLL_SECONDS="${CANONICAL_LIVE_POLL_SECONDS:-3}"
 REQUIRED_CYCLES="${CANONICAL_REQUIRED_CYCLES:-1}"
@@ -377,8 +377,26 @@ fi
 pass "Kumo secrets pushed"
 
 info "Step 8/10: scheduling fast Saito cron ticks toward Kumo path"
-REQUEST_MESSAGE="${KUMO_REQUEST_PREFIX} ${KUMO_REQUEST_BODY}"
-send_matrix "/ruriko schedule upsert --agent saito --cron \"${SAITO_CRON_EXPR}\" --target kumo --message \"${REQUEST_MESSAGE}\"" "canonical-schedule-$(date +%s)"
+CANONICAL_REQUEST_JSON="$(python3 - "${KUMO_REQUEST_BODY}" <<'PY'
+import json
+import sys
+
+raw = sys.argv[1]
+try:
+	parsed = json.loads(raw)
+except Exception as exc:
+	# Support escaped JSON payloads such as {\"run_id\":1}.
+	if '\\"' not in raw:
+		raise SystemExit(f"invalid CANONICAL_KUMO_REQUEST_BODY JSON: {exc}")
+	try:
+		parsed = json.loads(raw.replace('\\"', '"'))
+	except Exception as exc2:
+		raise SystemExit(f"invalid CANONICAL_KUMO_REQUEST_BODY JSON: {exc2}")
+print(json.dumps(parsed, separators=(",", ":"), ensure_ascii=False))
+PY
+)"
+REQUEST_MESSAGE="@kumo, ${KUMO_REQUEST_PREFIX} ${CANONICAL_REQUEST_JSON}"
+send_matrix "/ruriko schedule upsert --agent saito --cron \"${SAITO_CRON_EXPR}\" --target kumo --message '${REQUEST_MESSAGE}'" "canonical-schedule-$(date +%s)"
 if SYNC_TOKEN="$(wait_for_ruriko_text "Created schedule" 90 "${SYNC_TOKEN}" 2>/dev/null || wait_for_ruriko_text "Updated schedule" 90 "${SYNC_TOKEN}" 2>/dev/null || true)" && [[ -n "${SYNC_TOKEN}" ]]; then
 	pass "Saito schedule applied"
 else

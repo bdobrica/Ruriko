@@ -202,7 +202,7 @@ func TestHandleMessage_CanonicalAgent_NoHardcodedBranch_UsesTurnPipeline(t *test
 		"!chat-room:example.com",
 		"@saito:example.com",
 		"$evt-canonical",
-		"Saito scheduled trigger: run cycle",
+		"Hey kairo, Saito scheduled trigger: run cycle",
 	)
 	a.handleMessage(context.Background(), evt)
 
@@ -400,8 +400,25 @@ func TestHandleMessage_FreeFormMessage_StillProcessesWithWildcardTrust(t *testin
 	)
 	a.handleMessage(context.Background(), evt)
 
+	if _, ok := prov.waitForCall(300 * time.Millisecond); ok {
+		t.Fatal("LLM should not be called for undirected free-form message")
+	}
+}
+
+func TestHandleMessage_DirectedAtMention_FreeFormMessage_Processes(t *testing.T) {
+	prov := newCapturingLLM("")
+	a := newEventApp(t, workflowIntegrationRecipientGateYAML, prov)
+
+	evt := makeMessageEvent(
+		"!shared-admin-room:example.com",
+		"@operator:example.com",
+		"$evt-free-form-directed",
+		"@kumo, can you summarize market sentiment for today?",
+	)
+	a.handleMessage(context.Background(), evt)
+
 	if _, ok := prov.waitForCall(3 * time.Second); !ok {
-		t.Fatal("expected LLM call for free-form message that is not protocol-like")
+		t.Fatal("expected LLM call for directed @mention free-form message")
 	}
 }
 
@@ -417,8 +434,8 @@ func TestHandleMessage_LegacyDirectedPrefix_IsNotSpecialCased(t *testing.T) {
 	)
 	a.handleMessage(context.Background(), evt)
 
-	if _, ok := prov.waitForCall(3 * time.Second); !ok {
-		t.Fatal("expected LLM call: legacy 'Hey, <agent>, ...' must not be interpreted as directed addressing")
+	if _, ok := prov.waitForCall(300 * time.Millisecond); ok {
+		t.Fatal("LLM should not be called: legacy 'Hey, <agent>, ...' is not valid directed addressing")
 	}
 }
 

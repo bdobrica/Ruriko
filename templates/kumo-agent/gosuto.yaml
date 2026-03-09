@@ -157,7 +157,7 @@ workflow:
           retries: 2
         - type: send_message
           targetAlias: "{{.PeerAlias}}"
-          payloadTemplate: "Hey {{.PeerAlias}}, KUMO_NEWS_RESPONSE $steps.step_4"
+          payloadTemplate: "@{{.PeerAlias}}, KUMO_NEWS_RESPONSE $steps.step_4"
         - type: persist
           persistKey: kumo.last_response
           persistValue: "$steps.step_4"

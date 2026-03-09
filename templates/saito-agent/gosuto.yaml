@@ -123,7 +123,7 @@ workflow:
       steps:
         - type: send_message
           targetAlias: "{{if .PeerAlias}}{{.PeerAlias}}{{else}}kairo{{end}}"
-          payloadTemplate: 'Hey {{if .PeerAlias}}{{.PeerAlias}}{{else}}kairo{{end}}, KAIRO_TRIGGER {"trigger":"scheduled","source":"saito","event":"cron.tick","ts":"$now.rfc3339","payload":"$event.payload.message"}'
+          payloadTemplate: '@{{if .PeerAlias}}{{.PeerAlias}}{{else}}kairo{{end}}, KAIRO_TRIGGER {"trigger":"scheduled","source":"saito","event":"cron.tick","ts":"$now.rfc3339","payload":"$event.payload.message"}'
 
 persona:
   systemPrompt: |

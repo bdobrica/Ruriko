@@ -525,6 +525,7 @@ func (a *App) handleMessage(ctx context.Context, evt *event.Event) {
 	}
 
 	cfg := a.gosutoLdr.Config()
+	directedToSelf := false
 	var protocolMatch *workflow.InboundProtocolMatch
 	if cfg != nil {
 		if target, directedBody, directed := parseDirectedAgentMessage(text); directed {
@@ -533,7 +534,7 @@ func (a *App) handleMessage(ctx context.Context, evt *event.Event) {
 				fallbackAgentID = a.cfg.AgentID
 			}
 			self := agentIdentity(cfg, fallbackAgentID)
-			if !strings.EqualFold(target, self) {
+			if !isDirectedAtSelf(target, self) {
 				slog.Debug("ignoring directed message intended for another agent",
 					"room", roomID,
 					"sender", sender,
@@ -542,6 +543,7 @@ func (a *App) handleMessage(ctx context.Context, evt *event.Event) {
 				)
 				return
 			}
+			directedToSelf = true
 			text = directedBody
 		}
 
@@ -569,6 +571,14 @@ func (a *App) handleMessage(ctx context.Context, evt *event.Event) {
 			return
 		}
 		protocolMatch = match
+	}
+
+	if protocolMatch == nil && !directedToSelf {
+		slog.Debug("ignoring undirected non-protocol message",
+			"room", roomID,
+			"sender", sender,
+		)
+		return
 	}
 
 	// Generate trace ID for this turn.
@@ -615,10 +625,14 @@ func parseDirectedAgentMessage(text string) (target, body string, ok bool) {
 	if trimmed == "" {
 		return "", "", false
 	}
-	if len(trimmed) < 4 || !strings.EqualFold(trimmed[:4], "hey ") {
+	remainder := ""
+	if len(trimmed) >= 4 && strings.EqualFold(trimmed[:4], "hey ") {
+		remainder = strings.TrimSpace(trimmed[4:])
+	} else if strings.HasPrefix(trimmed, "@") {
+		remainder = trimmed
+	} else {
 		return "", "", false
 	}
-	remainder := strings.TrimSpace(trimmed[4:])
 	if remainder == "" {
 		return "", "", false
 	}
@@ -637,6 +651,26 @@ func parseDirectedAgentMessage(text string) (target, body string, ok bool) {
 		return "", "", false
 	}
 	return target, body, true
+}
+
+func isDirectedAtSelf(target, self string) bool {
+	normalizedTarget := normalizeDirectedTarget(target)
+	normalizedSelf := normalizeDirectedTarget(self)
+	if normalizedTarget == "" || normalizedSelf == "" {
+		return false
+	}
+	return strings.EqualFold(normalizedTarget, normalizedSelf)
+}
+
+func normalizeDirectedTarget(v string) string {
+	v = strings.TrimSpace(strings.TrimPrefix(v, "@"))
+	if v == "" {
+		return ""
+	}
+	if at := strings.Index(v, ":"); at > 0 {
+		v = v[:at]
+	}
+	return strings.TrimSpace(v)
 }
 
 func agentIdentity(cfg *gosutospec.Config, fallback string) string {
