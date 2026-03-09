@@ -86,6 +86,7 @@ The following is built and functional:
 - ✅ **R19.6 (maintenance)**: Standalone Saito live compose integration harness (`tuwunel + saito`) with ACP `schedule.upsert` runtime cron setup and Python Matrix delivery verification
 - ✅ **R19.7 (maintenance)**: Strict standalone Saito verification target requiring multiple cron deliveries (`make test-saito-live-compose-2cycles`)
 - ✅ **R19.8 (maintenance)**: Removed legacy `test-saito-scheduling-live*` targets/scripts and hardened `test-ruriko-saito-operator-live` with OpenAI capture-proxy auditing (`RURIKO_SAITO_OPENAI_EXPECT_CALLS`, default `0`)
+- ✅ **R19.9 (maintenance)**: Replaced canonical live compose verification with operator-driven `Ruriko -> Saito -> Kumo` flow (Kuze secret entry for `kumo.openai-api-key` and `kumo.brave-api-key`, fast cron ticks, Saito->Kumo protocol request, Kumo summary delivery) and OpenAI capture-proxy mode switch (`CANONICAL_OPENAI_MODE=stub|passthrough`)
 - ✅ **R10**: Conversation memory — STM tracker, LTM interface, seal pipeline, context assembly, SQLite/OpenAI/LLM persistent backends
 
 ---
@@ -99,7 +100,7 @@ The MVP is ready when **all** of the following are true:
 ✅ **Secrets**: User stores secrets via Kuze one-time links; secrets never in chat
 ✅ **Agents**: Ruriko provisions Saito/Kairo/Kumo via ACP with Gosuto config
 ✅ **ACP**: Authenticated, idempotent, private to Docker network
-✅ **Workflow**: Saito triggers Kairo → Kairo analyzes → Kumo searches → report delivered
+✅ **Workflow**: Saito triggers Kumo → Kumo searches/summarizes → report delivered
 ✅ **Memory**: Ruriko remembers active conversations; recalls relevant past context (R10)
 ✅ **Security**: No secrets in Matrix history, ACP payloads, or logs
 

@@ -94,6 +94,7 @@ services:
       GLOBAL_LLM_API_KEY:    ${GLOBAL_LLM_API_KEY:-}
       GITAI_LLM_CALL_HARD_LIMIT: ${GITAI_LLM_CALL_HARD_LIMIT:-0}
       RURIKO_NLP_API_KEY:     ${RURIKO_NLP_API_KEY:-}
+      LLM_BASE_URL:          ${LLM_BASE_URL:-}
       NLP_MODEL:              ${NLP_MODEL:-}
       NLP_ENDPOINT:           ${NLP_ENDPOINT:-}
       NLP_RATE_LIMIT:         ${NLP_RATE_LIMIT:-}

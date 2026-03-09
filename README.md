@@ -253,11 +253,13 @@ Useful overrides:
 * `RURIKO_SAITO_TIMEOUT_SECONDS` (default `300`)
 * `RURIKO_SAITO_CRON_EXPR` (default `*/2 * * * *`)
 * `RURIKO_SAITO_CRON_MESSAGE` (default `Saito scheduled heartbeat to operator`)
-* `CANONICAL_REQUIRED_CYCLES` (default `3` when using `test-canonical-workflow-live-compose-3cycles`)
+* `CANONICAL_REQUIRED_CYCLES` (default `1`; `3` when using `test-canonical-workflow-live-compose-3cycles`)
 * `CANONICAL_LIVE_TIMEOUT_SECONDS` (default `600`)
 * `CANONICAL_LIVE_POLL_SECONDS` (default `5`)
-* `CANONICAL_AUTO_BOOTSTRAP` (default `1`)
-* `CANONICAL_BOOTSTRAP_STATUS_TIMEOUT` (default `120`)
+* `CANONICAL_SAITO_CRON_EXPR` (default `@every 30s`)
+* `CANONICAL_OPENAI_MODE` (`stub` or `passthrough`, default `stub`)
+* `CANONICAL_OPENAI_API_KEY` (default `dummy-live-key`; must be real in `passthrough` mode)
+* `CANONICAL_BRAVE_API_KEY` (required; set through Kuze in canonical flow)
 * `CANONICAL_SECURITY_LOOKBACK` (default `30m`)
 * `KUMO_LIVE_OPENAI_MODE` (`stub` or `passthrough`, default `stub`)
 * `KUMO_LIVE_OPENAI_API_KEY` (default `dummy-live-key`)
@@ -309,7 +311,7 @@ Completed:
 
 In progress / up next:
 
-* [ ] Canonical Saito → Kairo → Kumo end-to-end workflow (R6)
+* [ ] Canonical operator → Saito → Kumo end-to-end workflow hardening (R6)
 * [ ] Gosuto template variable customization at provision time (R17)
 
 ---

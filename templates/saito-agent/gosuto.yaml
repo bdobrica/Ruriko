@@ -61,7 +61,7 @@ gateways:
       source: db
       expression: "*/15 * * * *"
       payload: "Time for a portfolio check."
-      target: "kairo"
+      target: "{{if .PeerAlias}}{{.PeerAlias}}{{else}}kairo{{end}}"
 
 messaging:
   allowedTargets:
@@ -122,8 +122,8 @@ workflow:
       retries: 0
       steps:
         - type: send_message
-          targetAlias: kairo
-          payloadTemplate: 'Hey kairo, KAIRO_TRIGGER {"trigger":"scheduled","source":"saito","event":"cron.tick","ts":"$now.rfc3339","payload":"$event.payload.message"}'
+          targetAlias: "{{if .PeerAlias}}{{.PeerAlias}}{{else}}kairo{{end}}"
+          payloadTemplate: 'Hey {{if .PeerAlias}}{{.PeerAlias}}{{else}}kairo{{end}}, KAIRO_TRIGGER {"trigger":"scheduled","source":"saito","event":"cron.tick","ts":"$now.rfc3339","payload":"$event.payload.message"}'
 
 persona:
   systemPrompt: |
@@ -143,4 +143,10 @@ instructions:
       action: "Send a deterministic trigger message to Kairo via matrix.send_message to start the analysis workflow."
   context:
     user: "The user is the sole approver and oversees all agent workflows."
-    peers: []  # populated at provision time by Ruriko
+{{if .PeerAlias}}
+    peers:
+      - name: "{{.PeerAlias}}"
+        role: "Primary downstream peer for scheduled trigger messages."
+{{else}}
+    peers: []
+{{end}}

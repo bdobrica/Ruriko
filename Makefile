@@ -82,13 +82,13 @@ test-canonical-workflow-live-admin-room: ## Check canonical Matrix admin-room to
 	@echo "Running canonical admin-room join check..."
 	bash ./test/integration/test-canonical-workflow-live-admin-room.sh
 
-test-canonical-workflow-live-compose: ## Run canonical live compose suite (provisioning + admin-room + cycle)
+test-canonical-workflow-live-compose: ## Run canonical live flow (operator -> Ruriko -> Saito -> Kumo, Kuze secrets, OpenAI proxy)
 	@echo "Running canonical live compose suite..."
 	bash ./test/integration/test-canonical-workflow-live-compose-suite.sh
 
-test-canonical-workflow-live-compose-3cycles: ## Run full canonical compose chain verification with 3 required cycles
+test-canonical-workflow-live-compose-3cycles: ## Run canonical Saito->Kumo flow and require 3 completed cycles
 	@echo "Running canonical live compose chain check (3 cycles)..."
-	CANONICAL_REQUIRED_CYCLES=3 CANONICAL_VERIFY_STAGE=full bash ./test/integration/test-canonical-workflow-live-compose.sh
+	CANONICAL_REQUIRED_CYCLES=3 bash ./test/integration/test-canonical-workflow-live-compose.sh
 
 test-canonical-workflow-live-security: ## Run canonical live security checks (secrets/logs, workflow MCP-bypass guard, approval ledger)
 	@echo "Running canonical live security checks..."

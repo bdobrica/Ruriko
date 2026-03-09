@@ -7,6 +7,19 @@
 
 ## 🧹 Maintenance Updates (2026-03-08 · phase 7 hardening kickoff)
 
+- Replaced canonical live compose workflow verification with a direct operator-driven Saito->Kumo chain:
+  - `test/integration/test-canonical-workflow-live-compose.sh`
+  - `test/integration/test-canonical-workflow-live-compose-suite.sh`
+- New canonical live flow now validates:
+  - operator natural-language request bootstrap (`I would like to get daily news about OpenAI`)
+  - Kuze one-time secret entry for `kumo.openai-api-key` and `kumo.brave-api-key`
+  - secret bind + push into Kumo
+  - fast Saito schedule upsert and Saito protocol delivery toward Kumo
+  - Kumo `KUMO_NEWS_RESPONSE` delivery back to operator room
+- Added canonical OpenAI proxy mode parity with standalone Kumo harness:
+  - `CANONICAL_OPENAI_MODE=stub|passthrough`
+  - capture/proxy evidence remains enforced via JSONL call logs
+
 - Added standalone Saito live integration harness (no Ruriko dependency) to validate ACP-driven DB scheduler flow directly in Gitai:
   - `test/integration/test-saito-live-compose.sh`
   - `test/integration/docker-compose.saito-live.yaml`

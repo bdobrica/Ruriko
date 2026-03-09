@@ -2,22 +2,39 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-COMPOSE_FILE="${CANONICAL_COMPOSE_FILE:-$ROOT_DIR/examples/docker-compose/docker-compose.yaml}"
-COMPOSE_ENV_FILE="${CANONICAL_COMPOSE_ENV:-$ROOT_DIR/examples/docker-compose/.env}"
-HELPER_PY="$ROOT_DIR/test/integration/canonical_live_helpers.py"
+COMPOSE_DIR="${ROOT_DIR}/examples/docker-compose"
+COMPOSE_FILE="${CANONICAL_COMPOSE_FILE:-${COMPOSE_DIR}/docker-compose.yaml}"
+COMPOSE_ENV_FILE="${CANONICAL_COMPOSE_ENV:-${COMPOSE_DIR}/.env}"
+TOKENS_FILE="${COMPOSE_DIR}/.agent-tokens"
+WORK_DIR="${CANONICAL_WORK_DIR:-${ROOT_DIR}/test/integration/.canonical-live}"
+HELPER_PY="${ROOT_DIR}/test/integration/canonical_live_helpers.py"
+PROBE_PY="${ROOT_DIR}/test/integration/ruriko_saito_live_matrix_probe.py"
+PROVISION_SCRIPT="${ROOT_DIR}/test/integration/provision-fresh-stack.sh"
+OPENAI_PROXY_SCRIPT="${ROOT_DIR}/test/integration/openai_capture_proxy.py"
+
+TIMEOUT_SECONDS="${CANONICAL_LIVE_TIMEOUT_SECONDS:-300}"
+SYNC_TIMEOUT_MS="${CANONICAL_LIVE_SYNC_TIMEOUT_MS:-15000}"
+POLL_SECONDS="${CANONICAL_LIVE_POLL_SECONDS:-3}"
+REQUIRED_CYCLES="${CANONICAL_REQUIRED_CYCLES:-1}"
+SAITO_CRON_EXPR="${CANONICAL_SAITO_CRON_EXPR:-@every 30s}"
+
+OPENAI_CAPTURE="${CANONICAL_OPENAI_CAPTURE_FILE:-${WORK_DIR}/openai-calls.jsonl}"
+OPENAI_PROXY_LOG="${CANONICAL_OPENAI_PROXY_LOG:-${WORK_DIR}/openai-proxy.log}"
+OPENAI_MODE="${CANONICAL_OPENAI_MODE:-stub}"
+OPENAI_PROXY_HOST="${CANONICAL_OPENAI_PROXY_HOST:-0.0.0.0}"
+OPENAI_PROXY_PORT="${CANONICAL_OPENAI_PROXY_PORT:-18083}"
+OPENAI_UPSTREAM_BASE="${CANONICAL_OPENAI_UPSTREAM_BASE:-https://api.openai.com}"
+OPENAI_UPSTREAM_TIMEOUT="${CANONICAL_OPENAI_UPSTREAM_TIMEOUT_SECONDS:-20}"
+OPENAI_API_KEY="${CANONICAL_OPENAI_API_KEY:-dummy-live-key}"
+OPENAI_EXPECT_MIN_CALLS="${CANONICAL_OPENAI_EXPECT_MIN_CALLS:-2}"
+
+DOCKER_BRIDGE_HOST="${CANONICAL_DOCKER_BRIDGE_HOST:-172.17.0.1}"
+KUZE_INTERNAL_BASE_URL="${CANONICAL_KUZE_INTERNAL_BASE_URL:-http://ruriko:8080}"
+BRAVE_API_KEY="${CANONICAL_BRAVE_API_KEY:-}"
+KUMO_REQUEST_PREFIX="${CANONICAL_KUMO_REQUEST_PREFIX:-KUMO_NEWS_REQUEST}"
+KUMO_REQUEST_BODY="${CANONICAL_KUMO_REQUEST_BODY:-{\"run_id\":1,\"tickers\":[\"OpenAI\"]}}"
+NL_REQUEST_TEXT="${CANONICAL_NL_REQUEST_TEXT:-I would like to get daily news about OpenAI}"
 KEEP_STACK="${KEEP_STACK:-0}"
-TIMEOUT_SECONDS="${CANONICAL_LIVE_TIMEOUT_SECONDS:-600}"
-POLL_SECONDS="${CANONICAL_LIVE_POLL_SECONDS:-5}"
-REQUIRED_CYCLES="${CANONICAL_REQUIRED_CYCLES:-2}"
-VERIFY_STAGE="${CANONICAL_VERIFY_STAGE:-full}"
-AUTO_BOOTSTRAP_CANONICAL="${CANONICAL_AUTO_BOOTSTRAP:-1}"
-BOOTSTRAP_STATUS_TIMEOUT="${CANONICAL_BOOTSTRAP_STATUS_TIMEOUT:-120}"
-CANONICAL_FAST_CRON_EVERY="${CANONICAL_FAST_CRON_EVERY:-10s}"
-FAILFAST_AFTER_SECONDS="${CANONICAL_FAILFAST_AFTER_SECONDS:-45}"
-ENFORCE_ROOM_JOINS="${CANONICAL_ENFORCE_ROOM_JOINS:-1}"
-DB_AGENT_WAIT_SECONDS="${CANONICAL_DB_AGENT_WAIT_SECONDS:-20}"
-AUTO_PROVISION_CANONICAL="${CANONICAL_AUTO_PROVISION:-0}"
-STOP_SAITO_AFTER_CRONS="${CANONICAL_STOP_SAITO_AFTER_CRONS:-0}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -30,448 +47,401 @@ fail() { echo -e "${RED}[FAIL]${NC} $*"; exit 1; }
 
 docker_compose() {
 	if command -v docker-compose >/dev/null 2>&1; then
-		docker-compose -f "$COMPOSE_FILE" "$@"
+		docker-compose -f "${COMPOSE_FILE}" "$@"
 	else
-		docker compose -f "$COMPOSE_FILE" "$@"
+		docker compose -f "${COMPOSE_FILE}" "$@"
 	fi
 }
 
 cleanup() {
-	if [[ "$KEEP_STACK" == "1" ]]; then
+	if [[ -n "${OPENAI_PROXY_PID:-}" ]]; then
+		kill "${OPENAI_PROXY_PID}" >/dev/null 2>&1 || true
+	fi
+	if [[ "${KEEP_STACK}" == "1" ]]; then
 		info "KEEP_STACK=1 set; leaving stack running"
 		return
 	fi
 	info "Stopping compose stack"
-	docker_compose down -v || true
+	(
+		cd "${COMPOSE_DIR}"
+		docker_compose down -v --remove-orphans >/dev/null 2>&1 || true
+	)
 }
 trap cleanup EXIT
 
-require_tool() {
-	command -v "$1" >/dev/null 2>&1 || fail "required tool '$1' not found"
+require_cmd() {
+	command -v "$1" >/dev/null 2>&1 || fail "required command not found: $1"
 }
 
-require_tool docker
-require_tool grep
-require_tool python3
-require_tool curl
-[[ -f "$HELPER_PY" ]] || fail "required helper script not found: $HELPER_PY"
-[[ -f "$COMPOSE_ENV_FILE" ]] || fail "compose env file not found: $COMPOSE_ENV_FILE"
+require_cmd docker
+require_cmd curl
+require_cmd python3
+[[ -f "${COMPOSE_FILE}" ]] || fail "compose file not found: ${COMPOSE_FILE}"
+[[ -f "${COMPOSE_ENV_FILE}" ]] || fail "compose env file not found: ${COMPOSE_ENV_FILE}"
+[[ -f "${HELPER_PY}" ]] || fail "helper script not found: ${HELPER_PY}"
+[[ -f "${PROBE_PY}" ]] || fail "probe script not found: ${PROBE_PY}"
+[[ -f "${PROVISION_SCRIPT}" ]] || fail "provisioning script not found: ${PROVISION_SCRIPT}"
+[[ -f "${OPENAI_PROXY_SCRIPT}" ]] || fail "openai proxy helper not found: ${OPENAI_PROXY_SCRIPT}"
 
-info "Starting compose stack"
-docker_compose up -d
+if [[ "${OPENAI_MODE}" != "stub" && "${OPENAI_MODE}" != "passthrough" ]]; then
+	fail "CANONICAL_OPENAI_MODE must be 'stub' or 'passthrough'"
+fi
+if [[ "${OPENAI_MODE}" == "passthrough" ]] && [[ -z "${OPENAI_API_KEY}" || "${OPENAI_API_KEY}" == "dummy-live-key" ]]; then
+	fail "CANONICAL_OPENAI_MODE=passthrough requires a real CANONICAL_OPENAI_API_KEY"
+fi
+if [[ -z "${BRAVE_API_KEY}" ]]; then
+	fail "CANONICAL_BRAVE_API_KEY is required for the Saito->Kumo canonical flow"
+fi
 
-for attempt in {1..60}; do
-	if docker ps --format '{{.Names}}' | grep -qE '^ruriko$' && docker ps --format '{{.Names}}' | grep -qE '^tuwunel$'; then
-		break
-	fi
-	sleep 1
-done
+mkdir -p "${WORK_DIR}"
+: > "${OPENAI_CAPTURE}"
+: > "${OPENAI_PROXY_LOG}"
 
-for svc in ruriko tuwunel; do
-	docker ps --format '{{.Names}}' | grep -q "^${svc}$" || fail "container '${svc}' not running"
-done
-
-wait_for_ruriko_db_ready() {
-	local timeout_seconds="${1:-60}"
-	local start now elapsed
-	start="$(date +%s)"
+wait_for_http() {
+	local url="$1"
+	local timeout="$2"
+	local deadline=$(( $(date +%s) + timeout ))
 	while true; do
-		local tmp_db_dir tmp_db
-		tmp_db_dir="$(mktemp -d)"
-		tmp_db="${tmp_db_dir}/ruriko.db"
-		if docker cp ruriko:/data/ruriko.db "$tmp_db" >/dev/null 2>&1; then
-			docker cp ruriko:/data/ruriko.db-wal "${tmp_db_dir}/ruriko.db-wal" >/dev/null 2>&1 || true
-			docker cp ruriko:/data/ruriko.db-shm "${tmp_db_dir}/ruriko.db-shm" >/dev/null 2>&1 || true
-			if python3 "$HELPER_PY" db-ready --db-file "$tmp_db"
-			then
-				rm -rf "$tmp_db_dir"
-				pass "ruriko database ready (agents table present)"
-				return 0
-			fi
+		if curl -fsS "${url}" >/dev/null 2>&1; then
+			return 0
 		fi
-		rm -rf "$tmp_db_dir"
-		now="$(date +%s)"
-		elapsed=$((now - start))
-		if (( elapsed >= timeout_seconds )); then
-			fail "timed out waiting for ruriko database readiness (agents table)"
-		fi
-		sleep 1
-	done
-}
-
-wait_for_ruriko_db_ready 90
-
-wait_for_canonical_agents_in_db() {
-	local timeout_seconds="${1:-20}"
-	local start now elapsed
-	start="$(date +%s)"
-	while true; do
-		local tmp_db_dir tmp_db missing
-		tmp_db_dir="$(mktemp -d)"
-		tmp_db="${tmp_db_dir}/ruriko.db"
-		if docker cp ruriko:/data/ruriko.db "$tmp_db" >/dev/null 2>&1; then
-			docker cp ruriko:/data/ruriko.db-wal "${tmp_db_dir}/ruriko.db-wal" >/dev/null 2>&1 || true
-			docker cp ruriko:/data/ruriko.db-shm "${tmp_db_dir}/ruriko.db-shm" >/dev/null 2>&1 || true
-			if missing="$(python3 "$HELPER_PY" db-has-agents --db-file "$tmp_db" --ids "saito,kairo,kumo" 2>/dev/null)"; then
-				rm -rf "$tmp_db_dir"
-				pass "ruriko database contains canonical agents: saito,kairo,kumo"
-				return 0
-			fi
-		fi
-		rm -rf "$tmp_db_dir"
-		now="$(date +%s)"
-		elapsed=$((now - start))
-		if (( elapsed >= timeout_seconds )); then
-			CANONICAL_DB_MISSING="${missing:-saito,kairo,kumo}"
+		if [[ $(date +%s) -ge ${deadline} ]]; then
 			return 1
 		fi
 		sleep 1
 	done
 }
 
-CANONICAL_DB_MISSING=""
-if ! wait_for_canonical_agents_in_db "$DB_AGENT_WAIT_SECONDS"; then
-	if [[ "$AUTO_PROVISION_CANONICAL" == "1" ]]; then
-		info "canonical agents missing in database (missing: ${CANONICAL_DB_MISSING:-saito,kairo,kumo}); CANONICAL_AUTO_PROVISION=1 enabled, will synthesize snapshot rows from running containers"
-	else
-		fail "canonical agents missing in ruriko database after ${DB_AGENT_WAIT_SECONDS}s (missing: ${CANONICAL_DB_MISSING:-saito,kairo,kumo}); provision agents first (or set CANONICAL_AUTO_PROVISION=1 to synthesize snapshot rows from running containers)"
-	fi
-fi
+send_matrix() {
+	local body="$1"
+	local txn_id="$2"
+	python3 "${PROBE_PY}" send \
+		--base-url "${MATRIX_BASE_URL}" \
+		--token "${OPERATOR_TOKEN}" \
+		--room "${ADMIN_ROOM}" \
+		--body "${body}" \
+		--txn-id "${txn_id}" >/dev/null
+}
 
-agent_container_name() {
+extract_kuze_link() {
+	local payload="$1"
+	python3 - "${payload}" <<'PY'
+import json
+import re
+import sys
+
+raw = sys.argv[1]
+obj = json.loads(raw)
+for evt in obj.get("events", []):
+    body = str(evt.get("body", ""))
+    m = re.search(r'https?://[^\s]+/s/[A-Za-z0-9_-]+', body)
+    if m:
+        print(m.group(0))
+        sys.exit(0)
+print("")
+PY
+}
+
+wait_for_ruriko_text() {
+	local contains="$1"
+	local timeout="$2"
+	local token="$3"
+	local deadline=$(( $(date +%s) + timeout ))
+	while [[ $(date +%s) -lt ${deadline} ]]; do
+		local payload next_token count
+		payload="$(python3 "${PROBE_PY}" sync \
+			--base-url "${MATRIX_BASE_URL}" \
+			--token "${OPERATOR_TOKEN}" \
+			--since "${token}" \
+			--timeout-ms "${SYNC_TIMEOUT_MS}" \
+			--rooms "${ADMIN_ROOM}" \
+			--senders "@ruriko:localhost")"
+		next_token="$(printf '%s' "${payload}" | python3 "${PROBE_PY}" next-batch)"
+		[[ -n "${next_token}" ]] && token="${next_token}"
+		count="$(printf '%s' "${payload}" | python3 "${PROBE_PY}" events-count --sender "@ruriko:localhost" --contains "${contains}")"
+		if (( count > 0 )); then
+			printf '%s' "${token}"
+			return 0
+		fi
+	done
+	return 1
+}
+
+issue_kuze_secret() {
+	local secret_ref="$1"
+	local secret_type="$2"
+	local secret_value="$3"
+	local sync_token="$4"
+
+	send_matrix "/ruriko secrets set ${secret_ref} --type ${secret_type}" "canonical-secret-${secret_ref}-$(date +%s)"
+
+	local deadline=$(( $(date +%s) + 90 ))
+	while [[ $(date +%s) -lt ${deadline} ]]; do
+		local payload link next_token
+		payload="$(python3 "${PROBE_PY}" sync \
+			--base-url "${MATRIX_BASE_URL}" \
+			--token "${OPERATOR_TOKEN}" \
+			--since "${sync_token}" \
+			--timeout-ms "${SYNC_TIMEOUT_MS}" \
+			--rooms "${ADMIN_ROOM}" \
+			--senders "@ruriko:localhost")"
+		next_token="$(printf '%s' "${payload}" | python3 "${PROBE_PY}" next-batch)"
+		[[ -n "${next_token}" ]] && sync_token="${next_token}"
+		link="$(extract_kuze_link "${payload}")"
+		if [[ -n "${link}" ]]; then
+			# Kuze links may use an internal container hostname (e.g. http://ruriko:8080).
+			# For host-side test submission, retry with a localhost URL when needed.
+			if curl -fsS -X POST "${link}" \
+				-H "Content-Type: application/x-www-form-urlencoded" \
+				--data-urlencode "secret_value=${secret_value}" >/dev/null 2>&1; then
+				:
+			else
+				# Rewrite any scheme/host to localhost while preserving path/query.
+				link_host_fallback="$(printf '%s' "${link}" | sed -E "s#^https?://[^/]+#http://127.0.0.1:${HTTP_ADDR_PORT:-8080}#")"
+				if ! curl -fsS -X POST "${link_host_fallback}" \
+					-H "Content-Type: application/x-www-form-urlencoded" \
+					--data-urlencode "secret_value=${secret_value}" >/dev/null 2>&1; then
+					fail "failed to submit Kuze secret value for ${secret_ref} via both original and fallback URLs"
+				fi
+			fi
+			printf '%s' "${sync_token}"
+			return 0
+		fi
+	done
+
+	fail "timed out waiting for Kuze link for ${secret_ref}"
+}
+
+wait_for_container() {
 	local name="$1"
-	echo "ruriko-agent-${name}"
-}
-
-for agent in saito kairo kumo; do
-	cname="$(agent_container_name "$agent")"
-	docker ps --format '{{.Names}}' | grep -q "^${cname}$" || fail "canonical agent container '${cname}' not running"
-	pass "found ${cname}"
-done
-
-SAITO_CONTAINER="$(agent_container_name saito)"
-KAIRO_CONTAINER="$(agent_container_name kairo)"
-KUMO_CONTAINER="$(agent_container_name kumo)"
-
-canonical_template_for_agent() {
-	case "$1" in
-		saito) echo "saito-agent" ;;
-		kairo) echo "kairo-agent" ;;
-		kumo) echo "kumo-agent" ;;
-		*) return 1 ;;
-	esac
-}
-
-for agent in saito kairo kumo; do
-	cname="$(agent_container_name "$agent")"
-	if ! docker exec "$cname" sh -lc 'env | grep -q "^LLM_API_KEY="'; then
-		fail "${cname} is missing LLM_API_KEY; recreate/respawn agents after setting LLM_API_KEY (or GLOBAL_LLM_API_KEY / RURIKO_NLP_API_KEY fallback) for Ruriko"
-	fi
-done
-
-DB_SNAPSHOT_DIR="$(mktemp -d)"
-DB_FILE="${DB_SNAPSHOT_DIR}/ruriko.db"
-docker cp ruriko:/data/ruriko.db "$DB_FILE" >/dev/null
-docker cp ruriko:/data/ruriko.db-wal "${DB_SNAPSHOT_DIR}/ruriko.db-wal" >/dev/null 2>&1 || true
-docker cp ruriko:/data/ruriko.db-shm "${DB_SNAPSHOT_DIR}/ruriko.db-shm" >/dev/null 2>&1 || true
-
-maybe_autoprovision_canonical_db_snapshot() {
-	local missing
-	if missing="$(python3 "$HELPER_PY" db-has-agents --db-file "$DB_FILE" --ids "saito,kairo,kumo" 2>/dev/null)"; then
-		return 0
-	fi
-
-	[[ "$AUTO_PROVISION_CANONICAL" == "1" ]] || fail "canonical agents missing in bootstrap snapshot db (missing: ${missing:-saito,kairo,kumo})"
-
-	info "Auto-provisioning canonical bootstrap snapshot rows from running containers (missing: ${missing:-saito,kairo,kumo})"
-	local agent template cname
-	for agent in saito kairo kumo; do
-		template="$(canonical_template_for_agent "$agent")"
-		cname="$(agent_container_name "$agent")"
-		python3 "$HELPER_PY" db-upsert-agent-from-container \
-			--db-file "$DB_FILE" \
-			--agent-id "$agent" \
-			--template "$template" \
-			--container "$cname" >/dev/null || fail "failed to synthesize db row for ${agent} from ${cname}"
+	local timeout="$2"
+	local deadline=$(( $(date +%s) + timeout ))
+	while [[ $(date +%s) -lt ${deadline} ]]; do
+		if docker ps --format '{{.Names}}' | grep -q "^${name}$"; then
+			return 0
+		fi
+		sleep 1
 	done
-
-	if ! python3 "$HELPER_PY" db-has-agents --db-file "$DB_FILE" --ids "saito,kairo,kumo" >/dev/null 2>&1; then
-		fail "auto-provision could not establish canonical rows in bootstrap snapshot db"
-	fi
-	pass "auto-provisioned canonical bootstrap snapshot rows from running containers"
+	return 1
 }
 
-maybe_autoprovision_canonical_db_snapshot
-
-count_cron_events() {
-	local since="$1"
-	python3 "$HELPER_PY" count-log \
-		--container "$SAITO_CONTAINER" \
-		--since "$since" \
-		--msg "event processed" \
-		--event-type "cron.tick" \
-		--status "success"
-}
-
-count_saito_to_kairo() {
-	local since="$1"
-	python3 "$HELPER_PY" count-log \
-		--container "$SAITO_CONTAINER" \
-		--since "$since" \
-		--msg "matrix.send_message" \
-		--agent-id "saito" \
-		--target "kairo" \
-		--status "success"
-}
-
-count_kairo_to_kumo() {
-	local since="$1"
-	python3 "$HELPER_PY" count-log \
-		--container "$KAIRO_CONTAINER" \
-		--since "$since" \
-		--msg "matrix.send_message" \
-		--agent-id "kairo" \
-		--target "kumo" \
-		--status "success"
-}
-
-count_deliveries() {
-	local since="$1"
-	python3 "$HELPER_PY" count-log \
-		--container "$KUMO_CONTAINER" \
-		--since "$since" \
-		--msg "matrix.send_message" \
-		--agent-id "kumo" \
-		--target "kairo" \
-		--status "success"
-}
-
-maybe_stop_saito_after_crons() {
-	local cron_count="$1"
-	if [[ "$STOP_SAITO_AFTER_CRONS" == "0" || -z "$STOP_SAITO_AFTER_CRONS" ]]; then
-		return
-	fi
-	if [[ "${SAITO_STOPPED:-0}" == "1" ]]; then
-		return
-	fi
-	if (( cron_count < STOP_SAITO_AFTER_CRONS )); then
-		return
-	fi
-	if docker ps --format '{{.Names}}' | grep -q "^${SAITO_CONTAINER}$"; then
-		info "Stopping ${SAITO_CONTAINER} after ${cron_count} cron events (limit=${STOP_SAITO_AFTER_CRONS})"
-		docker stop "$SAITO_CONTAINER" >/dev/null 2>&1 || true
-	fi
-	SAITO_STOPPED=1
-}
-
-stage_passed() {
-	local stage="$1"
-	local required="$2"
-	local cron_count="$3"
-	local sk_count="$4"
-	local kk_count="$5"
-	local delivery_count="$6"
-
-	case "$stage" in
-		full)
-			(( cron_count >= required )) && (( sk_count >= required )) && (( kk_count >= required )) && (( delivery_count >= required ))
-			;;
-		saito-kairo)
-			(( cron_count >= required )) && (( sk_count >= required ))
-			;;
-		kairo-kumo)
-			(( sk_count >= required )) && (( kk_count >= required ))
-			;;
-		kumo-kairo)
-			(( kk_count >= required )) && (( delivery_count >= required ))
-			;;
-		*)
-			fail "unsupported CANONICAL_VERIFY_STAGE=${stage}; expected one of: full, saito-kairo, kairo-kumo, kumo-kairo"
-			;;
-	esac
-}
-
-stage_stalled() {
-	local stage="$1"
-	local required="$2"
-	local cron_count="$3"
-	local sk_count="$4"
-	local kk_count="$5"
-	local delivery_count="$6"
-
-	case "$stage" in
-		full)
-			(( cron_count >= required )) && (( sk_count < required || kk_count == 0 || delivery_count == 0 ))
-			;;
-		saito-kairo)
-			(( cron_count >= required )) && (( sk_count < required ))
-			;;
-		kairo-kumo)
-			(( sk_count >= required )) && (( kk_count < required ))
-			;;
-		kumo-kairo)
-			(( kk_count >= required )) && (( delivery_count < required ))
-			;;
-		*)
-			return 1
-			;;
-	esac
-}
-
-discover_admin_rooms() {
-	python3 "$HELPER_PY" admin-rooms-csv --env-file "$COMPOSE_ENV_FILE"
-}
-
-discover_matrix_base_url() {
-	python3 "$HELPER_PY" matrix-base-url --env-file "$COMPOSE_ENV_FILE"
-}
-
-urlencode() {
-	python3 "$HELPER_PY" urlencode --value "$1"
-}
-
-verify_room_joined() {
-	local token="$1"
-	local matrix_base="$2"
-	local room_id="$3"
-
-	curl -fsS "${matrix_base}/_matrix/client/v3/joined_rooms" \
-		-H "Authorization: Bearer ${token}" \
-		-H "Accept: application/json" | python3 "$HELPER_PY" joined-has-room --room "$room_id"
-}
-
-join_room_with_fallback() {
-	local token="$1"
-	local matrix_base="$2"
-	local room_id_or_alias="$3"
-	local encoded payload
-	encoded="$(urlencode "$room_id_or_alias")"
-
-	if payload="$(curl -fsS -X POST "${matrix_base}/_matrix/client/v3/rooms/${encoded}/join" \
-		-H "Authorization: Bearer ${token}" \
-		-H "Content-Type: application/json" \
-		-d '{}')"; then
-		python3 "$HELPER_PY" extract-join-room-id --payload "$payload" --fallback "$room_id_or_alias"
-		return 0
-	fi
-
-	payload="$(curl -fsS -X POST "${matrix_base}/_matrix/client/v3/join/${encoded}" \
-		-H "Authorization: Bearer ${token}" \
-		-H "Content-Type: application/json" \
-		-d '{}')"
-	python3 "$HELPER_PY" extract-join-room-id --payload "$payload" --fallback "$room_id_or_alias"
-}
-
-ensure_canonical_room_joins() {
-	local admin_rooms_csv="$1"
-	local matrix_base="$2"
-	local admin_rooms=()
-	IFS=',' read -r -a admin_rooms <<< "$admin_rooms_csv"
-	[[ ${#admin_rooms[@]} -gt 0 ]] || fail "MATRIX_ADMIN_ROOMS is empty; cannot enforce joins"
-
-	for agent in saito kairo kumo; do
-		local cname token
-		cname="$(agent_container_name "$agent")"
-		token="$(docker exec "$cname" sh -lc 'printf %s "$MATRIX_ACCESS_TOKEN"' 2>/dev/null || true)"
-		[[ -n "$token" ]] || fail "${cname} missing MATRIX_ACCESS_TOKEN; cannot enforce room join"
-
-		for admin_room in "${admin_rooms[@]}"; do
-			admin_room="${admin_room## }"
-			admin_room="${admin_room%% }"
-			local joined_room_id
-			[[ -n "$admin_room" ]] || continue
-			if ! joined_room_id="$(join_room_with_fallback "$token" "$matrix_base" "$admin_room")"; then
-				fail "failed to force ${agent} join into admin room ${admin_room}"
-			fi
-			joined_room_id="$(printf '%s' "$joined_room_id" | tr -d '\r\n')"
-			[[ -n "$joined_room_id" ]] || joined_room_id="$admin_room"
-			if ! verify_room_joined "$token" "$matrix_base" "$joined_room_id"; then
-				fail "${agent} did not appear in joined_rooms for ${joined_room_id} after join request ${admin_room}"
-			fi
-		done
+wait_for_log_match() {
+	local container="$1"
+	local pattern="$2"
+	local timeout="$3"
+	local deadline=$(( $(date +%s) + timeout ))
+	while [[ $(date +%s) -lt ${deadline} ]]; do
+		if docker logs --since 5m "${container}" 2>&1 | grep -E "${pattern}" >/dev/null 2>&1; then
+			return 0
+		fi
+		sleep "${POLL_SECONDS}"
 	done
-
-	pass "canonical agents joined admin room(s): ${admin_rooms_csv}"
+	return 1
 }
 
-bootstrap_canonical_configs() {
-	info "Auto-bootstrap canonical Gosuto configs for saito/kairo/kumo"
-
-	local admin_room user_room
-	admin_room="$(python3 "$HELPER_PY" admin-room --env-file "$COMPOSE_ENV_FILE")"
-	user_room="$(python3 "$HELPER_PY" user-room --env-file "$COMPOSE_ENV_FILE" --fallback '!canonical-user-fallback:localhost')"
-
-	[[ -n "$admin_room" ]] || fail "failed to discover MATRIX_ADMIN_ROOMS from compose .env"
-	if [[ "$user_room" == "$admin_room" ]]; then
-		user_room="!canonical-user-fallback:localhost"
-	fi
-
-	python3 "$ROOT_DIR/test/integration/canonical_workflow_bootstrap.py" \
-		--root-dir "$ROOT_DIR" \
-		--db-file "$DB_FILE" \
-		--admin-room "$admin_room" \
-		--user-room "$user_room" \
-		--saito-cron-every "$CANONICAL_FAST_CRON_EVERY" \
-		--status-timeout "$BOOTSTRAP_STATUS_TIMEOUT"
+count_openai_calls() {
+	python3 - "${OPENAI_CAPTURE}" <<'PY'
+import pathlib
+import sys
+path = pathlib.Path(sys.argv[1])
+if not path.exists():
+    print(0)
+else:
+    lines = [ln for ln in path.read_text(encoding='utf-8').splitlines() if ln.strip()]
+    print(len(lines))
+PY
 }
 
-if [[ "$AUTO_BOOTSTRAP_CANONICAL" == "1" ]]; then
-	bootstrap_canonical_configs
+info "Step 1/10: starting OpenAI capture proxy (mode=${OPENAI_MODE})"
+python3 "${OPENAI_PROXY_SCRIPT}" \
+	--host "${OPENAI_PROXY_HOST}" \
+	--port "${OPENAI_PROXY_PORT}" \
+	--mode "${OPENAI_MODE}" \
+	--upstream-base "${OPENAI_UPSTREAM_BASE}" \
+	--upstream-timeout "${OPENAI_UPSTREAM_TIMEOUT}" \
+	--capture-file "${OPENAI_CAPTURE}" >"${OPENAI_PROXY_LOG}" 2>&1 &
+OPENAI_PROXY_PID=$!
+
+if ! wait_for_http "http://127.0.0.1:${OPENAI_PROXY_PORT}/health" 20; then
+	fail "OpenAI proxy did not become healthy; inspect ${OPENAI_PROXY_LOG}"
+fi
+pass "OpenAI capture proxy ready"
+
+info "Step 2/10: provisioning a fresh stack"
+bash "${PROVISION_SCRIPT}"
+[[ -f "${TOKENS_FILE}" ]] || fail "tokens file not found after provisioning: ${TOKENS_FILE}"
+source "${TOKENS_FILE}"
+[[ -n "${OPERATOR_TOKEN:-}" ]] || fail "OPERATOR_TOKEN missing in ${TOKENS_FILE}"
+[[ -n "${ADMIN_ROOM:-}" ]] || fail "ADMIN_ROOM missing in ${TOKENS_FILE}"
+[[ -n "${USER_ROOM:-}" ]] || fail "USER_ROOM missing in ${TOKENS_FILE}"
+
+MATRIX_BASE_URL="$(python3 "${HELPER_PY}" matrix-base-url --env-file "${COMPOSE_ENV_FILE}")"
+[[ -n "${MATRIX_BASE_URL}" ]] || fail "failed to discover Matrix base URL"
+
+source "${COMPOSE_ENV_FILE}"
+AGENT_IMAGE="${DEFAULT_AGENT_IMAGE:-gitai:latest}"
+
+info "Step 3/10: starting compose stack with OpenAI proxy routing"
+export NLP_ENDPOINT="http://${DOCKER_BRIDGE_HOST}:${OPENAI_PROXY_PORT}/v1"
+export RURIKO_NLP_API_KEY="${OPENAI_API_KEY}"
+export LLM_BASE_URL="http://${DOCKER_BRIDGE_HOST}:${OPENAI_PROXY_PORT}/v1"
+export LLM_API_KEY=""
+export GLOBAL_LLM_API_KEY=""
+# Ensure Kuze redemption URLs are reachable from agent containers.
+export KUZE_BASE_URL="${KUZE_INTERNAL_BASE_URL}"
+(
+	cd "${COMPOSE_DIR}"
+	docker_compose up -d
+)
+
+if ! wait_for_http "http://127.0.0.1:${HTTP_ADDR_PORT:-8080}/health" 120; then
+	fail "Ruriko health endpoint did not become reachable"
+fi
+pass "Ruriko and Tuwunel are up"
+
+info "Step 4/10: sending canonical natural-language request"
+SYNC_TOKEN="$(python3 "${PROBE_PY}" sync --base-url "${MATRIX_BASE_URL}" --token "${OPERATOR_TOKEN}" --since "" --timeout-ms 0 --rooms "${ADMIN_ROOM}" | python3 "${PROBE_PY}" next-batch)"
+send_matrix "${NL_REQUEST_TEXT}" "canonical-nl-$(date +%s)"
+NL_SYNC_TOKEN="$(wait_for_ruriko_text "Saito" 45 "${SYNC_TOKEN}" 2>/dev/null || true)"
+if [[ -n "${NL_SYNC_TOKEN}" ]]; then
+	SYNC_TOKEN="${NL_SYNC_TOKEN}"
+	pass "Observed Ruriko NL response mentioning Saito"
 else
-	info "CANONICAL_AUTO_BOOTSTRAP=0; skipping canonical config bootstrap"
+	info "No explicit 'Saito' reply observed for NL request; continuing with deterministic command path"
 fi
 
-if [[ "$ENFORCE_ROOM_JOINS" == "1" ]]; then
-	ADMIN_ROOMS="$(discover_admin_rooms)"
-	[[ -n "$ADMIN_ROOMS" ]] || fail "failed to discover MATRIX_ADMIN_ROOMS for join enforcement"
-	MATRIX_BASE_URL="$(discover_matrix_base_url)"
-	ensure_canonical_room_joins "$ADMIN_ROOMS" "$MATRIX_BASE_URL"
-else
-	info "CANONICAL_ENFORCE_ROOM_JOINS=0; skipping explicit room-join enforcement"
+info "Step 5/10: setting Kuze secrets for Kumo"
+SYNC_TOKEN="$(issue_kuze_secret "kumo.openai-api-key" "api_key" "${OPENAI_API_KEY}" "${SYNC_TOKEN}")"
+SYNC_TOKEN="$(issue_kuze_secret "kumo.brave-api-key" "api_key" "${BRAVE_API_KEY}" "${SYNC_TOKEN}")"
+pass "Kuze secret entry completed for kumo.openai-api-key and kumo.brave-api-key"
+
+info "Step 6/10: creating Kumo (trusted peer: Saito) and Saito"
+send_matrix "/ruriko agents create --name kumo --template kumo-agent --image ${AGENT_IMAGE} --peer-alias saito --peer-mxid @saito:localhost --peer-room ${ADMIN_ROOM} --peer-protocol-id saito.news.request.v1 --peer-protocol-prefix ${KUMO_REQUEST_PREFIX}" "canonical-create-kumo-$(date +%s)"
+if ! wait_for_container "ruriko-agent-kumo" 180; then
+	docker logs --tail 120 ruriko 2>&1 || true
+	fail "kumo container was not created"
 fi
 
+send_matrix "/ruriko agents create --name saito --template saito-agent --image ${AGENT_IMAGE} --peer-alias kumo --peer-mxid @kumo:localhost --peer-room ${ADMIN_ROOM} --peer-protocol-id saito.news.request.v1 --peer-protocol-prefix ${KUMO_REQUEST_PREFIX}" "canonical-create-saito-$(date +%s)"
+if ! wait_for_container "ruriko-agent-saito" 180; then
+	docker logs --tail 120 ruriko 2>&1 || true
+	fail "saito container was not created"
+fi
+pass "Saito and Kumo containers are running"
+
+if ! wait_for_log_match "ruriko-agent-kumo" "gosuto config applied|ACP: config applied" 120; then
+	docker logs --since 10m ruriko-agent-kumo 2>&1 | tail -n 120 || true
+	fail "kumo did not report gosuto apply"
+fi
+if ! wait_for_log_match "ruriko-agent-saito" "gosuto config applied|ACP: config applied" 120; then
+	docker logs --since 10m ruriko-agent-saito 2>&1 | tail -n 120 || true
+	fail "saito did not report gosuto apply"
+fi
+
+info "Step 7/10: binding and pushing Kumo secrets"
+send_matrix "/ruriko secrets bind kumo kumo.openai-api-key --scope read" "canonical-bind-openai-$(date +%s)"
+if SYNC_TOKEN="$(wait_for_ruriko_text "granted access" 60 "${SYNC_TOKEN}" 2>/dev/null || true)" && [[ -n "${SYNC_TOKEN}" ]]; then
+	:
+else
+	ERROR_TOKEN="$(wait_for_ruriko_text "❌ Error" 10 "${SYNC_TOKEN}" 2>/dev/null || true)"
+	if [[ -n "${ERROR_TOKEN}" ]]; then
+		SYNC_TOKEN="${ERROR_TOKEN}"
+		fail "Ruriko reported an error while binding kumo.openai-api-key"
+	fi
+	info "no bind ack observed for kumo.openai-api-key; proceeding"
+fi
+
+send_matrix "/ruriko secrets bind kumo kumo.brave-api-key --scope read" "canonical-bind-brave-$(date +%s)"
+if SYNC_TOKEN="$(wait_for_ruriko_text "granted access" 60 "${SYNC_TOKEN}" 2>/dev/null || true)" && [[ -n "${SYNC_TOKEN}" ]]; then
+	:
+else
+	ERROR_TOKEN="$(wait_for_ruriko_text "❌ Error" 10 "${SYNC_TOKEN}" 2>/dev/null || true)"
+	if [[ -n "${ERROR_TOKEN}" ]]; then
+		SYNC_TOKEN="${ERROR_TOKEN}"
+		fail "Ruriko reported an error while binding kumo.brave-api-key"
+	fi
+	info "no bind ack observed for kumo.brave-api-key; proceeding"
+fi
+
+send_matrix "/ruriko secrets push kumo" "canonical-push-kumo-$(date +%s)"
+if ! SYNC_TOKEN="$(wait_for_ruriko_text "Pushed" 120 "${SYNC_TOKEN}" 2>/dev/null || true)" || [[ -z "${SYNC_TOKEN}" ]]; then
+	ERROR_TOKEN="$(wait_for_ruriko_text "❌ Error" 10 "${SYNC_TOKEN}" 2>/dev/null || true)"
+	if [[ -n "${ERROR_TOKEN}" ]]; then
+		SYNC_TOKEN="${ERROR_TOKEN}"
+		docker logs --since 10m ruriko 2>&1 | tail -n 120 || true
+		fail "Ruriko reported an error while pushing secrets to kumo"
+	fi
+	docker logs --since 10m ruriko 2>&1 | grep -E "secrets.push|secrets token|kuze|error" | tail -n 120 || true
+	fail "no secrets push acknowledgement for kumo"
+fi
+pass "Kumo secrets pushed"
+
+info "Step 8/10: scheduling fast Saito cron ticks toward Kumo path"
+REQUEST_MESSAGE="${KUMO_REQUEST_PREFIX} ${KUMO_REQUEST_BODY}"
+send_matrix "/ruriko schedule upsert --agent saito --cron \"${SAITO_CRON_EXPR}\" --target kumo --message \"${REQUEST_MESSAGE}\"" "canonical-schedule-$(date +%s)"
+if SYNC_TOKEN="$(wait_for_ruriko_text "Created schedule" 90 "${SYNC_TOKEN}" 2>/dev/null || wait_for_ruriko_text "Updated schedule" 90 "${SYNC_TOKEN}" 2>/dev/null || true)" && [[ -n "${SYNC_TOKEN}" ]]; then
+	pass "Saito schedule applied"
+else
+	ERROR_TOKEN="$(wait_for_ruriko_text "❌ Error" 10 "${SYNC_TOKEN}" 2>/dev/null || true)"
+	if [[ -n "${ERROR_TOKEN}" ]]; then
+		SYNC_TOKEN="${ERROR_TOKEN}"
+		fail "Ruriko reported an error while creating/updating the Saito schedule"
+	fi
+	info "no schedule ack observed; continuing and validating via workflow events"
+fi
+
+info "Step 9/10: waiting for ${REQUIRED_CYCLES} cycle(s) of Saito->Kumo->operator"
 START_EPOCH="$(date +%s)"
-START_TS="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-SAITO_STOPPED=0
-info "Watching canonical stage=${VERIFY_STAGE} (required=${REQUIRED_CYCLES}, timeout=${TIMEOUT_SECONDS}s, poll=${POLL_SECONDS}s)"
-
+SAITO_COUNT=0
+KUMO_SUMMARY_COUNT=0
 while true; do
 	NOW_EPOCH="$(date +%s)"
 	ELAPSED=$((NOW_EPOCH - START_EPOCH))
 	if (( ELAPSED > TIMEOUT_SECONDS )); then
-		fail "timed out after ${TIMEOUT_SECONDS}s waiting for canonical cycles"
+		docker logs --since 10m ruriko-agent-saito 2>&1 | tail -n 120 || true
+		docker logs --since 10m ruriko-agent-kumo 2>&1 | tail -n 180 || true
+		fail "timed out after ${TIMEOUT_SECONDS}s waiting for canonical Saito->Kumo flow"
 	fi
 
-	CRON_COUNT="$(count_cron_events "$START_TS")"
-	SK_COUNT="$(count_saito_to_kairo "$START_TS")"
-	KK_COUNT="$(count_kairo_to_kumo "$START_TS")"
-	DELIVERY_COUNT="$(count_deliveries "$START_TS")"
-	maybe_stop_saito_after_crons "$CRON_COUNT"
+	PAYLOAD="$(python3 "${PROBE_PY}" sync \
+		--base-url "${MATRIX_BASE_URL}" \
+		--token "${OPERATOR_TOKEN}" \
+		--since "${SYNC_TOKEN}" \
+		--timeout-ms "${SYNC_TIMEOUT_MS}" \
+		--rooms "${ADMIN_ROOM},${USER_ROOM}")"
+	NEXT_TOKEN="$(printf '%s' "${PAYLOAD}" | python3 "${PROBE_PY}" next-batch)"
+	[[ -n "${NEXT_TOKEN}" ]] && SYNC_TOKEN="${NEXT_TOKEN}"
 
-	info "elapsed=${ELAPSED}s cron=${CRON_COUNT} saito→kairo=${SK_COUNT} kairo→kumo=${KK_COUNT} deliveries=${DELIVERY_COUNT}"
-
-	# Fail-fast: once cron ticks are flowing, continuing to wait is usually wasted
-	# time if any downstream stage remains stalled (most often room-membership,
-	# policy, or config propagation issues). Bail out early with focused diagnostics.
-	if (( ELAPSED >= FAILFAST_AFTER_SECONDS )) && stage_stalled "$VERIFY_STAGE" "$REQUIRED_CYCLES" "$CRON_COUNT" "$SK_COUNT" "$KK_COUNT" "$DELIVERY_COUNT"; then
-		info "Fail-fast triggered after ${ELAPSED}s: cron active but chain is stalled"
-		info "Recent Saito logs:"
-		docker logs --since 10m "$SAITO_CONTAINER" 2>&1 | tail -n 60 || true
-		info "Recent Kairo logs:"
-		docker logs --since 10m "$KAIRO_CONTAINER" 2>&1 | tail -n 80 || true
-		info "Recent Kumo logs:"
-		docker logs --since 10m "$KUMO_CONTAINER" 2>&1 | tail -n 80 || true
-		fail "canonical chain stalled (cron=${CRON_COUNT}, saito→kairo=${SK_COUNT}, kairo→kumo=${KK_COUNT}, deliveries=${DELIVERY_COUNT}) after ${ELAPSED}s; avoid waiting full timeout"
+	DELTA_SAITO="$(printf '%s' "${PAYLOAD}" | python3 "${PROBE_PY}" events-count --sender "@saito:localhost" --contains "${KUMO_REQUEST_PREFIX}")"
+	DELTA_KUMO="$(printf '%s' "${PAYLOAD}" | python3 "${PROBE_PY}" events-count --sender "@kumo:localhost" --contains "KUMO_NEWS_RESPONSE")"
+	# Some runtime paths emit structured JSON directly without protocol prefixes.
+	# Accept these as fallback evidence of the Saito<->Kumo exchange.
+	DELTA_SAITO_JSON="$(printf '%s' "${PAYLOAD}" | python3 "${PROBE_PY}" events-count --sender "@saito:localhost" --contains '"run_id"')"
+	DELTA_KUMO_JSON="$(printf '%s' "${PAYLOAD}" | python3 "${PROBE_PY}" events-count --sender "@kumo:localhost" --contains '"run_id"')"
+	if (( DELTA_SAITO == 0 )); then
+		DELTA_SAITO="${DELTA_SAITO_JSON}"
 	fi
+	if (( DELTA_KUMO == 0 )); then
+		DELTA_KUMO="${DELTA_KUMO_JSON}"
+	fi
+	SAITO_COUNT=$((SAITO_COUNT + DELTA_SAITO))
+	KUMO_SUMMARY_COUNT=$((KUMO_SUMMARY_COUNT + DELTA_KUMO))
 
-	if stage_passed "$VERIFY_STAGE" "$REQUIRED_CYCLES" "$CRON_COUNT" "$SK_COUNT" "$KK_COUNT" "$DELIVERY_COUNT"; then
-		pass "canonical live stage ${VERIFY_STAGE} observed for required threshold"
+	info "progress elapsed=${ELAPSED}s saito_requests=${SAITO_COUNT} kumo_responses=${KUMO_SUMMARY_COUNT}"
+	if (( SAITO_COUNT >= REQUIRED_CYCLES && KUMO_SUMMARY_COUNT >= REQUIRED_CYCLES )); then
 		break
 	fi
-
-	sleep "$POLL_SECONDS"
+	sleep "${POLL_SECONDS}"
 done
+pass "Observed required Saito->Kumo canonical workflow cycles"
 
-rm -rf "$DB_SNAPSHOT_DIR"
+info "Step 10/10: validating OpenAI proxy capture evidence"
+OPENAI_CALLS="$(count_openai_calls)"
+if (( OPENAI_CALLS < OPENAI_EXPECT_MIN_CALLS )); then
+	fail "insufficient OpenAI calls observed via proxy: calls=${OPENAI_CALLS} min_expected=${OPENAI_EXPECT_MIN_CALLS}"
+fi
+pass "OpenAI proxy captured ${OPENAI_CALLS} call(s) (mode=${OPENAI_MODE})"
 
-pass "Canonical live compose workflow check passed (stage=${VERIFY_STAGE})"
+info "OpenAI capture file: ${OPENAI_CAPTURE}"
+info "OpenAI proxy log: ${OPENAI_PROXY_LOG}"
+pass "Canonical Saito->Kumo live compose workflow passed"

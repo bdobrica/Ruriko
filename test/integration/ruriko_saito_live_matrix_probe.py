@@ -61,7 +61,21 @@ def command_send(args: argparse.Namespace) -> int:
 
 
 def command_sync(args: argparse.Namespace) -> int:
-    params = {"timeout": str(args.timeout_ms), "filter": "{}"}
+    rooms_filter = [x.strip() for x in args.rooms.split(",") if x.strip()]
+    senders_filter = [x.strip() for x in args.senders.split(",") if x.strip()]
+
+    filter_obj: dict[str, object] = {}
+    room_obj: dict[str, object] = {}
+    timeline_obj: dict[str, object] = {"types": ["m.room.message"]}
+    if senders_filter:
+        timeline_obj["senders"] = senders_filter
+    room_obj["timeline"] = timeline_obj
+    if rooms_filter:
+        room_obj["rooms"] = rooms_filter
+    if room_obj:
+        filter_obj["room"] = room_obj
+
+    params = {"timeout": str(args.timeout_ms), "filter": json.dumps(filter_obj or {})}
     if args.since.strip():
         params["since"] = args.since.strip()
 
@@ -78,13 +92,13 @@ def command_sync(args: argparse.Namespace) -> int:
 
     next_batch = str(payload.get("next_batch") or "").strip()
 
-    rooms_filter = {x.strip() for x in args.rooms.split(",") if x.strip()}
-    senders_filter = {x.strip() for x in args.senders.split(",") if x.strip()}
+    rooms_filter_set = set(rooms_filter)
+    senders_filter_set = set(senders_filter)
 
     out_events: list[dict[str, object]] = []
     joined = ((payload.get("rooms") or {}).get("join") or {})
     for room_id, room_payload in joined.items():
-        if rooms_filter and room_id not in rooms_filter:
+        if rooms_filter_set and room_id not in rooms_filter_set:
             continue
         timeline = ((room_payload or {}).get("timeline") or {}).get("events") or []
         for evt in timeline:
@@ -94,7 +108,7 @@ def command_sync(args: argparse.Namespace) -> int:
                 continue
 
             sender = str(evt.get("sender") or "").strip()
-            if senders_filter and sender not in senders_filter:
+            if senders_filter_set and sender not in senders_filter_set:
                 continue
 
             content = evt.get("content") or {}

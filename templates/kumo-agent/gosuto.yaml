@@ -34,13 +34,6 @@ capabilities:
     tool: "*"
     allow: true
 
-  - name: allow-fetch-read
-    mcp: fetch
-    tool: fetch
-    allow: true
-    constraints:
-      method: GET
-
   - name: allow-matrix-send
     mcp: builtin
     tool: matrix.send_message
@@ -200,13 +193,6 @@ mcps:
       BRAVE_API_KEY: "{{`${BRAVE_API_KEY}`}}"
     autoRestart: true
 
-  - name: fetch
-    command: npx
-    args:
-      - "-y"
-      - "@modelcontextprotocol/server-fetch"
-    autoRestart: true
-
 instructions:
   role: |
     You are a news and web search agent. When given a list of tickers, company
@@ -215,7 +201,7 @@ instructions:
     Do not speculate beyond what sources say.
   workflow:
     - trigger: "message received with tickers or topics to research"
-      action: "Use brave-search MCP to find recent news. Use fetch MCP to retrieve article content if needed."
+      action: "Use brave-search MCP to find recent news and summarize findings with source references."
     - trigger: "after gathering results"
       action: "Summarise findings in a structured format (headline, source, date, relevance). Send summary back to the requester via matrix.send_message."
   context:

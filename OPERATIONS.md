@@ -28,7 +28,7 @@
    - [Natural Language Agent Creation](#flow-6-natural-language-agent-creation)
    - [Full Agent Provisioning](#flow-7-full-agent-provisioning-docker-enabled)
    - [Audit & Tracing](#flow-8-audit--tracing)
-  - [Standalone Kumo Live Probe](#flow-9-standalone-kumo-live-probe-no-ruriko)
+  - [Standalone Kumo Live Probe](#standalone-kumo-live-probe-no-ruriko)
 6. [Environment Variable Reference](#environment-variable-reference)
 7. [Hardened Mode Quick-Start](#hardened-mode-quick-start)
 8. [Troubleshooting](#troubleshooting)
@@ -266,7 +266,7 @@ Ruriko should reply with a pong and trace ID.
 
 For connecting to your local Tuwunel homeserver, use one of these clients:
 
-## Flow 9: Standalone Kumo Live Probe (No Ruriko)
+## Standalone Kumo Live Probe (No Ruriko)
 
 Use this when you want to validate Gitai/Kumo workflow behavior directly, without starting the Ruriko control plane.
 
@@ -644,14 +644,13 @@ Every command Ruriko executes is logged with a trace ID.
 
 Trace IDs appear in most Ruriko responses. You can use them to correlate actions across the audit log.
 
-### Flow 9: Canonical Live Workflow Verification (Saito → Kairo → Kumo)
+### Flow 9: Canonical Live Workflow Verification (Operator → Saito → Kumo)
 
-Use this flow to run the canonical live checks for compose/runtime behavior and security invariants.
+Use this flow to run the canonical operator-driven live checks for compose/runtime behavior and security invariants.
 
 Prerequisites:
-- Compose stack is running (`docker compose up -d` in `examples/docker-compose`)
-- Canonical agents are provisioned and running (`saito`, `kairo`, `kumo`)
-- Saito cron gateway is enabled
+- `CANONICAL_BRAVE_API_KEY` is exported in your shell
+- if using passthrough mode, `CANONICAL_OPENAI_API_KEY` is a real key
 
 Run live canonical cycle verification:
 
@@ -667,9 +666,9 @@ make test-canonical-workflow-live-compose-3cycles
 
 Default assertions for `test-canonical-workflow-live-compose-3cycles` (`CANONICAL_REQUIRED_CYCLES=3`):
 - Saito logs show `cron.tick`
-- Saito → Kairo successful `matrix.send_message`
-- Kairo → Kumo successful `matrix.send_message`
-- Kumo → Kairo successful `matrix.send_message`
+- Saito emits `KUMO_NEWS_REQUEST` protocol messages
+- Kumo returns `KUMO_NEWS_RESPONSE` to the operator room
+- OpenAI calls are captured via the local proxy
 
 Run live security checks:
 
@@ -690,10 +689,13 @@ make test-canonical-workflow-live
 
 Useful overrides:
 - `CANONICAL_REQUIRED_CYCLES=3`
-- `CANONICAL_LIVE_TIMEOUT_SECONDS=2400`
+- `CANONICAL_LIVE_TIMEOUT_SECONDS=300`
 - `CANONICAL_LIVE_POLL_SECONDS=5`
-- `CANONICAL_AUTO_BOOTSTRAP=1`
-- `CANONICAL_BOOTSTRAP_STATUS_TIMEOUT=120`
+- `CANONICAL_OPENAI_MODE=stub|passthrough`
+- `CANONICAL_OPENAI_API_KEY=<key>`
+- `CANONICAL_BRAVE_API_KEY=<key>`
+- `CANONICAL_SAITO_CRON_EXPR='@every 30s'`
+- `CANONICAL_OPENAI_EXPECT_MIN_CALLS=2`
 - `CANONICAL_SECURITY_LOOKBACK=30m`
 - `CANONICAL_SECURITY_REQUIRE_APPROVAL_COUNTS=1`
 - `KEEP_STACK=1`
