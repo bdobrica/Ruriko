@@ -144,6 +144,8 @@ It runs on pull requests, pushes to `main`, and weekly on schedule, and includes
 * CycloneDX SBOM generation (`ruriko-go-mod.cdx.json`)
 * Trivy image scanning for `ruriko` and `gitai` (fails on `HIGH`/`CRITICAL`)
 
+Current security baseline tracks Go `1.25.8` and `golang.org/x/net v0.51.0`.
+
 To retrieve SBOM output, open a workflow run in **Actions** and download the artifact named **`sbom-cyclonedx`**.
 
 ---

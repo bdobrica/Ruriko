@@ -30,7 +30,7 @@ at a well-known path. No binaries are downloaded at runtime.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  Docker builder stage (golang:1.25-alpine)                      │
+│  Docker builder stage (golang:1.25.8-alpine)                    │
 │                                                                  │
 │  go build ./cmd/gateway/ruriko-gw-imap  →  /build/gateways/    │
 │  go build ./cmd/gateway/ruriko-gw-...   →  /build/gateways/    │

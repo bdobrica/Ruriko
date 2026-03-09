@@ -5,6 +5,18 @@
 
 ---
 
+## 🧹 Maintenance Updates (2026-03-09 · vulnerability remediation)
+
+- Upgraded Go module language/runtime baseline from `go 1.25.0` to `go 1.25.8` in `go.mod` to pick up standard library security fixes reported by `govulncheck` (including `html/template`, `net/url`, `crypto/tls`, `crypto/x509`, `net/http`, `encoding/asn1`, `encoding/pem`, and `os` advisories).
+- Upgraded `golang.org/x/net` from `v0.50.0` to `v0.51.0` to remediate GO-2026-4559 (HTTP/2 panic issue).
+- Updated Docker builder base images to `golang:1.25.8-alpine` in:
+  - `deploy/docker/Dockerfile.ruriko`
+  - `deploy/docker/Dockerfile.gitai`
+- Updated gateway image-build documentation to match the patched builder image tag:
+  - `docs/ops/gateway-binaries.md`
+- Verification:
+  - `govulncheck ./...` now reports: `No vulnerabilities found.`
+
 ## 🧹 Maintenance Updates (2026-03-08 · phase 7 hardening kickoff)
 
 - Replaced canonical live compose workflow verification with a direct operator-driven Saito->Kumo chain:

@@ -87,6 +87,7 @@ The following is built and functional:
 - ✅ **R19.7 (maintenance)**: Strict standalone Saito verification target requiring multiple cron deliveries (`make test-saito-live-compose-2cycles`)
 - ✅ **R19.8 (maintenance)**: Removed legacy `test-saito-scheduling-live*` targets/scripts and hardened `test-ruriko-saito-operator-live` with OpenAI capture-proxy auditing (`RURIKO_SAITO_OPENAI_EXPECT_CALLS`, default `0`)
 - ✅ **R19.9 (maintenance)**: Replaced canonical live compose verification with operator-driven `Ruriko -> Saito -> Kumo` flow (Kuze secret entry for `kumo.openai-api-key` and `kumo.brave-api-key`, fast cron ticks, Saito->Kumo protocol request, Kumo summary delivery) and OpenAI capture-proxy mode switch (`CANONICAL_OPENAI_MODE=stub|passthrough`)
+- ✅ **R19.10 (maintenance)**: Security vulnerability remediation — bumped Go baseline to `1.25.8`, upgraded `golang.org/x/net` to `v0.51.0`, aligned Docker builder images to `golang:1.25.8-alpine`, and revalidated with `govulncheck`.
 - ✅ **R10**: Conversation memory — STM tracker, LTM interface, seal pipeline, context assembly, SQLite/OpenAI/LLM persistent backends
 
 ---
