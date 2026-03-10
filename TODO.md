@@ -45,24 +45,6 @@ graph TD
 
 ---
 
-## 🎯 MVP Definition of Done
-
-The MVP is ready when:
-
-- A user can deploy with `docker compose up -d`
-- The Matrix homeserver is Tuwunel, federation OFF, registration OFF
-- The user can chat with Ruriko over Matrix
-- The user can store secrets via Kuze one-time links (never in chat)
-- Ruriko can provision Saito/Kairo/Kumo agents and apply Gosuto config via ACP
-- ACP is authenticated and idempotent
-- Saito triggers Kairo every 15 minutes
-- Kairo fetches data from finnhub and stores results in DB
-- Kumo fetches news for relevant tickers
-- Bogdan receives a final report that combines market data + news
-- No secrets appear in Matrix history, ACP payloads, or logs
-
----
-
 ## 🏗️ Completed Foundation
 
 > Full task lists for all completed phases are in [CHANGELOG.md](CHANGELOG.md).
@@ -89,7 +71,7 @@ The MVP is ready when **all** of the following are true:
 ✅ **Secrets**: User stores secrets via Kuze one-time links; secrets never in chat
 ✅ **Agents**: Ruriko provisions Saito/Kairo/Kumo via ACP with Gosuto config
 ✅ **ACP**: Authenticated, idempotent, private to Docker network
-✅ **Workflow**: Saito triggers Kumo → Kumo searches/summarizes → report delivered
+✅ **Workflow**: Saito triggers Kairo → Kairo analyzes via finnhub + asks Kumo for news → combined report delivered
 ✅ **Memory**: Ruriko remembers active conversations; recalls relevant past context (R10)
 ✅ **Security**: No secrets in Matrix history, ACP payloads, or logs
 
@@ -143,6 +125,7 @@ The MVP is ready when **all** of the following are true:
   - schema validation helpers
   - execution state/context container
   - deterministic error types
+- [ ] Implement `branch` step type runner with conditional evaluation (output-based if/then/else routing)
 - [ ] Implement protocol trust gate (MXID + room + protocol) against `trust.trustedPeers`
 - [ ] Ensure protocol-triggered execution is blocked on trust mismatch with audit warning
 - [ ] Add unit tests for trusted/untrusted protocol message handling
@@ -264,11 +247,29 @@ The MVP is ready when **all** of the following are true:
 - [ ] Test: Provisioned agent has customised cron schedule
 - [ ] Test: Variable changes are versioned and auditable
 
+### R17.4 Conversational Plan Review & Modification (post-provision)
+
+> Both vision gap analyses identify this as the #1 remaining gap: the ability to
+> review and update existing agents through natural conversation, not just at
+> provision time.
+
+- [ ] Plan readback command: `/ruriko agents plan <name>` renders a Gosuto workflow section in human-readable form
+  - "Show me what Kumo does" → plain-English description of workflow steps, triggers, peers
+- [ ] NL plan modification via NLP pipeline:
+  - "Change Kumo to do an exact search instead of a plan" → generate Gosuto diff, validate, confirm, apply via ACP
+  - Reuse NLP intent pipeline: extract modification intent → generate Gosuto YAML patch → validate against schema → confirm with user → version and push
+- [ ] Automatic downstream Gosuto re-rendering when upstream topology changes affect an agent's peer references
+- [ ] Test: Plan readback correctly describes agent workflow
+- [ ] Test: NL modification generates valid Gosuto diff and is versioned
+- [ ] Test: Modified plan requires user confirmation before apply
+
 ### Definition of done
 - Templates support variable overrides at provision time
 - NLP can extract template variables from natural language
 - Variables are applied during provisioning and versioned
 - Default values ensure templates work without any customization
+- Operator can review and modify existing agent plans through conversation (R17.4)
+- Plan modifications are versioned, validated, and require confirmation
 
 ---
 
@@ -522,8 +523,10 @@ The MVP is ready when **all** of the following are true:
 - [ ] Web UI in addition to Matrix
 - [ ] E2EE for Matrix communication
 - [ ] Kubernetes runtime adapter
-- [ ] Codex integration (template generation)
+- [ ] Codex integration (template generation from conversation — describe any workflow, get valid Gosuto)
 - [ ] Advanced MCP tool ecosystem
+- [ ] Durable workflow-level persistence (built-in `persist` step writes to SQLite, not just in-memory execution state)
+- [ ] Cross-agent workflow state tracking (orchestration layer for multi-agent pipeline state and failure recovery)
 - [ ] Enhanced observability (distributed tracing, Prometheus)
 - [x] Persistent LTM backends (SQLite cosine similarity, pgvector) — SQLite done in R10.7; pgvector deferred
 - [x] OpenAI Embeddings integration for long-term memory search — done in R10.7
