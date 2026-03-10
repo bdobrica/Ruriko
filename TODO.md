@@ -14,14 +14,14 @@ Two parallel tracks converge at integration testing. **R14 and R15 are the gate*
 
 ```mermaid
 graph TD
-    R5["R5 · Kairo template"]
-    R14["R14 · Persona / Instructions ⬆️"]
-    R15["R15 · Messaging tool"]
-    R10["R10 · Ruriko memory"]
-    R16["R16 · NLP planning"]
+    R5["R5 · Kairo template ✅"]
+    R14["R14 · Persona / Instructions ✅"]
+    R15["R15 · Messaging tool ✅"]
+    R10["R10 · Ruriko memory ✅"]
+    R16["R16 · NLP planning ✅"]
     R18["R18 · Gitai memory"]
     R17["R17 · Template vars"]
-    R6["R6 · Canonical workflow"]
+    R6["R6 · Canonical workflow 🔄"]
     R7["R7 · Observability"]
     R8["R8 · Integration"]
 
@@ -35,8 +35,12 @@ graph TD
     R17 --> R8
     R18 --> R8
 
+    style R5 fill:#43a047,stroke:#2e7d32,color:#fff
     style R14 fill:#43a047,stroke:#2e7d32,color:#fff
     style R15 fill:#43a047,stroke:#2e7d32,color:#fff
+    style R10 fill:#43a047,stroke:#2e7d32,color:#fff
+    style R16 fill:#43a047,stroke:#2e7d32,color:#fff
+    style R6 fill:#ff9800,stroke:#e65100,color:#fff
 ```
 
 ---
@@ -63,32 +67,16 @@ The MVP is ready when:
 
 > Full task lists for all completed phases are in [CHANGELOG.md](CHANGELOG.md).
 
-The following is built and functional:
-
 - ✅ **Phases 0–9**: Ruriko control plane, SQLite inventory, secrets management, agent lifecycle, Matrix provisioning, Gosuto versioning, approval workflow, observability, deployment, Gitai runtime
-- ✅ **Maintenance (2026-03-01 · Phase 2 de-dup)**: shared webhook auth and keyed fixed-window rate limiting extracted into `common/` and integrated in both apps
-- ✅ **Maintenance (2026-03-01 · Phase 3 de-dup)**: shared SQLite bootstrap and migration runner extracted into `common/sqliteutil` and integrated in both stores
-- ✅ **Maintenance (2026-03-01 · Phase 4 de-dup)**: shared OpenAI transport core extracted into `common/llm/openai` and integrated in Gitai LLM + Ruriko NLP adapters
-- ✅ **Maintenance (2026-03-01 · Phase 5 de-dup)**: shared Matrix low-level client core extracted into `common/matrixcore` and integrated in Gitai/Ruriko matrix wrappers
-- ✅ **Maintenance (2026-03-01 · Phase 6 de-dup)**: shared memory contracts/context assembler extracted into `common/memory`, Ruriko memory package aligned, Gitai hook added behind `GITAI_MEMORY_CONTEXT_ENABLE`
-- ✅ **Maintenance (2026-03-01 · Phase 7 cleanup)**: dedicated Gitai unit tests added for memory hook enabled/disabled prompt-injection behavior
 - ✅ **R0–R4**: Config alignment, Tuwunel switch, ACP hardening, Kuze secret entry, token-based secret distribution
-- ✅ **R9**: Natural language interface — LLM-powered command translation, NLP rate limiting, runtime config store, lazy provider rebuild
-- ✅ **R11–R13**: Event gateways — schema/types, Gitai runtime integration, Ruriko-side wiring
-- ✅ **R14**: Gosuto persona/instructions separation — three-layer model, system prompt assembly, template updates
-- ✅ **R15**: Built-in Matrix messaging tool — `matrix.send_message`, policy engine integration, mesh topology provisioning, audit/breadcrumbs, template updates
-- ✅ **R19 (maintenance)**: DB-backed cron scheduling for Gitai — `schedule.*` built-ins, SQLite `cron_schedules` table, cron gateway `source: db` mode, Saito template wiring
-- ✅ **R19.1 (maintenance)**: Deterministic Ruriko schedule control-plane actions — ACP `POST /tools/call`, `/ruriko schedule {upsert|disable|list}`, NLP catalogue integration
-- ✅ **R19.2 (maintenance)**: Deterministic live operator→Ruriko→Saito scheduling integration flow (fresh stack provisioning, DB schedule assertion, two cron-cycle Matrix delivery verification)
-- ✅ **R19.3 (maintenance)**: Quote-aware deterministic command parsing for schedule flags + live test fail-fast/convergence hardening
-- ✅ **R19.4 (maintenance)**: Standalone Kumo live compose integration harness (`tuwunel + kumo`, OpenAI payload capture proxy, Brave invocation evidence, optional summary-delivery gate)
-- ✅ **R19.5 (maintenance)**: Gitai runtime image now includes `nodejs`/`npm` (`npx`) to run MCP servers shipped in canonical templates (Brave Search, Fetch)
-- ✅ **R19.6 (maintenance)**: Standalone Saito live compose integration harness (`tuwunel + saito`) with ACP `schedule.upsert` runtime cron setup and Python Matrix delivery verification
-- ✅ **R19.7 (maintenance)**: Strict standalone Saito verification target requiring multiple cron deliveries (`make test-saito-live-compose-2cycles`)
-- ✅ **R19.8 (maintenance)**: Removed legacy `test-saito-scheduling-live*` targets/scripts and hardened `test-ruriko-saito-operator-live` with OpenAI capture-proxy auditing (`RURIKO_SAITO_OPENAI_EXPECT_CALLS`, default `0`)
-- ✅ **R19.9 (maintenance)**: Replaced canonical live compose verification with operator-driven `Ruriko -> Saito -> Kumo` flow (Kuze secret entry for `kumo.openai-api-key` and `kumo.brave-api-key`, fast cron ticks, Saito->Kumo protocol request, Kumo summary delivery) and OpenAI capture-proxy mode switch (`CANONICAL_OPENAI_MODE=stub|passthrough`)
-- ✅ **R19.10 (maintenance)**: Security vulnerability remediation — bumped Go baseline to `1.25.8`, upgraded `golang.org/x/net` to `v0.51.0`, aligned Docker builder images to `golang:1.25.8-alpine`, and revalidated with `govulncheck`.
-- ✅ **R10**: Conversation memory — STM tracker, LTM interface, seal pipeline, context assembly, SQLite/OpenAI/LLM persistent backends
+- ✅ **R5**: Agent provisioning UX — templates, provisioning pipeline, agent registry, chat-driven creation
+- ✅ **R9**: Natural language interface — LLM-powered command translation, NLP rate limiting, runtime config store
+- ✅ **R11–R13**: Event gateways — schema/types, Gitai runtime integration (cron/webhook/external), Ruriko-side wiring
+- ✅ **R14**: Gosuto persona/instructions separation — three-layer model, system prompt assembly
+- ✅ **R15**: Built-in Matrix messaging tool — `matrix.send_message`, policy engine integration, mesh topology
+- ✅ **R10**: Conversation memory — STM tracker, LTM interface, seal pipeline, SQLite/OpenAI persistent backends
+- ✅ **R16**: Canonical agent knowledge & NLP planning — template-driven role knowledge, workflow decomposition, cron mapping, agent ID sanitisation, conversation history, re-query correction
+- ✅ **R19 (maintenance)**: DB-backed cron scheduling, deterministic schedule control-plane, operator→Ruriko→Saito integration, standalone Kumo/Saito live harnesses, Node.js/npm in Gitai image, canonical workflow live-compose verification, security vulnerability remediation (Go 1.25.8)
 
 ---
 
@@ -106,164 +94,11 @@ The MVP is ready when **all** of the following are true:
 ✅ **Security**: No secrets in Matrix history, ACP payloads, or logs
 
 ---
----
 
 # 🔄 ACTIVE PHASES
 
-> The phases below complete the MVP. Phases 0–9 and R0–R4, R9–R15 are
+> The phases below complete the MVP. Phases 0–9, R0–R5, R9–R16, and R10 are
 > done — see [CHANGELOG.md](CHANGELOG.md).
-
----
-
-## 📋 Phase R5: Agent Provisioning UX — Remaining Work
-
-**Status**: ✅ Complete. R5.1–R5.4 all done.
-
-> R5.1 (kairo template), R5.2 (provisioning pipeline), R5.3 (agent registry),
-> and R5.4 (chat-driven creation) are complete — see [CHANGELOG.md](CHANGELOG.md).
-
----
-
-## 📋 Phase R14: Gosuto Persona / Instructions Separation ✅
-
-> ✅ Complete — see [CHANGELOG.md](CHANGELOG.md).
-
----
-
-## 📋 Phase R15: Built-in Matrix Messaging Tool ✅
-
-> ✅ Complete — see [CHANGELOG.md](CHANGELOG.md).
-
----
-
-## 📋 Phase R10: Conversation Memory — Short-Term / Long-Term Architecture ✅
-
-**Status**: ✅ Complete. R10.0–R10.7 all done (pgvector deferred post-MVP).
-
-> ✅ Complete — see [CHANGELOG.md](CHANGELOG.md).
-
----
-
-## 📋 Phase R16: Canonical Agent Knowledge & NLP Planning Layer (2–4 days)
-
-**Goal**: Enrich Ruriko's NLP system prompt with knowledge of canonical agent roles, enable multi-agent workflow decomposition, and add natural language → cron expression mapping.
-
-> Depends on: R9 (NL interface), R15 (inter-agent messaging).
-> Addresses the root cause of Ruriko failing to handle "set up Saito so that
-> every day he sends me a message" — the NLP layer currently has no knowledge
-> of what Saito, Kairo, or Kumo are, and cannot decompose multi-agent requests.
-
-### R16.1 Canonical Agent Role Knowledge
-
-- [x] Extend the NLP system prompt (`internal/ruriko/nlp/prompt.go`) with canonical agent knowledge:
-  ```
-  CANONICAL AGENTS (singleton identities with predefined roles):
-  - Saito: Cron/trigger agent. Fires on a schedule and sends Matrix messages to other agents.
-    Template: saito-agent. Key capability: scheduling + peer-to-peer coordination.
-  - Kairo: Finance agent. Portfolio analysis via finnhub MCP, writes to DB.
-    Template: kairo-agent. Key capability: market data + analysis.
-  - Kumo: News/search agent. Web search via Brave Search MCP.
-    Template: kumo-agent. Key capability: news retrieval + summarisation.
-  ```
-  > **Note**: This knowledge is now derived from the Gosuto YAML templates
-  > (`metadata.canonicalName` + `metadata.description`) at call time via
-  > `templates.Registry.DescribeAll()`. The YAML files are the single
-  > source of truth — no hard-coded agent knowledge in code.
-- [x] Include canonical role knowledge in the LLM context alongside command catalogue
-- [x] When user mentions "Saito", "Kairo", or "Kumo", the LLM should understand what they are
-- [x] Test: LLM correctly maps "set up Saito" to `agents.create --name saito --template saito-agent`
-- [x] Test: LLM correctly maps "set up a news agent" to `agents.create --template kumo-agent`
-
-### R16.2 Multi-Agent Workflow Decomposition
-
-- [x] Extend NLP classifier to recognise multi-agent requests:
-  - "Set up Saito and Kumo" → two create commands (already partially supported in R9.4)
-  - "Set up Saito so that every morning he asks Kumo for news" → create Saito + create Kumo + configure mesh topology
-- [x] Add a `plan` intent type to the classifier response:
-  ```json
-  {
-    "intent": "plan",
-    "steps": [
-      {"action": "agents.create", "args": ["saito"], "flags": {"template": "saito-agent"}},
-      {"action": "agents.create", "args": ["kumo"], "flags": {"template": "kumo-agent"}},
-      {"action": "agents.config.apply", "args": ["saito"], "flags": {"cron": "0 8 * * *", "messaging-targets": "kumo,user"}}
-    ],
-    "explanation": "I'll create Saito (cron agent) and Kumo (search agent), then configure Saito to trigger every morning and message Kumo."
-  }
-  ```
-- [x] Plans are presented to the user for approval step-by-step (same as R9.4 multi-step)
-- [x] Test: Multi-agent request is decomposed into individual steps
-- [x] Test: Each step requires user confirmation
-
-### R16.3 Natural Language → Cron Expression Mapping
-
-- [x] Add cron expression mapping knowledge to the NLP system prompt:
-  ```
-  CRON EXPRESSION MAPPING (when user describes a schedule):
-  - "every 15 minutes" → */15 * * * *
-  - "every hour" → 0 * * * *
-  - "every morning" / "every day" → 0 8 * * *
-  - "every Monday" → 0 8 * * 1
-  - "twice a day" → 0 8,20 * * *
-  - "every weekday morning" → 0 8 * * 1-5
-  ```
-- [x] When the LLM produces a cron expression, validate it before including in the plan
-- [x] If the expression is ambiguous, ask clarifying question: "By 'every morning', do you mean 8:00 AM? What timezone?"
-- [x] Test: "every 15 minutes" maps to `*/15 * * * *`
-- [x] Test: Ambiguous "daily" prompts for clarification
-
-#### R16 Refactor Summary (2026-02-25)
-
-- ✅ Canonical agent knowledge in NLP prompt is now fully template-driven (from Gosuto metadata) rather than hard-coded identity examples.
-- ✅ Prompt generation normalises canonical specs (trim/lowercase/filter/sort) and derives deterministic create guidance from available canonical templates.
-- ✅ NL dispatch canonical extraction now sanitises + de-duplicates canonical names at the template boundary before classification.
-- ✅ Test coverage expanded for dynamic canonical guidance, empty-state fallback, deterministic ordering, and legacy hard-coded literal removal.
-- ✅ Validation completed: focused NLP/commands tests and live `TestR16*` integration tests pass; broader `go test ./internal/ruriko/...` suite passes after migration/concurrency store fixes.
-
-#### R16 Coverage Summary (Definition-of-Done Mapping)
-
-- ✅ Canonical roles / workflow decomposition / cron mapping are covered by live NLP integration tests in `internal/ruriko/nlp/r16_integration_test.go`.
-- ✅ Agent ID sanitisation in NL dispatch path is covered by unit + integration-style command-path tests in `internal/ruriko/commands/natural_language_test.go`, `internal/ruriko/commands/nl_dispatch_test.go`, and `internal/ruriko/commands/r16_nl_integration_test.go`.
-- ✅ Conversation-history continuity (including clarification loops) is covered by command-path tests in `internal/ruriko/commands/nl_dispatch_test.go` and `internal/ruriko/commands/r16_nl_integration_test.go`.
-- ✅ Re-query correction (not re-dispatching the same broken command) and max-2 retry cap are covered by command-path tests in `internal/ruriko/commands/nl_dispatch_test.go` and `internal/ruriko/commands/r16_nl_integration_test.go`.
-
-### R16.4 Agent ID Sanitisation in NLP Path
-
-- [x] Sanitise agent IDs produced by the LLM to lowercase before dispatch:
-  - LLM returns "Saito" → normalise to "saito"
-  - LLM returns "Kumo-Agent" → normalise to "kumo-agent"
-- [x] Apply sanitisation in `actionKeyToCommand()` / the NL dispatch path
-- [x] Test: Uppercase agent names from LLM are normalised
-- [x] Test: Normalised names pass `validateAgentID()`
-
-### R16.5 Conversation History in NLP Calls
-
-- [x] Send conversation history (short-term memory from R10) to the NLP classifier:
-  - Include previous messages in the same conversation session
-  - Prevents the LLM from losing context mid-conversation
-  - Eliminates the "could you clarify?" clarification loops
-- [x] If R10 is not yet implemented, maintain a simple in-memory message buffer per room+sender
-  (reuse the existing `conversationStore` pattern from R5.4)
-- [x] Test: Second message in a conversation has context from the first
-- [x] Test: Clarification response has context from the original request
-
-### R16.6 Retry with Re-query (Not Same Broken Command)
-
-- [x] When a dispatched NL command fails validation, re-query the LLM with the error context:
-  - "The command `agents create --name Saito` failed because: agent ID must be lowercase. Please fix."
-  - LLM produces corrected command
-  - Max 2 retries before falling back to error message
-- [x] Replace the current retry loop that dispatches the same broken command
-- [x] Test: Validation error triggers re-query with error context
-- [x] Test: Max retries are enforced
-
-### Definition of done
-- Ruriko's NLP understands canonical agent roles (Saito, Kairo, Kumo)
-- Multi-agent requests are decomposed into step-by-step plans
-- Natural language time expressions map to valid cron expressions
-- Agent IDs are sanitised to lowercase in the NLP path
-- Conversation history eliminates redundant clarification loops
-- Failed commands trigger re-query instead of re-dispatching the same broken command
 
 ---
 
@@ -729,20 +564,15 @@ The MVP is ready when **all** of the following are true:
 
 ### Active Phases
 
-- [x] Phase R5: Agent Provisioning UX ✅ *complete*
-- [x] Phase R14: Gosuto Persona / Instructions Separation ✅ *complete*
-- [x] Phase R15: Built-in Matrix Messaging Tool — Peer-to-Peer Collaboration ✅ *complete*
-- [x] Phase R10: Conversation Memory — Short-Term / Long-Term Architecture ✅ *complete*
-- [x] Phase R16: Canonical Agent Knowledge & NLP Planning Layer ✅ *complete*
-- [ ] Phase R6: Canonical Workflow — Saito → Kairo → Kumo
+- [ ] Phase R6: Canonical Workflow — Saito → Kairo → Kumo *(in progress)*
 - [ ] Phase R17: Gosuto Template Customization at Provision Time
 - [ ] Phase R18: Gitai Conversation Memory — Agent-Side STM/LTM
 - [ ] Phase R20: Runtime Reconciliation & Drift Recovery
-- [ ] Phase R19: Control-Plane Hardening for Untrusted Networks (Post-MVP)
 - [ ] Phase R7: Observability, Safety, and Polish
 - [ ] Phase R8: Integration and End-to-End Testing
+- [ ] Phase R19: Control-Plane Hardening for Untrusted Networks *(post-MVP)*
 
 ---
 
-**Last Updated**: 2026-02-26
+**Last Updated**: 2026-03-10
 **Current Focus**: Phase R6 — Canonical Workflow: Saito → Kairo → Kumo (depends on R5 ✅, R14 ✅, R15 ✅, R16 ✅)

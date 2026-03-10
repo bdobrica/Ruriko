@@ -1857,6 +1857,69 @@ Two-tier memory model:
 
 ---
 
+## 📋 Phase R16: Canonical Agent Knowledge & NLP Planning Layer ✅
+
+**Goal**: Enrich Ruriko's NLP system prompt with knowledge of canonical agent roles, enable multi-agent workflow decomposition, and add natural language → cron expression mapping.
+
+> Depends on: R9 (NL interface), R15 (inter-agent messaging).
+
+### R16.1 Canonical Agent Role Knowledge
+
+- [x] Extended NLP system prompt (`internal/ruriko/nlp/prompt.go`) with canonical agent knowledge derived from Gosuto YAML templates (`metadata.canonicalName` + `metadata.description`) via `templates.Registry.DescribeAll()` — no hard-coded agent knowledge in code
+- [x] Canonical role knowledge included in LLM context alongside command catalogue
+- [x] Test: LLM correctly maps "set up Saito" to `agents.create --name saito --template saito-agent`
+- [x] Test: LLM correctly maps "set up a news agent" to `agents.create --template kumo-agent`
+
+### R16.2 Multi-Agent Workflow Decomposition
+
+- [x] Extended NLP classifier to recognise multi-agent requests and produce `plan` intent type with ordered steps
+- [x] Plans presented step-by-step for user approval (same as R9.4 multi-step)
+- [x] Test: Multi-agent request decomposed into individual steps
+- [x] Test: Each step requires user confirmation
+
+### R16.3 Natural Language → Cron Expression Mapping
+
+- [x] Added cron expression mapping knowledge to NLP system prompt (common patterns: `*/15 * * * *`, `0 8 * * *`, etc.)
+- [x] Cron expressions validated after LLM produces them
+- [x] Ambiguous expressions trigger clarification question
+- [x] Test: "every 15 minutes" → `*/15 * * * *`; ambiguous "daily" prompts for clarification
+
+### R16.4 Agent ID Sanitisation in NLP Path
+
+- [x] Agent IDs produced by LLM sanitised to lowercase before dispatch
+- [x] Applied in `actionKeyToCommand()` / NL dispatch path
+- [x] Test: Uppercase agent names normalised; normalised names pass `validateAgentID()`
+
+### R16.5 Conversation History in NLP Calls
+
+- [x] Conversation history (STM from R10) sent to NLP classifier
+- [x] Prevents context loss mid-conversation; eliminates redundant clarification loops
+- [x] Test: Second message in conversation has context from first; clarification has original context
+
+### R16.6 Retry with Re-query (Not Same Broken Command)
+
+- [x] Validation failures re-query LLM with error context instead of re-dispatching same broken command
+- [x] Max 2 retries before fallback to error message
+- [x] Test: Validation error triggers re-query; max retries enforced
+
+#### R16 Refactor Summary (2026-02-25)
+
+- Canonical agent knowledge in NLP prompt is now fully template-driven (from Gosuto metadata) rather than hard-coded identity examples.
+- Prompt generation normalises canonical specs (trim/lowercase/filter/sort) and derives deterministic create guidance from available canonical templates.
+- NL dispatch canonical extraction now sanitises + de-duplicates canonical names at the template boundary before classification.
+- Test coverage expanded for dynamic canonical guidance, empty-state fallback, deterministic ordering, and legacy hard-coded literal removal.
+- Validation completed: focused NLP/commands tests and live `TestR16*` integration tests pass.
+
+### Definition of done
+- Ruriko's NLP understands canonical agent roles (Saito, Kairo, Kumo)
+- Multi-agent requests are decomposed into step-by-step plans
+- Natural language time expressions map to valid cron expressions
+- Agent IDs are sanitised to lowercase in the NLP path
+- Conversation history eliminates redundant clarification loops
+- Failed commands trigger re-query instead of re-dispatching the same broken command
+
+---
+
 
 ---
 
@@ -1890,3 +1953,4 @@ Two-tier memory model:
 - [x] Phase R14: Gosuto Persona / Instructions Separation ✅
 - [x] Phase R15: Built-in Matrix Messaging Tool ✅
 - [x] Phase R10: Conversation Memory — Short-Term / Long-Term Architecture ✅
+- [x] Phase R16: Canonical Agent Knowledge & NLP Planning Layer ✅
