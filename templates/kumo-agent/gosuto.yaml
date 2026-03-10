@@ -132,35 +132,35 @@ workflow:
           inputSchemaRef: kairoNewsRequest
           retries: 1
         - type: plan
-          prompt: "Build a concise search plan for these tickers: $input.tickers"
+          prompt: 'Build a concise search plan for these tickers: {{"{{input.tickers}}"}}. Return ONLY a JSON object with exactly this shape: {"items":[{"query":"..."}]}. Include exactly one item in "items" and ensure its "query" is non-empty. Do not include markdown, explanations, or wrapper keys like "searchPlan".'
           outputSchemaRef: searchPlan
           retries: 1
         - type: for_each
-          itemsExpr: "$steps.step_1.items"
+          itemsExpr: '{{"{{steps.step_1.items}}"}}'
           itemVar: plan_item
-          maxIterations: 5
+          maxIterations: 1
           forEachResultSchemaRef: searchResult
           forEachIterationSchemaRef: searchIterationContract
           steps:
             - type: tool
-              tool: brave-search__web_search
+              tool: brave-search__brave_web_search
               argsTemplate:
-                query: "$state.plan_item.query"
+                query: '{{"{{state.plan_item.query}}"}}'
               outputSchemaRef: searchResult
         - type: collect
-          collectFrom: "$steps.step_2"
+          collectFrom: '{{"{{steps.step_2}}"}}'
           collectMode: result
           collectFlatten: false
         - type: summarize
-          prompt: "Summarize these collected search results: $steps.step_3 and produce the response schema for run $input.run_id"
+          prompt: 'Summarize these collected search results: {{"{{steps.step_3}}"}}. Return ONLY one valid JSON object with exactly these required fields: {"run_id": {{"{{input.run_id}}"}}, "summary": "string", "headlines": ["string"], "material": boolean}. Include all fields, do not omit any field, and do not include markdown, code fences, or extra keys.'
           outputSchemaRef: kumoNewsResponse
           retries: 2
         - type: send_message
-          targetAlias: "{{.PeerAlias}}"
-          payloadTemplate: "@{{.PeerAlias}}, KUMO_NEWS_RESPONSE $steps.step_4"
+          targetAlias: user
+          payloadTemplate: 'KUMO_NEWS_RESPONSE {{"{{steps.step_4}}"}}'
         - type: persist
           persistKey: kumo.last_response
-          persistValue: "$steps.step_4"
+          persistValue: '{{"{{steps.step_4}}"}}'
 
 persona:
   systemPrompt: |

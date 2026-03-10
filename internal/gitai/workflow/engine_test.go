@@ -381,7 +381,7 @@ func TestEngineExecuteProtocol_ForEachCollect_BoundedIteration(t *testing.T) {
 	}
 }
 
-func TestEngineExecuteProtocol_ForEachCollect_MaxIterationsExceeded(t *testing.T) {
+func TestEngineExecuteProtocol_ForEachCollect_MaxIterationsExceeded_Truncates(t *testing.T) {
 	dispatcher := &fakeDispatcher{}
 	runner := NewRunner(dispatcher)
 
@@ -400,17 +400,23 @@ func TestEngineExecuteProtocol_ForEachCollect_MaxIterationsExceeded(t *testing.T
 		},
 	}
 
-	_, _, err := runner.Run(context.Background(), protocol, NewStateFromExecutionContext(NewExecutionContext("trace-1", "!room:example.com", "@peer:example.com", &InboundProtocolMatch{
+	result, toolCalls, err := runner.Run(context.Background(), protocol, NewStateFromExecutionContext(NewExecutionContext("trace-1", "!room:example.com", "@peer:example.com", &InboundProtocolMatch{
 		Protocol: protocol,
 		Payload: map[string]interface{}{
 			"tickers": []interface{}{"AAPL", "MSFT"},
 		},
 	})))
-	if err == nil {
-		t.Fatal("Run() expected maxIterations error")
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
 	}
-	if !strings.Contains(err.Error(), "exceeds maxIterations") {
-		t.Fatalf("expected maxIterations error, got: %v", err)
+	if !strings.Contains(result, "item:AAPL") {
+		t.Fatalf("Run() result = %q, expected truncated output to include AAPL", result)
+	}
+	if strings.Contains(result, "item:MSFT") {
+		t.Fatalf("Run() result = %q, expected truncated output to exclude MSFT", result)
+	}
+	if toolCalls != 0 {
+		t.Fatalf("Run() toolCalls = %d, want 0", toolCalls)
 	}
 }
 

@@ -165,6 +165,11 @@ func (r *Runner) runStep(ctx context.Context, protocolID string, step gosutospec
 		if !ok || strings.TrimSpace(prompt) == "" {
 			return nil, 0, fmt.Errorf("summarize step requires non-empty prompt")
 		}
+		if summarizeShouldParseStructured(step.OutputSchemaRef, state) {
+			// Keep this suffix deterministic so schema-bound summarize steps
+			// consistently return machine-parseable JSON.
+			prompt += "\n\nReturn ONLY valid JSON. Do not include markdown, code fences, comments, or additional text."
+		}
 		result, err := r.dispatcher.Summarize(ctx, prompt, state)
 		if err != nil {
 			return nil, 0, err
@@ -258,7 +263,7 @@ func (r *Runner) runStep(ctx context.Context, protocolID string, step gosutospec
 			maxIterations = defaultForEachMaxIterations
 		}
 		if len(items) > maxIterations {
-			return nil, 0, fmt.Errorf("for_each item count %d exceeds maxIterations %d", len(items), maxIterations)
+			items = items[:maxIterations]
 		}
 
 		if len(step.Steps) == 0 {

@@ -72,14 +72,14 @@ func ResolveMeshTopology(
 	// Skip if the operator room is already in the target list (e.g. when all
 	// agents share the same admin room in a single-room dev/test setup).
 	if operatorRoomID != "" {
-		dup := false
+		foundUser := false
 		for _, t := range targets {
-			if t.RoomID == operatorRoomID {
-				dup = true
+			if t.Alias == "user" {
+				foundUser = true
 				break
 			}
 		}
-		if !dup {
+		if !foundUser {
 			targets = append(targets, gosutospec.MessagingTarget{
 				RoomID: operatorRoomID,
 				Alias:  "user",
@@ -143,6 +143,7 @@ func InjectMeshTopology(
 	}
 
 	targets := ResolveMeshTopology(ctx, &cfg, s, operatorRoomID)
+	targets = mergeMessagingTargets(cfg.Messaging.AllowedTargets, targets)
 
 	// Nothing to inject — return unchanged.
 	if len(targets) == 0 {
@@ -162,6 +163,36 @@ func InjectMeshTopology(
 	}
 
 	return out, nil
+}
+
+// mergeMessagingTargets merges base template targets with computed mesh
+// targets. Existing aliases from computed targets win, while unknown aliases
+// from the base template are preserved to avoid dropping valid peer routes
+// during staggered provisioning.
+func mergeMessagingTargets(base, computed []gosutospec.MessagingTarget) []gosutospec.MessagingTarget {
+	if len(base) == 0 {
+		return computed
+	}
+	if len(computed) == 0 {
+		return base
+	}
+
+	aliasToIndex := make(map[string]int, len(computed))
+	merged := make([]gosutospec.MessagingTarget, 0, len(computed)+len(base))
+	for _, t := range computed {
+		aliasToIndex[t.Alias] = len(merged)
+		merged = append(merged, t)
+	}
+
+	for _, t := range base {
+		if _, exists := aliasToIndex[t.Alias]; exists {
+			continue
+		}
+		aliasToIndex[t.Alias] = len(merged)
+		merged = append(merged, t)
+	}
+
+	return merged
 }
 
 // UpdateAgentMeshTopology re-computes and injects the mesh topology for an

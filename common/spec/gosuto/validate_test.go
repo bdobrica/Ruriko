@@ -1586,9 +1586,9 @@ messaging:
 	}
 }
 
-// TestMessaging_InvalidDuplicateRoomID verifies that two targets with the same
-// roomId are rejected.
-func TestMessaging_InvalidDuplicateRoomID(t *testing.T) {
+// TestMessaging_ValidDuplicateRoomIDDifferentAliases verifies that two targets
+// may share a roomId when aliases are distinct (shared-room deployment).
+func TestMessaging_ValidDuplicateRoomIDDifferentAliases(t *testing.T) {
 	_, err := gosuto.Parse([]byte(messagingBase + `
 messaging:
   allowedTargets:
@@ -1597,11 +1597,8 @@ messaging:
     - roomId: "!kairo-admin:localhost"
       alias: "kairo-backup"
 `))
-	if err == nil {
-		t.Fatal("expected error for duplicate roomId, got nil")
-	}
-	if !strings.Contains(err.Error(), "duplicate roomId") {
-		t.Errorf("error should mention duplicate roomId, got: %v", err)
+	if err != nil {
+		t.Fatalf("expected duplicate roomId with distinct aliases to be valid, got error: %v", err)
 	}
 }
 

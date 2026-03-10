@@ -33,6 +33,12 @@ func (e *Error) Error() string {
 	if e == nil {
 		return ""
 	}
+	if e.Cause != nil {
+		if e.ProtocolID != "" {
+			return fmt.Sprintf("workflow protocol %s: %s: %v", e.ProtocolID, e.Message, e.Cause)
+		}
+		return fmt.Sprintf("%s: %v", e.Message, e.Cause)
+	}
 	if e.ProtocolID != "" {
 		return fmt.Sprintf("workflow protocol %s: %s", e.ProtocolID, e.Message)
 	}

@@ -591,7 +591,6 @@ func validateMessaging(m Messaging) error {
 		return fmt.Errorf("maxMessagesPerMinute must be >= 0")
 	}
 	aliases := make(map[string]struct{}, len(m.AllowedTargets))
-	roomIDs := make(map[string]struct{}, len(m.AllowedTargets))
 	for i, target := range m.AllowedTargets {
 		if strings.TrimSpace(target.RoomID) == "" {
 			return fmt.Errorf("allowedTargets[%d]: roomId must not be empty", i)
@@ -609,10 +608,6 @@ func validateMessaging(m Messaging) error {
 			return fmt.Errorf("allowedTargets[%d]: duplicate alias %q", i, target.Alias)
 		}
 		aliases[target.Alias] = struct{}{}
-		if _, dup := roomIDs[target.RoomID]; dup {
-			return fmt.Errorf("allowedTargets[%d]: duplicate roomId %q", i, target.RoomID)
-		}
-		roomIDs[target.RoomID] = struct{}{}
 	}
 	return nil
 }

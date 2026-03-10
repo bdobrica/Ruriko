@@ -1,7 +1,5 @@
 package commands_test
 
-// mesh_test.go — tests for R15.4 mesh topology computation.
-//
 // Verifies that:
 //   - Provisioned agents have correct messaging targets based on peers
 //   - Peer admin rooms are resolved from the agent inventory
@@ -345,6 +343,65 @@ func TestInjectMeshTopology_NoPeersNoOperator_Unchanged(t *testing.T) {
 	if string(outputYAML) != string(inputYAML) {
 		t.Errorf("expected unchanged YAML when no targets to inject\n"+
 			"input:  %s\noutput: %s", inputYAML, outputYAML)
+	}
+}
+
+func TestInjectMeshTopology_PreservesTemplateAliasWhenSharingOperatorRoom(t *testing.T) {
+	ctx := context.Background()
+	s := newMeshTestStore(t)
+
+	inputCfg := gosutospec.Config{
+		APIVersion: gosutospec.SpecVersion,
+		Metadata:   gosutospec.Metadata{Name: "kumo"},
+		Trust: gosutospec.Trust{
+			AllowedRooms:   []string{"!shared-admin:localhost"},
+			AllowedSenders: []string{"*"},
+			AdminRoom:      "!shared-admin:localhost",
+		},
+		Messaging: gosutospec.Messaging{
+			AllowedTargets: []gosutospec.MessagingTarget{
+				{Alias: "saito", RoomID: "!shared-admin:localhost"},
+			},
+		},
+		Instructions: gosutospec.Instructions{
+			Context: gosutospec.InstructionsContext{
+				Peers: []gosutospec.PeerRef{{Name: "saito", Role: "clock agent"}},
+			},
+		},
+	}
+	inputYAML, err := yaml.Marshal(&inputCfg)
+	if err != nil {
+		t.Fatalf("marshal input config: %v", err)
+	}
+
+	outputYAML, err := commands.InjectMeshTopology(ctx, inputYAML, s, "!shared-admin:localhost")
+	if err != nil {
+		t.Fatalf("InjectMeshTopology: %v", err)
+	}
+
+	var outputCfg gosutospec.Config
+	if err := yaml.Unmarshal(outputYAML, &outputCfg); err != nil {
+		t.Fatalf("unmarshal output: %v", err)
+	}
+
+	foundUser := false
+	foundSaito := false
+	for _, tgt := range outputCfg.Messaging.AllowedTargets {
+		if tgt.RoomID != "!shared-admin:localhost" {
+			continue
+		}
+		if tgt.Alias == "user" {
+			foundUser = true
+		}
+		if tgt.Alias == "saito" {
+			foundSaito = true
+		}
+	}
+	if !foundUser {
+		t.Fatalf("expected user target for operator room, got %+v", outputCfg.Messaging.AllowedTargets)
+	}
+	if !foundSaito {
+		t.Fatalf("expected preserved template target alias saito for shared operator room, got %+v", outputCfg.Messaging.AllowedTargets)
 	}
 }
 

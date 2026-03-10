@@ -38,12 +38,26 @@ func New() *Supervisor {
 	}
 }
 
-// ApplySecrets updates the environment injected into newly-started MCP processes.
-// Existing processes are NOT restarted automatically — call Reload to pick up changes.
+// ApplySecrets updates the environment injected into MCP processes.
+// Running processes are restarted so they pick up refreshed credentials.
 func (s *Supervisor) ApplySecrets(env map[string]string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.secretEnv = env
+
+	if len(s.clients) == 0 {
+		return
+	}
+
+	// Restart running MCP servers so refreshed secret env is applied immediately.
+	for name, client := range s.clients {
+		slog.Info("supervisor: restarting mcp server to apply updated secrets", "name", name)
+		client.Close()
+		delete(s.clients, name)
+	}
+	for _, sp := range s.specs {
+		s.startLocked(sp)
+	}
 }
 
 // Reconcile ensures that exactly the servers in specs are running.
@@ -169,10 +183,10 @@ func (s *Supervisor) buildEnvLocked(sp gosutospec.MCPServer) []string {
 func buildEnv(sp gosutospec.MCPServer, secretEnv map[string]string) []string {
 	base := os.Environ()
 	extra := make([]string, 0, len(sp.Env)+len(secretEnv))
-	for k, v := range secretEnv {
+	for k, v := range sp.Env {
 		extra = append(extra, k+"="+v)
 	}
-	for k, v := range sp.Env {
+	for k, v := range secretEnv {
 		extra = append(extra, k+"="+v)
 	}
 	return append(base, extra...)
