@@ -38,23 +38,31 @@ These invariants are the foundation of Ruriko's design. They must never be viola
 authoritative and enforced by code. Instructions are operational and auditable.
 Persona is cosmetic and non-authoritative.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  POLICY (authoritative)                                      │
-│  What the agent is *allowed* to do — enforced by code.       │
-│  Defined by: capabilities[], approvals, limits               │
-│  Changeable by: Ruriko operators only (via ACP)              │
-├─────────────────────────────────────────────────────────────┤
-│  INSTRUCTIONS (operational)                                  │
-│  What the agent *should* do — auditable workflow logic.      │
-│  Defined by: instructions.role, workflow, context            │
-│  Changeable by: Ruriko (versioned + diffable in Gosuto)      │
-├─────────────────────────────────────────────────────────────┤
-│  PERSONA (cosmetic)                                          │
-│  How the agent *sounds* — tone, style, name.                 │
-│  Defined by: persona.systemPrompt, model, temperature        │
-│  Changeable by: Ruriko operators (no security impact)        │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+block-beta
+  columns 1
+  block:policy["POLICY (authoritative)"]
+    columns 1
+    p1["What the agent is allowed to do — enforced by code"]
+    p2["Defined by: capabilities[], approvals, limits"]
+    p3["Changeable by: Ruriko operators only (via ACP)"]
+  end
+  block:instructions["INSTRUCTIONS (operational)"]
+    columns 1
+    i1["What the agent should do — auditable workflow logic"]
+    i2["Defined by: instructions.role, workflow, context"]
+    i3["Changeable by: Ruriko (versioned + diffable in Gosuto)"]
+  end
+  block:persona["PERSONA (cosmetic)"]
+    columns 1
+    pe1["How the agent sounds — tone, style, name"]
+    pe2["Defined by: persona.systemPrompt, model, temperature"]
+    pe3["Changeable by: Ruriko operators (no security impact)"]
+  end
+
+  style policy fill:#d32f2f,color:#fff
+  style instructions fill:#f57c00,color:#fff
+  style persona fill:#1976d2,color:#fff
 ```
 
 **What this means**:

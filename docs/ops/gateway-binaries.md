@@ -28,21 +28,17 @@ Gateway binaries follow the **same model as MCP binaries**: they are compiled
 from source inside the Docker builder stage and copied into the runtime image
 at a well-known path. No binaries are downloaded at runtime.
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  Docker builder stage (golang:1.25.8-alpine)                    │
-│                                                                  │
-│  go build ./cmd/gateway/ruriko-gw-imap  →  /build/gateways/    │
-│  go build ./cmd/gateway/ruriko-gw-...   →  /build/gateways/    │
-└──────────────────────────────┬──────────────────────────────────┘
-                               │ COPY --from=builder
-┌──────────────────────────────▼──────────────────────────────────┐
-│  Runtime image (alpine:3.21)                                    │
-│                                                                  │
-│  /usr/local/bin/gitai                     ← Gitai agent runtime │
-│  /usr/local/lib/gitai/gateways/           ← Gateway binaries    │
-│    ruriko-gw-imap                                               │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+  subgraph Builder["Docker builder stage\n(golang:1.25.8-alpine)"]
+    B1["go build ./cmd/gateway/ruriko-gw-imap → /build/gateways/"]
+    B2["go build ./cmd/gateway/ruriko-gw-... → /build/gateways/"]
+  end
+  Builder -->|COPY --from=builder| Runtime
+  subgraph Runtime["Runtime image (alpine:3.21)"]
+    R1["/usr/local/bin/gitai — Gitai agent runtime"]
+    R2["/usr/local/lib/gitai/gateways/ — Gateway binaries\nruriko-gw-imap"]
+  end
 ```
 
 The full manifest of vetted gateways, their install paths, and their

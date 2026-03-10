@@ -15,18 +15,12 @@ is defined at provision time inside the agent's Gosuto configuration.
 The canonical three-agent mesh for the Saito → Kairo → Kumo workflow looks
 like this:
 
-```
-         ┌──────────┐     matrix.send_message     ┌──────────┐
-         │  Saito   │ ──────────────────────────► │  Kairo   │
-         │ (cron)   │                              │(finance) │
-         └──────────┘                              └────┬─────┘
-                │                                       │
-                │ matrix.send_message                   │ matrix.send_message
-                ▼                                       ▼
-         ┌──────────┐                              ┌──────────┐
-         │   User   │◄─────────────────────────────│  Kumo    │
-         │  (DM)    │   matrix.send_message         │  (news)  │
-         └──────────┘                              └──────────┘
+```mermaid
+graph LR
+  Saito["Saito\n(cron)"] -->|matrix.send_message| Kairo["Kairo\n(finance)"]
+  Saito -->|matrix.send_message| User["User\n(DM)"]
+  Kairo -->|matrix.send_message| Kumo["Kumo\n(news)"]
+  Kumo -->|matrix.send_message| User
 ```
 
 Each arrow is a **permitted outbound message direction**, defined by

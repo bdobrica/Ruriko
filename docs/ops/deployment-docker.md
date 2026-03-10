@@ -15,21 +15,12 @@ This guide walks through deploying Ruriko in a Docker or Docker Compose environm
 
 ## Architecture overview
 
-```
-┌─────────────────────────────────────────────────┐
-│                Docker host                       │
-│                                                  │
-│  ┌────────────┐          ┌──────────────────┐   │
-│  │   ruriko   │◄────────►│  Matrix (Tuwunel) │  │
-│  │  :8080     │          │  :8008            │  │
-│  └────────────┘          └──────────────────┘   │
-│       │                                          │
-│       │ /var/run/docker.sock (optional)          │
-│       │                                          │
-│  ┌────▼───────────────────────────────────────┐ │
-│  │  Managed agent containers (Gitai)           │ │
-│  └────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────┘
+```mermaid
+graph TD
+  subgraph DockerHost["Docker host"]
+    Ruriko["ruriko\n:8080"] <-->|Matrix protocol| Tuwunel["Matrix (Tuwunel)\n:8008"]
+    Ruriko -->|/var/run/docker.sock\n(optional)| Gitai["Managed agent containers\n(Gitai)"]
+  end
 ```
 
 When `DOCKER_ENABLE=true`, Ruriko manages agent containers on the same host via the Docker socket.
