@@ -2,6 +2,12 @@
 
 > A conversational control plane for secure, capability-scoped AI agents over Matrix.
 
+[![Built with VS Code](https://img.shields.io/badge/Built%20with-VS%20Code-007ACC?logo=visualstudiocode&logoColor=white)](https://code.visualstudio.com/)
+[![GitHub Copilot](https://img.shields.io/badge/GitHub%20Copilot-Powered-000000?logo=githubcopilot&logoColor=white)](https://github.com/features/copilot)
+[![Go Version](https://img.shields.io/badge/Go-1.25.8-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Security & Supply Chain](https://github.com/bdobrica/Ruriko/actions/workflows/security-supply-chain.yml/badge.svg)](https://github.com/bdobrica/Ruriko/actions/workflows/security-supply-chain.yml)
+
 Ruriko is a self-hosted system where a human talks to **Ruriko** over Matrix, and Ruriko plans and configures specialized LLM-powered agents (**Gitai**) that collaborate **peer-to-peer** — messaging each other directly over Matrix, with secrets handled securely and control operations kept off the conversation layer.
 
 > 📖 **Full product story, UX contract, and canonical glossary:** [docs/preamble.md](docs/preamble.md)
