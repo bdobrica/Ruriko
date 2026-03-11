@@ -292,7 +292,8 @@ Useful overrides:
 
 # 🧪 Current Status
 
-Core infrastructure and all agent primitives are complete. Working on the canonical end-to-end workflow and conversation memory.
+Ruriko is **~80% toward the stated vision** (audit: `docs/audits/2026-03-10.md`).
+Core architecture and security invariants are implemented and tested; remaining work is the last-mile UX for conversational workflow authoring/editing plus targeted hardening.
 
 Completed:
 
@@ -316,11 +317,22 @@ Completed:
 * [x] Mesh topology provisioning — Ruriko injects allowed messaging targets at provision time
 * [x] Conversation memory — STM tracker, LTM interface, seal pipeline, context assembly, pluggable SQLite/OpenAI/LLM backends (R10)
 * [x] NLP planning layer — canonical agent role knowledge, multi-step plan intent, cron mapping, ID sanitisation, conversation history, re-query retries (R16)
+* [x] Maintenance hardening baseline — DB-backed scheduling tools, canonical live harnesses, Node.js/npm in Gitai image, dependency/security remediation (Go `1.25.8`, `golang.org/x/net v0.51.0`)
 
 In progress / up next:
 
-* [ ] Canonical operator → Saito → Kumo end-to-end workflow hardening (R6)
-* [ ] Gosuto template variable customization at provision time (R17)
+* [ ] **R6**: Workflow engine hardening + final live/security closure (3-cycle compose pass, docs/spec sync, remaining trust/workflow runner gaps)
+* [ ] **R17**: Template variable overrides + NLP extraction + conversational plan review and modification (`/ruriko agents plan`, NL-driven Gosuto patch flow)
+* [ ] **R7**: Observability and safety polish (circuit breakers, restart/backoff hardening, rate-limit polish, audit breadcrumb expansion)
+* [ ] **R18**: Gitai-side conversation memory + taint-aware prompt-injection defense for inter-agent memory reuse
+* [ ] **R8**: Full end-to-end integration validation across deployment, recovery, and security invariants
+
+Immediate hardening priorities from code review (`docs/tmp-codereview-2026-03-10.md`):
+
+* [ ] OpenAI transport: fail fast on non-2xx/API error envelopes (avoid silent empty responses)
+* [ ] ACP bearer auth: switch token checks to constant-time comparison in all paths
+* [ ] Idempotency and rate-limit internals: add eviction/sweeps to prevent unbounded in-memory growth
+* [ ] Reliability and safety follow-ups: retry jitter, Kuze CSRF protection, stronger redaction coverage
 
 ---
 

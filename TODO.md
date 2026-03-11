@@ -247,7 +247,7 @@ The MVP is ready when **all** of the following are true:
 - [ ] Test: Provisioned agent has customised cron schedule
 - [ ] Test: Variable changes are versioned and auditable
 
-### R17.4 Conversational Plan Review & Modification (post-provision)
+### R17.4 Conversational Plan Review and Modification (post-provision)
 
 > Both vision gap analyses identify this as the #1 remaining gap: the ability to
 > review and update existing agents through natural conversation, not just at
