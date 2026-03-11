@@ -4,7 +4,7 @@
 # Stage 1: builder
 # Compiles the Ruriko binary with full version metadata injected at link time.
 # ---------------------------------------------------------------------------
-FROM golang:1.25.8-alpine AS builder
+FROM golang:1.25.8-alpine3.22 AS builder
 
 # Install git so that `git rev-parse` works during the build.
 RUN apk add --no-cache git ca-certificates tzdata
@@ -25,19 +25,19 @@ ARG BUILD_TIME=unknown
 
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build \
-      -trimpath \
-      -ldflags "-s -w \
-        -X github.com/bdobrica/Ruriko/common/version.GitCommit=${GIT_COMMIT} \
-        -X github.com/bdobrica/Ruriko/common/version.Version=${GIT_TAG} \
-        -X github.com/bdobrica/Ruriko/common/version.BuildTime=${BUILD_TIME}" \
-      -o /build/ruriko \
-      ./cmd/ruriko
+    -trimpath \
+    -ldflags "-s -w \
+    -X github.com/bdobrica/Ruriko/common/version.GitCommit=${GIT_COMMIT} \
+    -X github.com/bdobrica/Ruriko/common/version.Version=${GIT_TAG} \
+    -X github.com/bdobrica/Ruriko/common/version.BuildTime=${BUILD_TIME}" \
+    -o /build/ruriko \
+    ./cmd/ruriko
 
 # ---------------------------------------------------------------------------
 # Stage 2: runtime image
 # Minimal Alpine image — only the binary, entrypoint, and CA certificates.
 # ---------------------------------------------------------------------------
-FROM alpine:3.21
+FROM alpine:3.22
 
 # Runtime dependencies: CA certs (for TLS to Matrix), tzdata (for time zones),
 # and a non-root user to run the process.
