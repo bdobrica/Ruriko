@@ -8,6 +8,16 @@
 
 ## Maintenance Updates
 
+### 2026-03-11 — REFACTOR Retirement
+- Removed the legacy R6 refactor-plan document after consolidating planning/validation contract details into canonical docs.
+- Updated `docs/workflow-step-spec.md` references to point to `TODO.md` as the active R6 tracker.
+- Marked the R6 legacy refactor-plan retirement task as completed in `TODO.md`.
+
+### 2026-03-11 — R6 Plan Canonicalization
+- Consolidated remaining R6 workflow-schema validation contract details into `TODO.md` so task tracking no longer depends on a separate refactor-plan document.
+- Updated the R6 phase note in `TODO.md` to point at canonical tracking docs (`TODO.md`, `docs/workflow-step-spec.md`).
+- Replaced the "keep refactor plan in sync" TODO item with an explicit retirement task once canonical docs remained complete.
+
 ### 2026-03-09 — Vulnerability Remediation
 Bumped Go to 1.25.8, upgraded `golang.org/x/net` to v0.51.0 (GO-2026-4559), aligned Docker builder images. `govulncheck` clean.
 

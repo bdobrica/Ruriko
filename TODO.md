@@ -93,7 +93,7 @@ The MVP is ready when **all** of the following are true:
 > Maps to REALIGNMENT_PLAN Phase 7.
 >
 > **Depends on**: R5 (agent provisioning), R14 (instructions), R15 (messaging tool), R16 (canonical role knowledge).
-> This phase is a single-cut refactor (no compatibility mode) based on [REFACTOR.md](REFACTOR.md).
+> This phase is a single-cut refactor (no compatibility mode). Authoritative scope tracking lives in [TODO.md](TODO.md) + [docs/workflow-step-spec.md](docs/workflow-step-spec.md).
 
 ### R6.1 Gosuto schema/types — `trust.trustedPeers` + `workflow`
 - [ ] Add `trust.trustedPeers` types in `common/spec/gosuto/types.go`:
@@ -116,7 +116,14 @@ The MVP is ready when **all** of the following are true:
   - `inputSchemaRef` / `outputSchemaRef` must resolve to `workflow.schemas`
   - disallow external schema refs
   - fail config apply when refs are missing
-- [ ] Add unit tests in `common/spec/gosuto/validate_test.go` for all validation contract errors defined in [REFACTOR.md](REFACTOR.md)
+- [ ] Add unit tests in `common/spec/gosuto/validate_test.go` for workflow schema validation contract errors:
+  - `workflow schema ref requires workflow.schemas to be defined`
+  - `workflow protocol <id>: input schema ref <ref> not found`
+  - `workflow protocol <id>, step <index>: output schema ref <ref> not found`
+  - `workflow protocol <id>: schema ref cannot be empty`
+  - `workflow schemas contains duplicate key <name>`
+  - `workflow schema <name>: invalid JSON Schema`
+  - `external schema references are not supported; use workflow.schemas`
 
 ### R6.2 Workflow engine foundation (`internal/gitai/workflow/`)
 - [ ] Create `internal/gitai/workflow/` package with:
@@ -187,7 +194,7 @@ The MVP is ready when **all** of the following are true:
 - [x] Add integration test for full approval -> apply flow on `topology peer-set --push true` (approval decision replay + dispatch + ACP apply verification)
 - [x] Start deterministic ensure-if-missing command path with `topology peer-ensure` (idempotent add-only semantics, approval-gated widening, conflict refusal, and approval->apply integration coverage)
 - [x] Begin deterministic ensure-if-missing flow for canonical provisioning path by re-entering `topology peer-ensure` post-provision for `kumo-agent` and validating with provisioning integration coverage
-- [ ] Keep [REFACTOR.md](REFACTOR.md) and [TODO.md](TODO.md) in sync as implementation lands
+- [x] Retire the legacy R6 refactor-plan document after canonical docs capture all remaining constraints
 
 ### Definition of done
 - No hard-coded Saito/Kairo/Kumo turn branches remain in Gitai runtime.

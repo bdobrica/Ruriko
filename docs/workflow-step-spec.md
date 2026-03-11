@@ -506,7 +506,7 @@ Notes:
 
 ## 13) References
 
-- [REFACTOR.md](../REFACTOR.md)
+- [TODO.md](../TODO.md)
 - [gosuto-spec.md](./gosuto-spec.md)
 - [invariants.md](./invariants.md)
 - [architecture.md](./architecture.md)
